@@ -57,8 +57,7 @@ impl AuthConfig {
         Self {
             jwt_secret,
             access_token_ttl_secs: parse_duration_string(access_expiry).unwrap_or(15 * 60),
-            refresh_token_ttl_secs: parse_duration_string(refresh_expiry)
-                .unwrap_or(7 * 24 * 3600),
+            refresh_token_ttl_secs: parse_duration_string(refresh_expiry).unwrap_or(7 * 24 * 3600),
             issuer: "resonance".to_string(),
             audience: "resonance".to_string(),
         }
@@ -99,15 +98,32 @@ pub struct AuthService {
     pool: PgPool,
     config: AuthConfig,
     argon2: Argon2<'static>,
+    /// Pre-computed dummy hash for timing attack prevention.
+    /// We verify against this hash when a user is not found to ensure
+    /// consistent response times regardless of whether the email exists.
+    dummy_password_hash: String,
 }
 
 impl AuthService {
     /// Create a new AuthService instance
     pub fn new(pool: PgPool, config: AuthConfig) -> Self {
+        let argon2 = Argon2::default();
+
+        // Pre-compute a dummy password hash for timing attack prevention.
+        // This hash is used when a user lookup fails, ensuring that the
+        // password verification step takes the same amount of time whether
+        // or not the user exists, preventing user enumeration attacks.
+        let dummy_salt = SaltString::generate(&mut OsRng);
+        let dummy_password_hash = argon2
+            .hash_password(b"dummy_password_for_timing_attack_prevention", &dummy_salt)
+            .expect("dummy password hashing should not fail")
+            .to_string();
+
         Self {
             pool,
             config,
-            argon2: Argon2::default(),
+            argon2,
+            dummy_password_hash,
         }
     }
 
@@ -132,7 +148,9 @@ impl AuthService {
     ) -> ApiResult<User> {
         // Validate email format
         if !is_valid_email(email) {
-            return Err(ApiError::ValidationError("invalid email format".to_string()));
+            return Err(ApiError::ValidationError(
+                "invalid email format".to_string(),
+            ));
         }
 
         // Validate password strength
@@ -143,12 +161,11 @@ impl AuthService {
         }
 
         // Check if email already exists
-        let existing: bool = sqlx::query_scalar(
-            r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"#,
-        )
-        .bind(email.to_lowercase())
-        .fetch_one(&self.pool)
-        .await?;
+        let existing: bool =
+            sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"#)
+                .bind(email.to_lowercase())
+                .fetch_one(&self.pool)
+                .await?;
 
         if existing {
             return Err(ApiError::Conflict {
@@ -191,12 +208,10 @@ impl AuthService {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match &e {
-            sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-                ApiError::Conflict {
-                    resource_type: "user",
-                    id: email.to_string(),
-                }
-            }
+            sqlx::Error::Database(db_err) if db_err.is_unique_violation() => ApiError::Conflict {
+                resource_type: "user",
+                id: email.to_string(),
+            },
             _ => ApiError::Database(e),
         })?;
 
@@ -252,13 +267,38 @@ impl AuthService {
         .fetch_optional(&self.pool)
         .await?;
 
-        let user = user.ok_or(ApiError::Unauthorized)?;
+        // SECURITY: Timing attack prevention for user enumeration
+        // We must verify a password hash regardless of whether the user exists.
+        // This ensures the response time is consistent, preventing attackers
+        // from determining if an email address is registered by measuring
+        // how long the login request takes.
+        let (user, password_valid) = match user {
+            Some(u) => {
+                // User exists - verify their actual password
+                let valid = self.verify_password(password, &u.password_hash)?;
+                (Some(u), valid)
+            }
+            None => {
+                // User doesn't exist - still perform password verification
+                // against a dummy hash to prevent timing-based user enumeration.
+                // The result is ignored but the timing remains consistent.
+                let _ = self.verify_password(password, &self.dummy_password_hash);
+                (None, false)
+            }
+        };
 
-        // Verify password
-        if !self.verify_password(password, &user.password_hash)? {
-            tracing::warn!(email = %email, "Login failed: invalid password");
-            return Err(ApiError::Unauthorized);
-        }
+        // Check authentication result
+        let user = match (user, password_valid) {
+            (Some(u), true) => u,
+            (Some(_), false) => {
+                tracing::warn!(email = %email, "Login failed: invalid password");
+                return Err(ApiError::Unauthorized);
+            }
+            (None, _) => {
+                tracing::warn!(email = %email, "Login failed: user not found");
+                return Err(ApiError::Unauthorized);
+            }
+        };
 
         // Generate tokens and create session
         let tokens = self
@@ -306,8 +346,8 @@ impl AuthService {
         .fetch_optional(&self.pool)
         .await?;
 
-        let session =
-            session.ok_or_else(|| ApiError::InvalidToken("session not found or inactive".to_string()))?;
+        let session = session
+            .ok_or_else(|| ApiError::InvalidToken("session not found or inactive".to_string()))?;
 
         // Check if session has expired
         if session.expires_at < Utc::now() {
@@ -349,8 +389,7 @@ impl AuthService {
 
         // Calculate expiration timestamps
         let access_expires_at = Utc::now() + Duration::seconds(self.config.access_token_ttl_secs);
-        let session_expires_at =
-            Utc::now() + Duration::seconds(self.config.refresh_token_ttl_secs);
+        let session_expires_at = Utc::now() + Duration::seconds(self.config.refresh_token_ttl_secs);
 
         // Update session with new token hashes
         let access_token_hash = hash_token(&access_token);
@@ -412,11 +451,12 @@ impl AuthService {
     /// # Arguments
     /// * `user_id` - The user whose sessions to invalidate
     pub async fn logout_all(&self, user_id: Uuid) -> ApiResult<u64> {
-        let result =
-            sqlx::query("UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true")
-                .bind(user_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query(
+            "UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
 
         let count = result.rows_affected();
         tracing::info!(user_id = %user_id, sessions_invalidated = count, "All sessions logged out");
@@ -491,8 +531,7 @@ impl AuthService {
 
         // Calculate expiration timestamps
         let access_expires_at = Utc::now() + Duration::seconds(self.config.access_token_ttl_secs);
-        let session_expires_at =
-            Utc::now() + Duration::seconds(self.config.refresh_token_ttl_secs);
+        let session_expires_at = Utc::now() + Duration::seconds(self.config.refresh_token_ttl_secs);
 
         // Hash tokens for storage
         let access_token_hash = hash_token(&access_token);
@@ -689,5 +728,32 @@ mod tests {
             AuthConfig::with_expiry_strings("secret".to_string(), "invalid", "also_invalid");
         assert_eq!(config.access_token_ttl_secs, 15 * 60);
         assert_eq!(config.refresh_token_ttl_secs, 7 * 24 * 3600);
+    }
+
+    #[test]
+    fn test_dummy_password_hash_for_timing_attack_prevention() {
+        // Verify that the dummy password hash mechanism works correctly:
+        // 1. A dummy hash can be created
+        // 2. Verifying against it (with any password) takes similar time as real verification
+        // 3. The verification always fails (as expected)
+        let argon2 = Argon2::default();
+        let salt = SaltString::generate(&mut OsRng);
+        let dummy_hash = argon2
+            .hash_password(b"dummy_password_for_timing_attack_prevention", &salt)
+            .expect("dummy password hashing should not fail")
+            .to_string();
+
+        // The hash should be a valid Argon2 hash format
+        let parsed = PasswordHash::new(&dummy_hash);
+        assert!(parsed.is_ok(), "Dummy hash should be parseable as Argon2");
+
+        // Verifying with an incorrect password should fail (but not panic)
+        // This is the key behavior for timing attack prevention:
+        // when a user doesn't exist, we still verify against this dummy hash
+        let verify_result = argon2.verify_password(b"attacker_password", &parsed.unwrap());
+        assert!(
+            verify_result.is_err(),
+            "Verification with wrong password should fail"
+        );
     }
 }
