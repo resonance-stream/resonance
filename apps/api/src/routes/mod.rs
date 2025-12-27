@@ -5,6 +5,10 @@
 //! - Lidarr webhook handlers
 //! - Health check and status endpoints
 
+pub mod health;
+
+pub use health::{health_router, HealthState};
+
 // Future modules:
 // pub mod streaming;
 // pub mod webhooks;

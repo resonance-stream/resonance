@@ -13,6 +13,8 @@ mod websocket;
 
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
+use routes::{health_router, HealthState};
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
@@ -32,10 +34,14 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting Resonance API server on port {}", config.port);
 
+    // Create health check state
+    let health_state = HealthState::new(config.clone());
+
     // Build the router
     let app = Router::new()
         .route("/", get(root))
-        .route("/health", get(health_check))
+        // Nested health routes: /health, /health/live, /health/ready
+        .nest("/health", health_router(health_state))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
@@ -51,8 +57,4 @@ async fn main() -> anyhow::Result<()> {
 
 async fn root() -> &'static str {
     "Welcome to Resonance - Self-hosted Music Streaming"
-}
-
-async fn health_check() -> &'static str {
-    "OK"
 }

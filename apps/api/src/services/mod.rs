@@ -5,6 +5,11 @@
 //! - Library management
 //! - Recommendation engine
 //! - External service integrations
+//! - Health checks
+
+pub mod health;
+
+pub use health::HealthService;
 
 // Future modules:
 // pub mod audio;
