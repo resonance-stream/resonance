@@ -11,9 +11,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use tokio::sync::broadcast;
 
+use crate::error::{WorkerError, WorkerResult};
 use crate::AppState;
 
 pub mod embedding_generation;
@@ -66,7 +66,7 @@ impl JobRunner {
     }
 
     /// Run the job processing loop
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(mut self) -> WorkerResult<()> {
         let poll_interval = Duration::from_secs(self.state.config.poll_interval_secs);
 
         tracing::info!(
@@ -93,7 +93,7 @@ impl JobRunner {
     }
 
     /// Process pending jobs from the queue
-    async fn process_pending_jobs(&self) -> Result<()> {
+    async fn process_pending_jobs(&self) -> WorkerResult<()> {
         let mut conn = self.state.redis.get_multiplexed_async_connection().await?;
 
         // Try to pop a job from the pending queue
@@ -116,7 +116,8 @@ impl JobRunner {
                     tracing::info!("Processing job: {:?}", job);
 
                     if let Err(e) = self.execute_job(&job).await {
-                        tracing::error!("Job execution failed: {}", e);
+                        // Log using the WorkerError's severity-aware logging
+                        e.log();
 
                         // Move to failed queue
                         let _: i64 = redis::cmd("LREM")
@@ -144,7 +145,8 @@ impl JobRunner {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to parse job data: {}", e);
+                    let worker_err = WorkerError::InvalidJobData(e.to_string());
+                    worker_err.log();
 
                     // Move malformed job to failed queue
                     let _: i64 = redis::cmd("LREM")
@@ -167,7 +169,7 @@ impl JobRunner {
     }
 
     /// Execute a specific job
-    async fn execute_job(&self, job: &Job) -> Result<()> {
+    async fn execute_job(&self, job: &Job) -> WorkerResult<()> {
         match job {
             Job::LibraryScan(payload) => {
                 library_scan::execute(&self.state, payload).await
@@ -192,7 +194,7 @@ impl JobRunner {
 }
 
 /// Helper to enqueue a job
-pub async fn enqueue_job(redis: &redis::Client, job: &Job) -> Result<()> {
+pub async fn enqueue_job(redis: &redis::Client, job: &Job) -> WorkerResult<()> {
     let mut conn = redis.get_multiplexed_async_connection().await?;
     let data = serde_json::to_string(job)?;
 

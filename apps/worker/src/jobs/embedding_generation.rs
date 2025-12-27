@@ -3,9 +3,9 @@
 //! Generates vector embeddings for tracks using Ollama.
 //! Embeddings are used for semantic search and AI recommendations.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Embedding generation job payload
@@ -33,7 +33,7 @@ struct TrackMetadata {
 }
 
 /// Execute the embedding generation job
-pub async fn execute(state: &AppState, job: &EmbeddingGenerationJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &EmbeddingGenerationJob) -> WorkerResult<()> {
     tracing::info!("Generating embedding for track ID: {}", job.track_id);
 
     // TODO: Implement embedding generation

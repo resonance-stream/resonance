@@ -3,10 +3,10 @@
 //! Prefetches upcoming tracks for autoplay and caches them in Redis
 //! for faster streaming and reduced database load.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Prefetch job payload
@@ -49,7 +49,7 @@ struct QueueItemRecord {
 }
 
 /// Execute the prefetch job
-pub async fn execute(state: &AppState, job: &PrefetchJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &PrefetchJob) -> WorkerResult<()> {
     let prefetch_count = job.prefetch_count.unwrap_or(5);
 
     tracing::info!(
@@ -79,7 +79,7 @@ async fn predict_next_tracks(
     user_id: Uuid,
     current_track_id: i64,
     count: usize,
-) -> Result<Vec<i64>> {
+) -> WorkerResult<Vec<i64>> {
     // TODO: Implement smart prediction
     // 1. Get current track's features and embedding
     // 2. Find similar tracks using pgvector
@@ -112,7 +112,7 @@ async fn predict_next_tracks(
 }
 
 /// Get tracks from user's queue
-async fn get_queue_tracks(state: &AppState, user_id: Uuid, count: usize) -> Result<Vec<i64>> {
+async fn get_queue_tracks(state: &AppState, user_id: Uuid, count: usize) -> WorkerResult<Vec<i64>> {
     let tracks: Vec<QueueItemRecord> = sqlx::query_as(
         r#"
         SELECT track_id
@@ -131,7 +131,7 @@ async fn get_queue_tracks(state: &AppState, user_id: Uuid, count: usize) -> Resu
 }
 
 /// Cache track metadata in Redis
-async fn cache_tracks(state: &AppState, user_id: Uuid, track_ids: &[i64]) -> Result<()> {
+async fn cache_tracks(state: &AppState, user_id: Uuid, track_ids: &[i64]) -> WorkerResult<()> {
     if track_ids.is_empty() {
         return Ok(());
     }

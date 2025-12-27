@@ -4,11 +4,14 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod error;
 mod graphql;
 mod models;
 mod routes;
 mod services;
 mod websocket;
+
+pub use error::{ApiError, ApiResult, ErrorResponse};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

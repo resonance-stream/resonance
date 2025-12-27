@@ -3,10 +3,10 @@
 //! Generates personalized "Discover Weekly" style playlists for users
 //! based on their listening history and AI recommendations.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Weekly playlist generation job payload
@@ -44,7 +44,7 @@ struct GenrePlayCount {
 }
 
 /// Execute the weekly playlist generation job
-pub async fn execute(state: &AppState, job: &WeeklyPlaylistJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &WeeklyPlaylistJob) -> WorkerResult<()> {
     let track_count = job.track_count.unwrap_or(30);
 
     match job.user_id {
@@ -76,7 +76,7 @@ pub async fn execute(state: &AppState, job: &WeeklyPlaylistJob) -> Result<()> {
 }
 
 /// Generate weekly playlist for a specific user
-async fn generate_for_user(state: &AppState, user_id: Uuid, track_count: usize) -> Result<()> {
+async fn generate_for_user(state: &AppState, user_id: Uuid, track_count: usize) -> WorkerResult<()> {
     tracing::debug!("Processing user: {}", user_id);
 
     // TODO: Implement playlist generation logic

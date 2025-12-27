@@ -3,9 +3,9 @@
 //! Extracts audio features from tracks using Symphonia for analysis.
 //! Features include BPM, key, loudness, and spectral characteristics.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Feature extraction job payload
@@ -58,7 +58,7 @@ struct TrackInfo {
 }
 
 /// Execute the feature extraction job
-pub async fn execute(state: &AppState, job: &FeatureExtractionJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &FeatureExtractionJob) -> WorkerResult<()> {
     tracing::info!("Extracting features for track ID: {}", job.track_id);
 
     // TODO: Implement feature extraction using Symphonia
