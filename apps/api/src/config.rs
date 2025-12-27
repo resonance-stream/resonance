@@ -97,7 +97,7 @@ impl Config {
 
             discord_client_id: env::var("DISCORD_CLIENT_ID").ok().filter(|s| !s.is_empty()),
 
-            cors_allowed_origins: env::var("CORS_ALLOWED_ORIGINS").ok().map(|s| {
+            cors_allowed_origins: env::var("CORS_ORIGINS").ok().map(|s| {
                 s.split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
