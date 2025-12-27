@@ -6,9 +6,8 @@ export default function Login(): JSX.Element {
   const navigate = useNavigate()
   const { login, status, error, clearError } = useAuthStore()
 
-  const [usernameOrEmail, setUsernameOrEmail] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
 
   const isLoading = status === 'loading'
 
@@ -17,7 +16,7 @@ export default function Login(): JSX.Element {
     clearError()
 
     try {
-      await login({ usernameOrEmail, password, rememberMe })
+      await login({ email, password })
       navigate('/')
     } catch {
       // Error is handled by the store
@@ -60,23 +59,23 @@ export default function Login(): JSX.Element {
               </div>
             )}
 
-            {/* Username or Email field */}
+            {/* Email field */}
             <div>
               <label
-                htmlFor="usernameOrEmail"
+                htmlFor="email"
                 className="mb-2 block text-sm font-medium text-text-secondary"
               >
-                Username or Email
+                Email
               </label>
               <input
-                id="usernameOrEmail"
-                type="text"
-                value={usernameOrEmail}
-                onChange={(e) => setUsernameOrEmail(e.target.value)}
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="input w-full"
-                placeholder="Enter your username or email"
+                placeholder="Enter your email"
                 required
-                autoComplete="username"
+                autoComplete="email"
                 disabled={isLoading}
               />
             </div>
@@ -100,24 +99,6 @@ export default function Login(): JSX.Element {
                 autoComplete="current-password"
                 disabled={isLoading}
               />
-            </div>
-
-            {/* Remember me checkbox */}
-            <div className="flex items-center">
-              <input
-                id="rememberMe"
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-background-tertiary bg-background-secondary text-primary focus:ring-primary/50"
-                disabled={isLoading}
-              />
-              <label
-                htmlFor="rememberMe"
-                className="ml-2 text-sm text-text-secondary"
-              >
-                Remember me
-              </label>
             </div>
 
             {/* Submit button */}

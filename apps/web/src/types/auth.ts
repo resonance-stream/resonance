@@ -38,8 +38,8 @@ export interface RegisterCredentials {
   email: string
   /** Password */
   password: string
-  /** Display name */
-  displayName: string
+  /** Display name (optional, defaults to email prefix) */
+  displayName?: string
 }
 
 /**

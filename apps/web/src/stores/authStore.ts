@@ -10,7 +10,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { User, AuthPayload } from '@resonance/shared-types'
+import type { User } from '@resonance/shared-types'
 import type { LoginCredentials, RegisterCredentials, AuthStatus, AuthError } from '../types/auth'
 import { graphqlClient, setAuthToken } from '../lib/api'
 import {
@@ -49,7 +49,7 @@ function parseAuthError(error: unknown): AuthError {
     const message = error.message.toLowerCase()
 
     if (message.includes('invalid credentials') || message.includes('wrong password')) {
-      return { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password' }
+      return { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' }
     }
     if (message.includes('user not found')) {
       return { code: 'USER_NOT_FOUND', message: 'User not found' }
@@ -127,31 +127,33 @@ export const useAuthStore = create<AuthState>()(
       error: null,
 
       /**
-       * Login with username/email and password
+       * Login with email and password
        */
       login: async (credentials: LoginCredentials) => {
         set({ status: 'loading', error: null })
 
         try {
-          const response = await graphqlClient.request<{ login: AuthPayload }>(
+          const response = await graphqlClient.request<{ login: AuthPayloadResponse }>(
             LOGIN_MUTATION,
             {
-              usernameOrEmail: credentials.usernameOrEmail,
-              password: credentials.password,
-              rememberMe: credentials.rememberMe,
+              input: {
+                email: credentials.email,
+                password: credentials.password,
+              },
             }
           )
 
-          const { user, accessToken, refreshToken, expiresIn } = response.login
+          const payload = response.login
+          const user = extractUserFromPayload(payload)
 
           // Set auth header for subsequent requests
-          setAuthToken(accessToken)
+          setAuthToken(payload.accessToken)
 
           set({
             user,
-            accessToken,
-            refreshToken,
-            expiresAt: calculateExpiresAt(expiresIn),
+            accessToken: payload.accessToken,
+            refreshToken: payload.refreshToken,
+            expiresAt: parseExpiresAt(payload.expiresAt),
             status: 'authenticated',
             error: null,
           })
@@ -169,27 +171,28 @@ export const useAuthStore = create<AuthState>()(
         set({ status: 'loading', error: null })
 
         try {
-          const response = await graphqlClient.request<{ register: AuthPayload }>(
+          const response = await graphqlClient.request<{ register: AuthPayloadResponse }>(
             REGISTER_MUTATION,
             {
               input: {
                 email: credentials.email,
                 password: credentials.password,
-                display_name: credentials.displayName,
+                display_name: credentials.displayName ?? credentials.email.split('@')[0],
               },
             }
           )
 
-          const { user, accessToken, refreshToken, expiresIn } = response.register
+          const payload = response.register
+          const user = extractUserFromPayload(payload)
 
           // Set auth header for subsequent requests
-          setAuthToken(accessToken)
+          setAuthToken(payload.accessToken)
 
           set({
             user,
-            accessToken,
-            refreshToken,
-            expiresAt: calculateExpiresAt(expiresIn),
+            accessToken: payload.accessToken,
+            refreshToken: payload.refreshToken,
+            expiresAt: parseExpiresAt(payload.expiresAt),
             status: 'authenticated',
             error: null,
           })
