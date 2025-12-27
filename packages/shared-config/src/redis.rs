@@ -23,7 +23,9 @@ impl RedisConfig {
     pub fn from_env() -> ConfigResult<Self> {
         Ok(Self {
             url: get_env_or_default("REDIS_URL", "redis://localhost:6379"),
-            password: std::env::var("REDIS_PASSWORD").ok().filter(|s| !s.is_empty()),
+            password: std::env::var("REDIS_PASSWORD")
+                .ok()
+                .filter(|s| !s.is_empty()),
             pool_size: parse_env("REDIS_POOL_SIZE", 10)?,
             connect_timeout_secs: parse_env("REDIS_CONNECT_TIMEOUT", 5)?,
         })

@@ -217,9 +217,9 @@ impl WorkerError {
             | Self::OllamaModelNotFound(_)
             | Self::EmbeddingGeneration(_)
             | Self::InvalidEmbeddingDimensions { .. } => Some("embedding_generation"),
-            Self::LidarrNotConfigured
-            | Self::LidarrApi { .. }
-            | Self::LidarrSyncConflict(_) => Some("lidarr_sync"),
+            Self::LidarrNotConfigured | Self::LidarrApi { .. } | Self::LidarrSyncConflict(_) => {
+                Some("lidarr_sync")
+            }
             Self::InsufficientTracks { .. }
             | Self::UserNotFound(_)
             | Self::NoListeningHistory(_) => Some("weekly_playlist"),
@@ -424,7 +424,10 @@ mod tests {
             WorkerError::OllamaUnavailable("test".to_string()).job_context(),
             Some("embedding_generation")
         );
-        assert_eq!(WorkerError::LidarrNotConfigured.job_context(), Some("lidarr_sync"));
+        assert_eq!(
+            WorkerError::LidarrNotConfigured.job_context(),
+            Some("lidarr_sync")
+        );
         assert_eq!(
             WorkerError::TrackNotFound(123).job_context(),
             Some("prefetch")

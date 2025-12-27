@@ -143,7 +143,10 @@ mod tests {
         assert_eq!(Environment::from_str("prod"), Environment::Production);
         assert_eq!(Environment::from_str("staging"), Environment::Staging);
         assert_eq!(Environment::from_str("stage"), Environment::Staging);
-        assert_eq!(Environment::from_str("development"), Environment::Development);
+        assert_eq!(
+            Environment::from_str("development"),
+            Environment::Development
+        );
         assert_eq!(Environment::from_str("dev"), Environment::Development);
         assert_eq!(Environment::from_str("anything"), Environment::Development);
     }

@@ -13,7 +13,10 @@ fn create_test_app() -> Router {
     use axum::routing::get;
 
     Router::new()
-        .route("/", get(|| async { "Welcome to Resonance - Self-hosted Music Streaming" }))
+        .route(
+            "/",
+            get(|| async { "Welcome to Resonance - Self-hosted Music Streaming" }),
+        )
         .route("/health", get(|| async { "OK" }))
         .route("/health/live", get(liveness_handler))
 }
@@ -30,12 +33,7 @@ async fn test_root_endpoint() {
     let app = create_test_app();
 
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
 

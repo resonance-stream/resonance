@@ -100,7 +100,7 @@ async fn predict_next_tracks(
           )
         ORDER BY RANDOM()
         LIMIT $3
-        "#
+        "#,
     )
     .bind(current_track_id)
     .bind(user_id)
@@ -120,7 +120,7 @@ async fn get_queue_tracks(state: &AppState, user_id: Uuid, count: usize) -> Work
         WHERE user_id = $1
         ORDER BY position ASC
         LIMIT $2
-        "#
+        "#,
     )
     .bind(user_id)
     .bind(count as i64)

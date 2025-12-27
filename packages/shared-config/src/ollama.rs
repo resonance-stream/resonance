@@ -100,7 +100,10 @@ mod tests {
     fn test_endpoint_urls() {
         let config = OllamaConfig::default();
         assert_eq!(config.generate_url(), "http://localhost:11434/api/generate");
-        assert_eq!(config.embeddings_url(), "http://localhost:11434/api/embeddings");
+        assert_eq!(
+            config.embeddings_url(),
+            "http://localhost:11434/api/embeddings"
+        );
         assert_eq!(config.chat_url(), "http://localhost:11434/api/chat");
     }
 

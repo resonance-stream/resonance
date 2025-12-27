@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
-use url::Url;
 use tokio::signal;
 use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 mod config;
 mod error;
@@ -61,7 +61,10 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env()?;
     tracing::info!("Loaded configuration");
-    tracing::debug!("Database URL: {}", redact_url_password(config.database_url()));
+    tracing::debug!(
+        "Database URL: {}",
+        redact_url_password(config.database_url())
+    );
     tracing::debug!("Redis URL: {}", redact_url_password(config.redis_url()));
     tracing::debug!("Music library path: {:?}", config.music_library_path());
 
@@ -76,9 +79,7 @@ async fn main() -> Result<()> {
     let redis = redis::Client::open(config.redis_url())?;
     // Test Redis connection
     let mut conn = redis.get_multiplexed_async_connection().await?;
-    let _: String = redis::cmd("PING")
-        .query_async(&mut conn)
-        .await?;
+    let _: String = redis::cmd("PING").query_async(&mut conn).await?;
     tracing::info!("Connected to Redis");
 
     // Initialize HTTP client for external API calls
@@ -102,9 +103,7 @@ async fn main() -> Result<()> {
     let job_runner = JobRunner::new(state.clone(), shutdown_tx.subscribe());
 
     // Start job processing in background task
-    let runner_handle = tokio::spawn(async move {
-        job_runner.run().await
-    });
+    let runner_handle = tokio::spawn(async move { job_runner.run().await });
 
     tracing::info!("Worker is running. Press Ctrl+C to shutdown.");
 

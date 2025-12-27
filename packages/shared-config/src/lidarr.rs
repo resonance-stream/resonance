@@ -113,6 +113,8 @@ mod tests {
         let config = LidarrConfig::new("http://lidarr:8686", "test-key");
         let headers = config.api_headers();
         assert_eq!(headers.len(), 2);
-        assert!(headers.iter().any(|(k, v)| *k == "X-Api-Key" && v == "test-key"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| *k == "X-Api-Key" && v == "test-key"));
     }
 }

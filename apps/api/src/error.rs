@@ -336,7 +336,10 @@ mod tests {
 
     #[test]
     fn test_status_codes() {
-        assert_eq!(ApiError::Unauthorized.status_code(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            ApiError::Unauthorized.status_code(),
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(
             ApiError::not_found("track", "123").status_code(),
             StatusCode::NOT_FOUND
@@ -354,7 +357,10 @@ mod tests {
     #[test]
     fn test_error_codes() {
         assert_eq!(ApiError::Unauthorized.error_code(), "UNAUTHORIZED");
-        assert_eq!(ApiError::not_found("track", "123").error_code(), "NOT_FOUND");
+        assert_eq!(
+            ApiError::not_found("track", "123").error_code(),
+            "NOT_FOUND"
+        );
     }
 
     #[test]

@@ -50,7 +50,7 @@ pub async fn execute(state: &AppState, job: &EmbeddingGenerationJob) -> WorkerRe
         LEFT JOIN artists a ON t.artist_id = a.id
         LEFT JOIN albums al ON t.album_id = al.id
         WHERE t.id = $1
-        "#
+        "#,
     )
     .bind(job.track_id)
     .fetch_optional(&state.db)
@@ -78,7 +78,10 @@ pub async fn execute(state: &AppState, job: &EmbeddingGenerationJob) -> WorkerRe
     //     .execute(&state.db)
     //     .await?;
 
-    tracing::info!("Embedding generation completed for track ID: {}", job.track_id);
+    tracing::info!(
+        "Embedding generation completed for track ID: {}",
+        job.track_id
+    );
 
     Ok(())
 }

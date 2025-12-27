@@ -18,8 +18,8 @@ use crate::AppState;
 
 pub mod embedding_generation;
 pub mod feature_extraction;
-pub mod lidarr_sync;
 pub mod library_scan;
+pub mod lidarr_sync;
 pub mod prefetch;
 pub mod weekly_playlist;
 
@@ -171,24 +171,16 @@ impl JobRunner {
     /// Execute a specific job
     async fn execute_job(&self, job: &Job) -> WorkerResult<()> {
         match job {
-            Job::LibraryScan(payload) => {
-                library_scan::execute(&self.state, payload).await
-            }
+            Job::LibraryScan(payload) => library_scan::execute(&self.state, payload).await,
             Job::FeatureExtraction(payload) => {
                 feature_extraction::execute(&self.state, payload).await
             }
             Job::EmbeddingGeneration(payload) => {
                 embedding_generation::execute(&self.state, payload).await
             }
-            Job::WeeklyPlaylist(payload) => {
-                weekly_playlist::execute(&self.state, payload).await
-            }
-            Job::LidarrSync(payload) => {
-                lidarr_sync::execute(&self.state, payload).await
-            }
-            Job::Prefetch(payload) => {
-                prefetch::execute(&self.state, payload).await
-            }
+            Job::WeeklyPlaylist(payload) => weekly_playlist::execute(&self.state, payload).await,
+            Job::LidarrSync(payload) => lidarr_sync::execute(&self.state, payload).await,
+            Job::Prefetch(payload) => prefetch::execute(&self.state, payload).await,
         }
     }
 }

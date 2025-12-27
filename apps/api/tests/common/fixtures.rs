@@ -19,7 +19,10 @@ impl TestEnvBuilder {
         // Set minimal defaults for development environment
         builder
             .set("ENVIRONMENT", "development")
-            .set("DATABASE_URL", "postgres://test:test@localhost:5432/resonance_test")
+            .set(
+                "DATABASE_URL",
+                "postgres://test:test@localhost:5432/resonance_test",
+            )
             .set("REDIS_URL", "redis://localhost:6379")
             .set("MUSIC_LIBRARY_PATH", "/tmp/test-music");
         builder
@@ -30,10 +33,16 @@ impl TestEnvBuilder {
         let mut builder = Self::default();
         builder
             .set("ENVIRONMENT", "production")
-            .set("DATABASE_URL", "postgres://prod:secret@prod-host:5432/resonance")
+            .set(
+                "DATABASE_URL",
+                "postgres://prod:secret@prod-host:5432/resonance",
+            )
             .set("REDIS_URL", "redis://prod-redis:6379")
             .set("MUSIC_LIBRARY_PATH", "/music")
-            .set("JWT_SECRET", "a-very-secure-secret-that-is-at-least-32-characters-long")
+            .set(
+                "JWT_SECRET",
+                "a-very-secure-secret-that-is-at-least-32-characters-long",
+            )
             .set("MEILISEARCH_KEY", "production-meilisearch-key");
         builder
     }
@@ -57,7 +66,10 @@ impl TestEnvBuilder {
 
     /// Get the environment variables as tuples for temp_env
     pub fn as_tuples(&self) -> Vec<(String, String)> {
-        self.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.vars
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 }
 

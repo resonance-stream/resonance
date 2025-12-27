@@ -56,11 +56,10 @@ pub async fn execute(state: &AppState, job: &WeeklyPlaylistJob) -> WorkerResult<
             tracing::info!("Generating weekly playlists for all users");
 
             // Get all active users
-            let users: Vec<UserRecord> = sqlx::query_as(
-                "SELECT id FROM users WHERE is_active = true"
-            )
-            .fetch_all(&state.db)
-            .await?;
+            let users: Vec<UserRecord> =
+                sqlx::query_as("SELECT id FROM users WHERE is_active = true")
+                    .fetch_all(&state.db)
+                    .await?;
 
             for user in users {
                 if let Err(e) = generate_for_user(state, user.id, track_count).await {
@@ -76,7 +75,11 @@ pub async fn execute(state: &AppState, job: &WeeklyPlaylistJob) -> WorkerResult<
 }
 
 /// Generate weekly playlist for a specific user
-async fn generate_for_user(state: &AppState, user_id: Uuid, track_count: usize) -> WorkerResult<()> {
+async fn generate_for_user(
+    state: &AppState,
+    user_id: Uuid,
+    track_count: usize,
+) -> WorkerResult<()> {
     tracing::debug!("Processing user: {}", user_id);
 
     // TODO: Implement playlist generation logic
@@ -101,7 +104,7 @@ async fn generate_for_user(state: &AppState, user_id: Uuid, track_count: usize) 
         GROUP BY g.name
         ORDER BY play_count DESC
         LIMIT 5
-        "#
+        "#,
     )
     .bind(user_id)
     .fetch_all(&state.db)

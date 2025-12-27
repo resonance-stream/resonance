@@ -34,8 +34,8 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
-        let common =
-            CommonConfig::from_env().map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+        let common = CommonConfig::from_env()
+            .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
 
         Ok(Self {
             common,

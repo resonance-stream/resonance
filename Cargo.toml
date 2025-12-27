@@ -10,7 +10,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/cjvana/resonance"
+repository = "https://github.com/resonance-stream/resonance"
 
 [workspace.dependencies]
 # Async runtime

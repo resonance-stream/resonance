@@ -73,14 +73,16 @@ pub async fn execute(state: &AppState, job: &FeatureExtractionJob) -> WorkerResu
     // 5. Store features in database
 
     // Placeholder: Query track info
-    let _track: Option<TrackInfo> = sqlx::query_as(
-        "SELECT id, file_path FROM tracks WHERE id = $1"
-    )
-    .bind(job.track_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let _track: Option<TrackInfo> =
+        sqlx::query_as("SELECT id, file_path FROM tracks WHERE id = $1")
+            .bind(job.track_id)
+            .fetch_optional(&state.db)
+            .await?;
 
-    tracing::info!("Feature extraction completed for track ID: {}", job.track_id);
+    tracing::info!(
+        "Feature extraction completed for track ID: {}",
+        job.track_id
+    );
 
     Ok(())
 }
