@@ -331,7 +331,11 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Use into_make_service_with_connect_info to enable ConnectInfo extractor
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

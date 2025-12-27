@@ -44,6 +44,7 @@ pub struct TrustedProxies {
     trust_private: bool,
 }
 
+#[allow(dead_code)] // Infrastructure for configurable proxy trust
 impl TrustedProxies {
     /// Create a new empty TrustedProxies config (trusts no forwarding headers)
     pub fn none() -> Self {
@@ -124,7 +125,7 @@ fn is_private_or_localhost(ip: &IpAddr) -> bool {
         IpAddr::V4(ipv4) => {
             ipv4.is_loopback()           // 127.0.0.0/8
                 || ipv4.is_private()     // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                || ipv4.is_link_local()  // 169.254.0.0/16
+                || ipv4.is_link_local() // 169.254.0.0/16
         }
         IpAddr::V6(ipv6) => {
             ipv6.is_loopback() // ::1
@@ -350,6 +351,7 @@ impl RateLimiter {
 
     /// Create a new rate limiter with a custom fallback (for testing)
     #[cfg(test)]
+    #[allow(dead_code)] // Available for tests that need custom fallback behavior
     pub fn with_fallback(redis: redis::Client, fallback: InMemoryRateLimiter) -> Self {
         Self {
             redis: Arc::new(redis),
@@ -578,6 +580,7 @@ impl AuthRateLimitState {
     }
 
     /// Create with custom configurations
+    #[allow(dead_code)] // Available for custom rate limit configuration
     pub fn with_config(
         redis_client: redis::Client,
         login_config: RateLimitConfig,
@@ -684,7 +687,17 @@ pub async fn register_rate_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::ConnectInfo;
     use axum::http::HeaderValue;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    /// Helper to create a ConnectInfo from localhost (trusted proxy)
+    fn localhost_connect_info() -> ConnectInfo<SocketAddr> {
+        ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            12345,
+        ))
+    }
 
     #[test]
     fn test_extract_client_ip_from_x_forwarded_for() {
@@ -694,7 +707,9 @@ mod tests {
             HeaderValue::from_static("203.0.113.1, 10.0.0.1"),
         );
 
-        let ip = extract_client_ip(&headers, None);
+        // With trusted proxy (localhost), headers are trusted
+        let connect_info = localhost_connect_info();
+        let ip = extract_client_ip(&headers, Some(&connect_info));
         assert_eq!(ip, "203.0.113.1");
     }
 
@@ -703,7 +718,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.42"));
 
-        let ip = extract_client_ip(&headers, None);
+        let connect_info = localhost_connect_info();
+        let ip = extract_client_ip(&headers, Some(&connect_info));
         assert_eq!(ip, "198.51.100.42");
     }
 
@@ -713,7 +729,8 @@ mod tests {
         headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
         headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.42"));
 
-        let ip = extract_client_ip(&headers, None);
+        let connect_info = localhost_connect_info();
+        let ip = extract_client_ip(&headers, Some(&connect_info));
         assert_eq!(ip, "203.0.113.1");
     }
 
@@ -723,8 +740,34 @@ mod tests {
         headers.insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
         headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.42"));
 
-        let ip = extract_client_ip(&headers, None);
+        let connect_info = localhost_connect_info();
+        let ip = extract_client_ip(&headers, Some(&connect_info));
         assert_eq!(ip, "198.51.100.42");
+    }
+
+    #[test]
+    fn test_extract_client_ip_ignores_headers_from_untrusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+
+        // With untrusted proxy (public IP), headers are ignored
+        let connect_info = ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            12345,
+        ));
+        let ip = extract_client_ip(&headers, Some(&connect_info));
+        // Falls back to the direct connection IP
+        assert_eq!(ip, "8.8.8.8");
+    }
+
+    #[test]
+    fn test_extract_client_ip_no_connect_info() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+
+        // Without connect_info, headers are not trusted
+        let ip = extract_client_ip(&headers, None);
+        assert_eq!(ip, "unknown");
     }
 
     #[test]

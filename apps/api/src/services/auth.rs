@@ -36,6 +36,7 @@ pub const MIN_PASSWORD_LENGTH: usize = 8;
 pub const MAX_PASSWORD_LENGTH: usize = 128;
 
 /// Maximum display name length
+#[allow(dead_code)] // Used for display name validation
 pub const MAX_DISPLAY_NAME_LENGTH: usize = 100;
 
 /// Authentication service configuration
@@ -58,6 +59,7 @@ impl AuthConfig {
     ///
     /// # Panics
     /// Panics if jwt_secret is shorter than MIN_JWT_SECRET_LENGTH (32 bytes)
+    #[allow(dead_code)] // Available for simpler initialization without expiry strings
     pub fn new(jwt_secret: String) -> Self {
         Self::validate_jwt_secret(&jwt_secret);
         Self {
@@ -223,13 +225,21 @@ impl AuthService {
 
         let user = self
             .user_repo
-            .create(email, &password_hash, display_name, UserRole::User, &preferences_json)
+            .create(
+                email,
+                &password_hash,
+                display_name,
+                UserRole::User,
+                &preferences_json,
+            )
             .await
             .map_err(|e| match &e {
-                sqlx::Error::Database(db_err) if db_err.is_unique_violation() => ApiError::Conflict {
-                    resource_type: "user",
-                    id: email.to_string(),
-                },
+                sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+                    ApiError::Conflict {
+                        resource_type: "user",
+                        id: email.to_string(),
+                    }
+                }
                 _ => ApiError::Database(e),
             })?;
 
@@ -684,26 +694,30 @@ pub fn validate_password_complexity(password: &str) -> PasswordValidation {
     // Check for at least one uppercase letter
     result.has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
     if !result.has_uppercase {
-        result.errors.push("Password must contain at least one uppercase letter".to_string());
+        result
+            .errors
+            .push("Password must contain at least one uppercase letter".to_string());
     }
 
     // Check for at least one lowercase letter
     result.has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
     if !result.has_lowercase {
-        result.errors.push("Password must contain at least one lowercase letter".to_string());
+        result
+            .errors
+            .push("Password must contain at least one lowercase letter".to_string());
     }
 
     // Check for at least one number
     result.has_number = password.chars().any(|c| c.is_ascii_digit());
     if !result.has_number {
-        result.errors.push("Password must contain at least one number".to_string());
+        result
+            .errors
+            .push("Password must contain at least one number".to_string());
     }
 
     // Password is valid if all requirements are met
-    result.is_valid = result.has_min_length
-        && result.has_uppercase
-        && result.has_lowercase
-        && result.has_number;
+    result.is_valid =
+        result.has_min_length && result.has_uppercase && result.has_lowercase && result.has_number;
 
     result
 }
@@ -827,9 +841,12 @@ mod tests {
         assert_ne!(hash, hash_token("different_token"));
     }
 
+    /// Test secret that meets the 32 character minimum requirement
+    const TEST_JWT_SECRET: &str = "test-jwt-secret-that-is-at-least-32-characters-long";
+
     #[test]
     fn test_auth_config_new() {
-        let config = AuthConfig::new("secret".to_string());
+        let config = AuthConfig::new(TEST_JWT_SECRET.to_string());
         assert_eq!(config.access_token_ttl_secs, 15 * 60);
         assert_eq!(config.refresh_token_ttl_secs, 7 * 24 * 3600);
         assert_eq!(config.issuer, "resonance");
@@ -838,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_auth_config_with_expiry_strings() {
-        let config = AuthConfig::with_expiry_strings("secret".to_string(), "30m", "14d");
+        let config = AuthConfig::with_expiry_strings(TEST_JWT_SECRET.to_string(), "30m", "14d");
         assert_eq!(config.access_token_ttl_secs, 30 * 60);
         assert_eq!(config.refresh_token_ttl_secs, 14 * 24 * 3600);
     }
@@ -846,7 +863,7 @@ mod tests {
     #[test]
     fn test_auth_config_invalid_expiry_uses_default() {
         let config =
-            AuthConfig::with_expiry_strings("secret".to_string(), "invalid", "also_invalid");
+            AuthConfig::with_expiry_strings(TEST_JWT_SECRET.to_string(), "invalid", "also_invalid");
         assert_eq!(config.access_token_ttl_secs, 15 * 60);
         assert_eq!(config.refresh_token_ttl_secs, 7 * 24 * 3600);
     }

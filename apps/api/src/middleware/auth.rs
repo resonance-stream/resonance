@@ -56,6 +56,7 @@ use crate::services::AuthService;
 /// }
 /// ```
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by handlers that consume this extractor
 pub struct AuthUser {
     /// The authenticated user
     pub user: User,
@@ -82,6 +83,7 @@ pub struct AuthUser {
 /// }
 /// ```
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by handlers that consume this extractor
 pub struct MaybeAuthUser {
     /// The authenticated user, if present
     pub user: Option<User>,
@@ -104,6 +106,7 @@ pub struct MaybeAuthUser {
 /// }
 /// ```
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by handlers that consume this extractor
 pub struct AdminUser {
     /// The authenticated admin user
     pub user: User,

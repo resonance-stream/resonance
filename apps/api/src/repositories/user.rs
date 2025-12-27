@@ -24,6 +24,7 @@ impl UserRepository {
     }
 
     /// Get a reference to the underlying connection pool
+    #[allow(dead_code)] // Available for direct pool access when needed
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -182,8 +183,6 @@ impl UserRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_user_repository_pool_accessor() {
         // This is a basic compile-time test to verify the API is correct.

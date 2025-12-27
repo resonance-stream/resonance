@@ -31,6 +31,7 @@ impl SessionRepository {
     }
 
     /// Get a reference to the underlying connection pool
+    #[allow(dead_code)] // Available for direct pool access when needed
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -225,6 +226,7 @@ impl SessionRepository {
     ///     }
     /// }
     /// ```
+    #[allow(dead_code)] // Used by background worker for session cleanup
     pub async fn delete_expired(&self, batch_size: i64) -> Result<u64, sqlx::Error> {
         let result = sqlx::query(
             r#"
@@ -256,6 +258,7 @@ impl SessionRepository {
     /// # Returns
     /// * `Ok(u64)` - The number of sessions that were deleted
     /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by background worker for session cleanup
     pub async fn delete_inactive_older_than(
         &self,
         older_than_days: i32,
@@ -283,8 +286,6 @@ impl SessionRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_session_repository_pool_accessor() {
         // This is a basic compile-time test to verify the API is correct.

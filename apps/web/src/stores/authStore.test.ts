@@ -1055,8 +1055,11 @@ describe('extractUserFromPayload (integration tests)', () => {
     expect(user?.createdAt).toBeDefined()
     expect(user?.updatedAt).toBeDefined()
     // The timestamps should be between beforeTime and afterTime
-    expect(user?.createdAt! >= beforeTime).toBe(true)
-    expect(user?.createdAt! <= afterTime).toBe(true)
+    expect(user).not.toBeNull()
+    if (user) {
+      expect(user.createdAt >= beforeTime).toBe(true)
+      expect(user.createdAt <= afterTime).toBe(true)
+    }
   })
 
   it('correctly maps all user fields', async () => {

@@ -121,6 +121,7 @@ pub struct User {
 
     /// ListenBrainz API token for scrobbling
     #[serde(skip_serializing)]
+    #[allow(dead_code)] // Used when ListenBrainz integration is implemented
     pub listenbrainz_token: Option<String>,
 
     /// Discord user ID for Rich Presence
@@ -159,6 +160,7 @@ impl From<User> for PublicUser {
 
 /// Session record from the sessions table
 #[derive(Debug, Clone, FromRow)]
+#[allow(dead_code)] // Infrastructure for session management features
 pub struct Session {
     /// Unique session identifier
     pub id: Uuid,
@@ -291,6 +293,7 @@ impl Claims {
     }
 
     /// Check if the token has expired
+    #[allow(dead_code)] // Useful helper for token validation
     pub fn is_expired(&self) -> bool {
         Utc::now().timestamp() > self.exp
     }
@@ -380,6 +383,7 @@ impl RefreshClaims {
     }
 
     /// Check if the refresh token has expired
+    #[allow(dead_code)] // Useful helper for token validation
     pub fn is_expired(&self) -> bool {
         Utc::now().timestamp() > self.exp
     }

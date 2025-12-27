@@ -38,6 +38,7 @@ impl GraphQLRateLimiter {
 
     /// Create a rate limiter with in-memory fallback only (for testing or when Redis unavailable)
     #[cfg(test)]
+    #[allow(dead_code)] // Available for tests that need in-memory rate limiting
     pub fn in_memory_only() -> Self {
         // Create a dummy Redis client that will fail to connect
         // This will cause the RateLimiter to use its in-memory fallback

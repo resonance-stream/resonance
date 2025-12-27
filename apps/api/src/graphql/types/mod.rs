@@ -5,4 +5,8 @@
 
 mod user;
 
-pub use user::{AuthPayload, RefreshPayload, User, UserRole};
+pub use user::{AuthPayload, RefreshPayload, User};
+
+// UserRole is available for future use when admin features are needed
+#[allow(unused_imports)]
+pub use user::UserRole;

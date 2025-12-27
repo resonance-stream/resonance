@@ -27,7 +27,7 @@ mod common;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
-    Extension, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -81,6 +81,7 @@ struct RefreshResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields used for deserialization validation
 struct UserResponse {
     id: Uuid,
     email: String,
@@ -90,6 +91,7 @@ struct UserResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields used for deserialization validation
 struct TokensResponse {
     access_token: String,
     refresh_token: String,
@@ -438,7 +440,10 @@ async fn test_register_tokens_can_be_used_for_refresh() {
     assert_eq!(refresh_body.tokens.token_type, "Bearer");
 
     // New refresh token should be different (token rotation)
-    assert_ne!(refresh_body.tokens.refresh_token, registration_refresh_token);
+    assert_ne!(
+        refresh_body.tokens.refresh_token,
+        registration_refresh_token
+    );
 
     // Cleanup
     cleanup_user(&pool, &email).await;
@@ -764,7 +769,7 @@ async fn test_logout_success() {
 
     // We need to inject services into extensions for the auth extractor to work
     // For this test, we'll create a custom app setup
-    use axum::{middleware, Extension};
+    use axum::Extension;
 
     let auth_svc = auth_service.clone();
     let app = Router::new()

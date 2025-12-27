@@ -11,8 +11,12 @@
 pub mod auth;
 pub mod health;
 
-pub use auth::{AuthConfig, AuthService};
+pub use auth::AuthService;
 pub use health::HealthService;
+
+// AuthConfig is available for custom configuration
+#[allow(unused_imports)]
+pub use auth::AuthConfig;
 
 // Future modules:
 // pub mod audio;

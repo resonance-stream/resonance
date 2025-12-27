@@ -8,7 +8,8 @@
 
 pub mod user;
 
-// Re-export commonly used types
+// Re-export commonly used types for external consumers
+#[allow(unused_imports)]
 pub use user::{
     AuthTokens, Claims, DeviceInfo, DeviceType, PublicUser, RefreshClaims, Session, User,
     UserPreferences, UserRole,
