@@ -1,4 +1,6 @@
-# CLAUDE.md - Resonance Project Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -48,6 +50,7 @@ resonance/
 │           └── pages/          # Route pages
 │
 ├── packages/
+│   ├── shared-config/          # Shared Rust configuration types
 │   └── shared-types/           # Shared TypeScript types (GraphQL codegen)
 │
 ├── docker/
@@ -113,8 +116,14 @@ cargo run -p resonance-api
 # Run worker (from apps/worker)
 cargo run -p resonance-worker
 
-# Run tests
+# Run all tests
 cargo test
+
+# Run a single test by name
+cargo test test_name
+
+# Run tests in a specific package
+cargo test -p resonance-api
 
 # Run tests with coverage
 cargo tarpaulin
@@ -140,11 +149,17 @@ pnpm dev
 # Build for production
 pnpm build
 
-# Run tests
+# Run all tests
 pnpm test
 
 # Run tests in watch mode
 pnpm test:watch
+
+# Run a single test file
+pnpm test src/stores/playerStore.test.ts
+
+# Run tests matching a pattern
+pnpm test -- -t "pattern"
 
 # Lint
 pnpm lint
@@ -277,42 +292,29 @@ Device C ──┘     └─────────────┘
 - **Client State**: Zustand for player, UI state
 - **Sync State**: WebSocket subscription for cross-device
 
+### Background Worker Jobs
+The worker (`apps/worker`) handles scheduled background tasks:
+- `library_scan.rs` - Scans music library for new/changed files
+- `feature_extraction.rs` - Extracts audio features for recommendations
+- `embedding_generation.rs` - Generates AI embeddings via Ollama
+- `weekly_playlist.rs` - Creates weekly discovery playlists
+- `lidarr_sync.rs` - Syncs with Lidarr for library management
+- `prefetch.rs` - Smart prefetch for autoplay queue
+
 ---
 
 ## Testing
 
 ### Rust
-```bash
-# Unit tests
-cargo test
-
-# Integration tests (requires running database)
-cargo test --test '*' -- --test-threads=1
-
-# Specific test
-cargo test test_name
-```
-
-Test files location:
-- Unit tests: Inline in `src/` files
-- Integration tests: `apps/api/tests/`
+- Unit tests: Inline in `src/` files (run with `cargo test`)
+- Integration tests: `apps/api/tests/` (require running database)
+- Use `cargo test --test '*' -- --test-threads=1` for integration tests
 
 ### Frontend
-```bash
-# Run all tests
-pnpm test
-
-# Watch mode
-pnpm test:watch
-
-# Coverage
-pnpm test:coverage
-```
-
-Testing stack:
-- **Vitest**: Test runner
-- **React Testing Library**: Component testing
-- **MSW**: API mocking
+- **Vitest** for test runner
+- **React Testing Library** for component testing
+- **MSW** for API mocking
+- Test files: Co-located with source (e.g., `playerStore.test.ts`)
 
 ---
 
@@ -383,11 +385,12 @@ cargo sqlx prepare --workspace
 
 ## Environment Variables
 
+Copy `.env.example` to `.env` and configure. Key variables:
+
 ### Required
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `DB_PASSWORD` | Database password |
+| `DB_PASSWORD` | PostgreSQL password (generates `DATABASE_URL`) |
 | `JWT_SECRET` | Secret for JWT signing (min 32 chars) |
 | `MEILISEARCH_KEY` | Meilisearch master key |
 | `LIDARR_URL` | Lidarr instance URL |
@@ -398,12 +401,10 @@ cargo sqlx prepare --workspace
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | API server port |
-| `REDIS_URL` | `redis://localhost` | Redis connection |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
+| `REDIS_URL` | `redis://redis:6379` | Redis connection |
+| `OLLAMA_URL` | `http://ollama:11434` | Ollama API URL |
 | `OLLAMA_MODEL` | `mistral` | Ollama model to use |
-| `LISTENBRAINZ_API_KEY` | - | ListenBrainz scrobbling |
-| `DISCORD_CLIENT_ID` | - | Discord Rich Presence |
-| `LOG_LEVEL` | `info` | Logging verbosity |
+| `RUST_LOG` | `info` | Logging verbosity (e.g., `debug`, `resonance_api=debug,sqlx=warn`) |
 
 ---
 
