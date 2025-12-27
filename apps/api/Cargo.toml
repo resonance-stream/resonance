@@ -55,3 +55,19 @@ resonance-shared-config = { workspace = true }
 [[bin]]
 name = "resonance-api"
 path = "src/main.rs"
+
+[dev-dependencies]
+# Test utilities
+tokio-test = { workspace = true }
+temp-env = { workspace = true }
+assert_matches = { workspace = true }
+test-log = { workspace = true }
+tracing-test = { workspace = true }
+wiremock = { workspace = true }
+fake = { workspace = true }
+rstest = { workspace = true }
+once_cell = { workspace = true }
+
+# HTTP testing
+axum-test = "14"
+tower = { workspace = true, features = ["util"] }
