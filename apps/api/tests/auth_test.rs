@@ -223,7 +223,7 @@ async fn test_register_success() {
     let email = unique_email();
     let request = RegisterRequest {
         email: email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -259,7 +259,7 @@ async fn test_register_duplicate_email() {
     let email = unique_email();
     let request = RegisterRequest {
         email: email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -304,7 +304,7 @@ async fn test_register_invalid_email() {
     for invalid_email in test_cases {
         let request = RegisterRequest {
             email: invalid_email.to_string(),
-            password: "secure_password_123".to_string(),
+            password: "Secure_Password_123".to_string(),
             display_name: "Test User".to_string(),
         };
 
@@ -362,7 +362,7 @@ async fn test_register_email_case_insensitive() {
     // Register with uppercase email
     let request = RegisterRequest {
         email: base_email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -380,7 +380,7 @@ async fn test_register_email_case_insensitive() {
     // Try to register again with lowercase version - should fail
     let request = RegisterRequest {
         email: base_email.to_lowercase(),
-        password: "another_password_123".to_string(),
+        password: "Another_Password_123".to_string(),
         display_name: "Another User".to_string(),
     };
 
@@ -404,7 +404,7 @@ async fn test_register_tokens_can_be_used_for_refresh() {
     let email = unique_email();
     let request = RegisterRequest {
         email: email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -458,7 +458,7 @@ async fn test_login_success() {
     let app = create_test_router(auth_service);
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // First, register a user
     let register_request = RegisterRequest {
@@ -508,7 +508,7 @@ async fn test_login_invalid_password() {
     // Register a user
     let register_request = RegisterRequest {
         email: email.clone(),
-        password: "correct_password_123".to_string(),
+        password: "Correct_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -522,7 +522,7 @@ async fn test_login_invalid_password() {
     // Try to login with wrong password
     let login_request = LoginRequest {
         email: email.clone(),
-        password: "wrong_password_123".to_string(),
+        password: "Wrong_Password_123".to_string(),
     };
 
     let response = app
@@ -547,7 +547,7 @@ async fn test_login_nonexistent_user() {
 
     let login_request = LoginRequest {
         email: format!("nonexistent_{}@example.com", Uuid::new_v4()),
-        password: "any_password_123".to_string(),
+        password: "Any_Password_123".to_string(),
     };
 
     let response = app
@@ -568,7 +568,7 @@ async fn test_login_email_case_insensitive() {
     let app = create_test_router(auth_service);
 
     let email = format!("test_{}@example.com", Uuid::new_v4());
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register with lowercase email
     let register_request = RegisterRequest {
@@ -613,7 +613,7 @@ async fn test_refresh_token_success() {
     let app = create_test_router(auth_service);
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register
     let register_request = RegisterRequest {
@@ -698,7 +698,7 @@ async fn test_refresh_token_rotation_prevents_reuse() {
     let app = create_test_router(auth_service);
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register and login
     let register_request = RegisterRequest {
@@ -778,7 +778,7 @@ async fn test_logout_success() {
         .layer(Extension(pool.clone()));
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register
     let register_request = RegisterRequest {
@@ -896,7 +896,7 @@ async fn test_logout_prevents_refresh_token_usage() {
         .layer(Extension(pool.clone()));
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register
     let register_request = RegisterRequest {
@@ -963,7 +963,7 @@ async fn test_multiple_login_sessions() {
     let app = create_test_router(auth_service);
 
     let email = unique_email();
-    let password = "secure_password_123";
+    let password = "Secure_Password_123";
 
     // Register
     let register_request = RegisterRequest {
@@ -1047,7 +1047,7 @@ async fn test_register_with_whitespace_email() {
 
     let request = RegisterRequest {
         email: email_with_spaces,
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -1081,7 +1081,7 @@ async fn test_login_with_empty_password() {
     // Register first with a valid password
     let register_request = RegisterRequest {
         email: email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: "Test User".to_string(),
     };
 
@@ -1120,7 +1120,7 @@ async fn test_register_very_long_display_name() {
 
     let request = RegisterRequest {
         email: email.clone(),
-        password: "secure_password_123".to_string(),
+        password: "Secure_Password_123".to_string(),
         display_name: long_name.clone(),
     };
 
