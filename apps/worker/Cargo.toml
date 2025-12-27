@@ -1,0 +1,40 @@
+[package]
+name = "resonance-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Resonance background job processor"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+
+# External services
+redis = { workspace = true }
+reqwest = { workspace = true }
+
+# Audio
+symphonia = { workspace = true }
+
+[[bin]]
+name = "resonance-worker"
+path = "src/main.rs"

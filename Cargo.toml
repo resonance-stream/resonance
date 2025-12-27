@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/api",
+    "apps/worker",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/cjvana/resonance"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Database
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
+
+# GraphQL
+async-graphql = "6"
+async-graphql-axum = "6"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+anyhow = "1"
+dotenvy = "0.15"
+
+# External services
+redis = { version = "0.24", features = ["tokio-comp"] }
+meilisearch-sdk = "0.25"
+reqwest = { version = "0.11", features = ["json"] }
+
+# Audio
+symphonia = { version = "0.5", features = ["all"] }
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
