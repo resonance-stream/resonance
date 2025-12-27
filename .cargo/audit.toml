@@ -24,6 +24,11 @@ ignore = [
     # instant is unmaintained - comes from meilisearch-sdk via isahc
     # Tracked: Waiting for upstream crates to update
     "RUSTSEC-2024-0384",
+
+    # rsa 0.9.x has a timing sidechannel vulnerability - from sqlx-mysql
+    # No fix available yet, and we're using PostgreSQL not MySQL
+    # This dependency is pulled in by sqlx even with only postgres feature
+    "RUSTSEC-2023-0071",
 ]
 
 # Treat warnings as non-fatal (don't fail the build for warnings)
