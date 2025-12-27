@@ -1,0 +1,25 @@
+# Issue template chooser configuration
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+blank_issues_enabled: true
+
+contact_links:
+  - name: Questions & Help
+    url: https://github.com/resonance-stream/resonance/discussions/categories/q-a
+    about: Ask questions and get help from the community in GitHub Discussions.
+
+  - name: Feature Ideas & Suggestions
+    url: https://github.com/resonance-stream/resonance/discussions/categories/ideas
+    about: Share and discuss feature ideas before creating a formal feature request.
+
+  - name: General Discussion
+    url: https://github.com/resonance-stream/resonance/discussions
+    about: Connect with the community for general discussions about Resonance.
+
+  - name: Documentation
+    url: https://github.com/resonance-stream/resonance#readme
+    about: Check the documentation for setup guides and usage information.
+
+  - name: Security Vulnerabilities
+    url: https://github.com/resonance-stream/resonance/security/advisories/new
+    about: Report security vulnerabilities privately. Please do not create public issues for security concerns.
