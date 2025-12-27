@@ -6,8 +6,15 @@
 //! - Playlists and user library
 //! - Recommendations and AI features
 
+pub mod user;
+
+// Re-export commonly used types
+pub use user::{
+    AuthTokens, Claims, DeviceInfo, DeviceType, PublicUser, RefreshClaims, Session, User,
+    UserPreferences, UserRole,
+};
+
 // Future modules:
-// pub mod user;
 // pub mod artist;
 // pub mod album;
 // pub mod track;
