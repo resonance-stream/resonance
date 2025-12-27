@@ -1,0 +1,22 @@
+# Cargo audit configuration
+# See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# Ignore advisories for unmaintained crates in transitive dependencies
+# These are dependencies of dependencies that we cannot directly update
+ignore = [
+    # rustls-pemfile 1.0.x is unmaintained - comes from reqwest 0.11.x
+    # Tracked: We'll update when reqwest 0.12.x stabilizes
+    "RUSTSEC-2025-0134",
+
+    # paste 1.0.15 is unmaintained - comes from sqlx 0.7.x
+    # Tracked: Waiting for sqlx to update their dependency
+    "RUSTSEC-2024-0436",
+
+    # http 0.2.x is unmaintained - comes from meilisearch-sdk, wiremock
+    # Tracked: These crates need to migrate to http 1.x
+    "RUSTSEC-2024-0421",
+]
+
+# Treat warnings as non-fatal (don't fail the build for warnings)
+informational_warnings = ["unmaintained"]

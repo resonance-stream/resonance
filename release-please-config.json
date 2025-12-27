@@ -42,11 +42,6 @@
     {
       "type": "cargo-workspace",
       "merge": true
-    },
-    {
-      "type": "linked-versions",
-      "groupName": "resonance",
-      "components": ["resonance", "web"]
     }
   ]
 }
