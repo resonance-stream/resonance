@@ -156,6 +156,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "fast_chemail",
  "fnv",
  "futures-timer",
@@ -175,6 +176,7 @@ dependencies = [
  "static_assertions_next",
  "tempfile",
  "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
@@ -2483,6 +2485,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "symphonia",
  "temp-env",

@@ -1,13 +1,16 @@
 //! GraphQL schema and resolvers for Resonance
 //!
 //! This module contains the async-graphql schema including:
-//! - Query resolvers for library, search, recommendations
-//! - Mutation resolvers for playlists, settings
-//! - Subscription resolvers for real-time sync
+//! - Query resolvers for user data, library, search, recommendations
+//! - Mutation resolvers for authentication, playlists, settings
+//! - Type definitions for all GraphQL objects
 
-// Future modules:
-// pub mod schema;
-// pub mod query;
-// pub mod mutation;
-// pub mod subscription;
-// pub mod types;
+pub mod mutation;
+pub mod query;
+pub mod schema;
+pub mod types;
+
+pub use mutation::Mutation;
+pub use query::Query;
+pub use schema::{build_schema, ResonanceSchema, SchemaBuilder};
+pub use types::{AuthPayload, RefreshPayload, User, UserRole};
