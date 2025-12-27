@@ -1,0 +1,245 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  # Rust dependency vulnerability scanning with cargo-audit
+  cargo-audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/advisory-db
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit-
+
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
+
+      - name: Run cargo audit (JSON output for artifacts)
+        if: always()
+        run: cargo audit --json > cargo-audit-report.json || true
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-audit-report
+          path: cargo-audit-report.json
+          retention-days: 30
+
+  # Rust security linting with cargo-deny
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+          arguments: --all-features
+        continue-on-error: true
+
+  # npm dependency vulnerability scanning
+  npm-audit:
+    name: npm Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run npm audit
+        run: pnpm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Run npm audit (JSON output)
+        if: always()
+        run: pnpm audit --json > npm-audit-report.json || true
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: npm-audit-report.json
+          retention-days: 30
+
+  # CodeQL analysis for code security scanning
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+        # Note: Rust is currently in beta for CodeQL
+        # Uncomment below when Rust support is stable
+        # language: ['javascript-typescript', 'rust']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      # For compiled languages like Rust, we need to build
+      # Currently focusing on JS/TS which doesn't require build
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # Rust-specific CodeQL (experimental/beta)
+  codeql-rust:
+    name: CodeQL Rust Analysis
+    runs-on: ubuntu-latest
+    # Run on schedule and main branch only (beta feature)
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-codeql-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-codeql-
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+          queries: security-extended
+
+      - name: Build Rust code
+        run: cargo build --release
+        env:
+          SQLX_OFFLINE: true
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:rust"
+    continue-on-error: true
+
+  # Trivy vulnerability scanner for comprehensive analysis
+  trivy:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy for secrets scanning
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'secret'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+  # SARIF upload aggregation for security tab
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [cargo-audit, npm-audit, codeql, trivy]
+    if: always()
+    steps:
+      - name: Security scan summary
+        run: |
+          echo "## Security Scan Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cargo Audit | ${{ needs.cargo-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm Audit | ${{ needs.npm-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy | ${{ needs.trivy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results in the Security tab and job artifacts." >> $GITHUB_STEP_SUMMARY

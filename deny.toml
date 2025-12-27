@@ -1,0 +1,92 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# If true, metadata will be collected with `--all-features`.
+all-features = true
+
+[advisories]
+# The database of advisories to check against
+db-path = "~/.cargo/advisory-db"
+# The url of the advisory database to use
+url = "https://github.com/rustsec/advisory-db"
+# How often to fetch the advisory database
+fetch = "always"
+# The lint level for crates with security vulnerabilities
+vulnerability = "deny"
+# The lint level for unmaintained crates
+unmaintained = "warn"
+# The lint level for crates that have been yanked
+yanked = "warn"
+# The lint level for crates with security notices
+notice = "warn"
+
+# List of advisory IDs to ignore (use sparingly and document why)
+ignore = [
+    # Example: "RUSTSEC-2020-0001", # reason for ignoring
+]
+
+[licenses]
+# The confidence threshold for detecting license text
+confidence-threshold = 0.8
+# List of explicitly allowed licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "Unlicense",
+]
+# The lint level for crates with copyleft licenses
+copyleft = "warn"
+# Allow licenses that are exactly specified
+allow-osi-fsf-free = "either"
+# The default license lint level
+default = "deny"
+
+# Crates that have non-standard licenses
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+# Lint level for multiple versions of the same crate
+multiple-versions = "warn"
+# Lint level for when a crate is found multiple times but differs in features
+wildcards = "allow"
+# Allow specific duplicates
+allow-build-scripts = ["ring"]
+
+# List of crates to deny (e.g., unmaintained or dangerous)
+deny = [
+    # Crates with known issues
+    # { name = "example-crate", reason = "Known security issues" }
+]
+
+# Skip certain crates when checking for duplicates
+skip = [
+    # { name = "example", version = "*" }
+]
+
+# Skip checking the entire tree for these crates
+skip-tree = [
+    # { name = "example", version = "*" }
+]
+
+[sources]
+# Lint level for crates not from crates.io
+unknown-registry = "warn"
+# Lint level for crates from git repositories
+unknown-git = "warn"
+# Allow specific registries
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Allow specific git sources
+allow-git = []
