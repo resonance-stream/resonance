@@ -29,7 +29,8 @@ updates:
       - "rust"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
     groups:
       # Group minor and patch updates for tokio ecosystem
       tokio:
@@ -127,7 +128,8 @@ updates:
       - "javascript"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
     versioning-strategy: increase
     groups:
       # Group all dev dependencies
@@ -159,7 +161,8 @@ updates:
       - "frontend"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
     versioning-strategy: increase
     groups:
       # Group React ecosystem updates
@@ -287,7 +290,8 @@ updates:
       - "shared"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
     versioning-strategy: increase
     groups:
       # Group GraphQL codegen tools
@@ -335,7 +339,8 @@ updates:
       - "ci"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
     groups:
       # Group all GitHub Actions updates
       github-actions:
@@ -365,4 +370,5 @@ updates:
       - "infrastructure"
       - "automated"
     reviewers:
-      - "resonance-stream/maintainers"
+      # TODO: Replace with "@resonance-stream/maintainers" once GitHub team is created
+      - "cj-vana"
