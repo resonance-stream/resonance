@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::error::{ApiError, ApiResult};
+use crate::error::ApiResult;
+use crate::middleware::AuthUser;
 use crate::models::user::{AuthTokens, DeviceInfo, User};
 use crate::services::AuthService;
 
@@ -77,13 +78,6 @@ pub struct LoginRequest {
 pub struct RefreshRequest {
     /// The refresh token from a previous login/refresh
     pub refresh_token: String,
-}
-
-/// Logout request body
-#[derive(Debug, Deserialize)]
-pub struct LogoutRequest {
-    /// The session ID to invalidate
-    pub session_id: Uuid,
 }
 
 /// User response (safe to return to client)
@@ -235,21 +229,25 @@ async fn refresh(
     Ok(Json(response))
 }
 
-/// Logout and invalidate session
+/// Logout and invalidate current session
 ///
 /// # Request
 /// - Method: DELETE
 /// - Path: /auth/logout
-/// - Body: JSON with session_id
+/// - Headers: Authorization: Bearer <access_token>
 ///
 /// # Response
 /// - 200 OK: Session invalidated
-/// - 404 Not Found: Session not found
+/// - 401 Unauthorized: Missing or invalid token
+///
+/// # Security
+/// This endpoint extracts the session ID from the authenticated user's JWT claims,
+/// ensuring users can only invalidate their own sessions.
 async fn logout(
     State(state): State<AuthState>,
-    Json(request): Json<LogoutRequest>,
+    auth: AuthUser,
 ) -> ApiResult<impl IntoResponse> {
-    state.auth_service.logout(request.session_id).await?;
+    state.auth_service.logout(auth.session_id).await?;
 
     let response = LogoutResponse {
         message: "Logged out successfully".to_string(),
