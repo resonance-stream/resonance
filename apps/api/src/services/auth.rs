@@ -20,6 +20,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::user::{
     AuthTokens, Claims, DeviceInfo, RefreshClaims, User, UserPreferences, UserRole,
 };
+use crate::repositories::UserRepository;
 
 /// Authentication service configuration
 #[derive(Debug, Clone)]
@@ -102,6 +103,8 @@ pub struct AuthService {
     /// We verify against this hash when a user is not found to ensure
     /// consistent response times regardless of whether the email exists.
     dummy_password_hash: String,
+    /// User repository for centralized database operations
+    user_repo: UserRepository,
 }
 
 impl AuthService {
@@ -119,11 +122,15 @@ impl AuthService {
             .expect("dummy password hashing should not fail")
             .to_string();
 
+        // Create user repository for centralized database operations
+        let user_repo = UserRepository::new(pool.clone());
+
         Self {
             pool,
             config,
             argon2,
             dummy_password_hash,
+            user_repo,
         }
     }
 
@@ -160,12 +167,8 @@ impl AuthService {
             ));
         }
 
-        // Check if email already exists
-        let existing: bool =
-            sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"#)
-                .bind(email.to_lowercase())
-                .fetch_one(&self.pool)
-                .await?;
+        // Check if email already exists using repository
+        let existing = self.user_repo.email_exists(email).await?;
 
         if existing {
             return Err(ApiError::Conflict {
@@ -177,47 +180,76 @@ impl AuthService {
         // Hash password with Argon2id
         let password_hash = self.hash_password(password)?;
 
-        // Create user with default preferences
+        // Create user with default preferences using repository
         let preferences_json = serde_json::to_value(UserPreferences::default())?;
 
-        let user: User = sqlx::query_as(
-            r#"
-            INSERT INTO users (email, password_hash, display_name, role, preferences)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING
-                id,
-                email,
-                password_hash,
-                display_name,
-                avatar_url,
-                role,
-                preferences,
-                listenbrainz_token,
-                discord_user_id,
-                email_verified,
-                last_seen_at,
-                created_at,
-                updated_at
-            "#,
-        )
-        .bind(email.to_lowercase())
-        .bind(&password_hash)
-        .bind(display_name)
-        .bind(UserRole::User)
-        .bind(&preferences_json)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(db_err) if db_err.is_unique_violation() => ApiError::Conflict {
-                resource_type: "user",
-                id: email.to_string(),
-            },
-            _ => ApiError::Database(e),
-        })?;
+        let user = self
+            .user_repo
+            .create(email, &password_hash, display_name, UserRole::User, &preferences_json)
+            .await
+            .map_err(|e| match &e {
+                sqlx::Error::Database(db_err) if db_err.is_unique_violation() => ApiError::Conflict {
+                    resource_type: "user",
+                    id: email.to_string(),
+                },
+                _ => ApiError::Database(e),
+            })?;
 
         tracing::info!(user_id = %user.id, email = %user.email, "User registered successfully");
 
         Ok(user)
+    }
+
+    /// Register a new user and immediately create a session with tokens
+    ///
+    /// This optimized method combines registration and session creation to avoid
+    /// the need for a separate login call after registration. Since we just hashed
+    /// the password during registration, we can directly create tokens without
+    /// re-hashing (which would happen if login() were called separately).
+    ///
+    /// # Arguments
+    /// * `email` - User's email address (must be unique)
+    /// * `password` - User's plaintext password (will be hashed with Argon2id)
+    /// * `display_name` - User's display name
+    /// * `device_info` - Optional device information for the session
+    /// * `ip_address` - Optional client IP address
+    /// * `user_agent` - Optional client user agent
+    ///
+    /// # Returns
+    /// Tuple of (User, AuthTokens) on success - user is logged in immediately
+    ///
+    /// # Errors
+    /// - `ApiError::Conflict` if email already exists
+    /// - `ApiError::ValidationError` if email or password is invalid
+    pub async fn register_with_session(
+        &self,
+        email: &str,
+        password: &str,
+        display_name: &str,
+        device_info: Option<DeviceInfo>,
+        ip_address: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> ApiResult<(User, AuthTokens)> {
+        // Register the user (password is hashed here)
+        let user = self.register(email, password, display_name).await?;
+
+        // Create session directly - no need to verify password again since we just
+        // created the user with that password. This saves an expensive Argon2id
+        // verification operation.
+        let tokens = self
+            .create_session(&user, device_info, ip_address, user_agent)
+            .await?;
+
+        // Update last seen using repository
+        self.user_repo.update_last_seen(user.id).await?;
+
+        tracing::info!(
+            user_id = %user.id,
+            email = %user.email,
+            "User registered and session created successfully"
+        );
+
+        Ok((user, tokens))
     }
 
     /// Authenticate a user and create a new session
@@ -242,30 +274,8 @@ impl AuthService {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> ApiResult<(User, AuthTokens)> {
-        // Find user by email
-        let user: Option<User> = sqlx::query_as(
-            r#"
-            SELECT
-                id,
-                email,
-                password_hash,
-                display_name,
-                avatar_url,
-                role,
-                preferences,
-                listenbrainz_token,
-                discord_user_id,
-                email_verified,
-                last_seen_at,
-                created_at,
-                updated_at
-            FROM users
-            WHERE email = $1
-            "#,
-        )
-        .bind(email.to_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
+        // Find user by email using repository
+        let user = self.user_repo.find_by_email(email).await?;
 
         // SECURITY: Timing attack prevention for user enumeration
         // We must verify a password hash regardless of whether the user exists.
@@ -305,11 +315,8 @@ impl AuthService {
             .create_session(&user, device_info, ip_address, user_agent)
             .await?;
 
-        // Update last seen
-        sqlx::query("UPDATE users SET last_seen_at = NOW() WHERE id = $1")
-            .bind(user.id)
-            .execute(&self.pool)
-            .await?;
+        // Update last seen using repository
+        self.user_repo.update_last_seen(user.id).await?;
 
         tracing::info!(user_id = %user.id, email = %user.email, "User logged in successfully");
 
@@ -359,30 +366,12 @@ impl AuthService {
             return Err(ApiError::InvalidToken("session expired".to_string()));
         }
 
-        // Get user for new token generation
-        let user: User = sqlx::query_as(
-            r#"
-            SELECT
-                id,
-                email,
-                password_hash,
-                display_name,
-                avatar_url,
-                role,
-                preferences,
-                listenbrainz_token,
-                discord_user_id,
-                email_verified,
-                last_seen_at,
-                created_at,
-                updated_at
-            FROM users
-            WHERE id = $1
-            "#,
-        )
-        .bind(session.user_id)
-        .fetch_one(&self.pool)
-        .await?;
+        // Get user for new token generation using repository
+        let user = self
+            .user_repo
+            .find_by_id(session.user_id)
+            .await?
+            .ok_or_else(|| ApiError::InvalidToken("user not found".to_string()))?;
 
         // Generate new tokens
         let (access_token, new_refresh_token) = self.generate_token_pair(&user, session.id)?;

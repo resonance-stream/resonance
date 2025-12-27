@@ -105,6 +105,9 @@ pub struct RegisterRequest {
     pub password: String,
     /// Display name for the user
     pub display_name: String,
+    /// Optional device information for immediate session creation
+    #[serde(default)]
+    pub device_info: Option<DeviceInfo>,
 }
 
 /// Login request body
@@ -154,6 +157,7 @@ impl From<User> for UserResponse {
 #[derive(Debug, Serialize)]
 pub struct RegisterResponse {
     pub user: UserResponse,
+    pub tokens: AuthTokens,
     pub message: String,
 }
 
@@ -183,23 +187,48 @@ pub struct LogoutResponse {
 /// # Request
 /// - Method: POST
 /// - Path: /auth/register
-/// - Body: JSON with email, password, display_name
+/// - Body: JSON with email, password, display_name, optional device_info
 ///
 /// # Response
-/// - 201 Created: User registered successfully
+/// - 201 Created: User registered and logged in successfully with tokens
 /// - 400 Bad Request: Invalid input (weak password, invalid email)
 /// - 409 Conflict: Email already exists
+///
+/// # Performance Optimization
+/// This endpoint creates a session immediately after registration, avoiding
+/// the need to call login separately. This saves an expensive Argon2id
+/// password verification operation since we just hashed the password.
 async fn register(
     State(state): State<AuthState>,
+    headers: HeaderMap,
     Json(request): Json<RegisterRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    let user = state
+    // Extract client info from headers (same as login)
+    let ip_address = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim());
+
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+
+    let (user, tokens) = state
         .auth_service
-        .register(&request.email, &request.password, &request.display_name)
+        .register_with_session(
+            &request.email,
+            &request.password,
+            &request.display_name,
+            request.device_info,
+            ip_address,
+            user_agent,
+        )
         .await?;
 
     let response = RegisterResponse {
         user: user.into(),
+        tokens,
         message: "Registration successful".to_string(),
     };
 
@@ -289,10 +318,7 @@ async fn refresh(
 /// # Security
 /// This endpoint extracts the session ID from the authenticated user's JWT claims,
 /// ensuring users can only invalidate their own sessions.
-async fn logout(
-    State(state): State<AuthState>,
-    auth: AuthUser,
-) -> ApiResult<impl IntoResponse> {
+async fn logout(State(state): State<AuthState>, auth: AuthUser) -> ApiResult<impl IntoResponse> {
     state.auth_service.logout(auth.session_id).await?;
 
     let response = LogoutResponse {

@@ -65,6 +65,7 @@ struct RefreshRequest {
 #[derive(Debug, Deserialize)]
 struct RegisterResponse {
     user: UserResponse,
+    tokens: TokensResponse,
     message: String,
 }
 
@@ -238,6 +239,11 @@ async fn test_register_success() {
     assert!(!body.user.email_verified);
     assert_eq!(body.message, "Registration successful");
 
+    // Verify that tokens are returned immediately (optimization to avoid re-hashing)
+    assert!(!body.tokens.access_token.is_empty());
+    assert!(!body.tokens.refresh_token.is_empty());
+    assert_eq!(body.tokens.token_type, "Bearer");
+
     // Cleanup
     cleanup_user(&pool, &email).await;
 }
@@ -385,6 +391,57 @@ async fn test_register_email_case_insensitive() {
 
     // Cleanup
     cleanup_user(&pool, &base_email).await;
+}
+
+#[tokio::test]
+async fn test_register_tokens_can_be_used_for_refresh() {
+    require_db!(pool);
+    let auth_service = create_auth_service(pool.clone());
+    let app = create_test_router(auth_service);
+
+    let email = unique_email();
+    let request = RegisterRequest {
+        email: email.clone(),
+        password: "secure_password_123".to_string(),
+        display_name: "Test User".to_string(),
+    };
+
+    // Register - should receive tokens immediately
+    let response = app
+        .clone()
+        .oneshot(json_post_request("/register", &request))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body: RegisterResponse = parse_body(response).await;
+    let registration_refresh_token = body.tokens.refresh_token.clone();
+    assert!(!registration_refresh_token.is_empty());
+
+    // Use the registration refresh token to get new tokens
+    // This proves that registration creates a valid session without needing login
+    let refresh_request = RefreshRequest {
+        refresh_token: registration_refresh_token.clone(),
+    };
+
+    let response = app
+        .clone()
+        .oneshot(json_post_request("/refresh", &refresh_request))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let refresh_body: RefreshResponse = parse_body(response).await;
+    assert!(!refresh_body.tokens.access_token.is_empty());
+    assert!(!refresh_body.tokens.refresh_token.is_empty());
+    assert_eq!(refresh_body.tokens.token_type, "Bearer");
+
+    // New refresh token should be different (token rotation)
+    assert_ne!(refresh_body.tokens.refresh_token, registration_refresh_token);
+
+    // Cleanup
+    cleanup_user(&pool, &email).await;
 }
 
 // ========== Login Tests ==========
