@@ -32,7 +32,7 @@ dotenvy = { workspace = true }
 redis = { workspace = true }
 reqwest = { workspace = true }
 
-# Audio
+# Audio processing
 symphonia = { workspace = true }
 
 [[bin]]
