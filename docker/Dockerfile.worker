@@ -1,0 +1,134 @@
+# ============================================================================
+# Resonance Worker - Multi-Stage Docker Build
+# ============================================================================
+# Background job processor for scheduled tasks including:
+# - AI-powered recommendation generation
+# - Music library scanning and metadata extraction
+# - Audio transcoding and normalization
+# - Lidarr integration for automatic downloads
+# ============================================================================
+# Stage 1: Builder - Compile Rust application
+# Stage 2: Runtime - Minimal production image
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Stage 1: Builder
+# ----------------------------------------------------------------------------
+FROM rust:1.75-slim AS builder
+
+# Install build dependencies
+# - pkg-config: Required for finding system libraries
+# - libssl-dev: SSL/TLS support for HTTPS connections
+# - libpq-dev: PostgreSQL client library for SQLx
+# - libavcodec-dev, libavformat-dev, libavutil-dev: FFmpeg libraries for audio processing
+# - ca-certificates: Root certificates for HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    libpq-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy Cargo manifests first for dependency caching
+# This allows Docker to cache the dependency build layer
+COPY Cargo.toml Cargo.lock ./
+COPY apps/api/Cargo.toml ./apps/api/
+COPY apps/worker/Cargo.toml ./apps/worker/
+
+# Create dummy source files for dependency compilation
+# This trick allows dependencies to be cached separately from source code
+RUN mkdir -p apps/api/src apps/worker/src \
+    && echo 'fn main() {}' > apps/api/src/main.rs \
+    && echo 'fn main() {}' > apps/worker/src/main.rs
+
+# Build dependencies only (this layer will be cached)
+RUN cargo build --release -p resonance-worker \
+    && rm -rf apps/api/src apps/worker/src
+
+# Copy actual source code
+COPY apps/worker/src ./apps/worker/src/
+
+# Touch main.rs to ensure rebuild with actual source
+RUN touch apps/worker/src/main.rs
+
+# Build the release binary
+RUN cargo build --release -p resonance-worker
+
+# Verify the binary exists
+RUN test -f /app/target/release/resonance-worker
+
+# ----------------------------------------------------------------------------
+# Stage 2: Runtime
+# ----------------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+# Labels for container metadata
+LABEL org.opencontainers.image.title="Resonance Worker" \
+      org.opencontainers.image.description="Background job processor for Resonance music streaming platform" \
+      org.opencontainers.image.vendor="Resonance" \
+      org.opencontainers.image.source="https://github.com/cjvana/resonance" \
+      org.opencontainers.image.licenses="MIT"
+
+# Install runtime dependencies
+# - ca-certificates: Required for HTTPS connections to external services
+# - libssl3: OpenSSL runtime for TLS connections
+# - libpq5: PostgreSQL client library
+# - ffmpeg: Audio/video processing and transcoding
+# - libavcodec59, libavformat59, libavutil57: FFmpeg libraries for audio processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    libpq5 \
+    ffmpeg \
+    libavcodec59 \
+    libavformat59 \
+    libavutil57 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for security
+# Running as non-root prevents potential container escapes
+RUN groupadd --gid 1000 resonance \
+    && useradd --uid 1000 --gid resonance --shell /bin/bash --create-home resonance
+
+# Create necessary directories
+# - /app/data: Worker state and temporary files
+# - /app/music: Music library access (read-only recommended)
+# - /app/cache: Temporary cache for processing
+RUN mkdir -p /app/data /app/music /app/cache \
+    && chown -R resonance:resonance /app
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder --chown=resonance:resonance /app/target/release/resonance-worker /app/resonance-worker
+
+# Switch to non-root user
+USER resonance
+
+# Environment variables with defaults
+# RUST_LOG: Logging verbosity (trace, debug, info, warn, error)
+# WORKER_CONCURRENCY: Number of concurrent job processors
+# WORKER_POLL_INTERVAL: Interval in seconds between job queue checks
+ENV RUST_LOG=info \
+    WORKER_CONCURRENCY=4 \
+    WORKER_POLL_INTERVAL=5
+
+# No exposed ports - worker communicates via Redis queue and database
+# Worker pulls jobs from Redis and writes results to PostgreSQL
+
+# Note: No HEALTHCHECK defined for worker
+# Health monitoring should be done via:
+# - Redis queue depth monitoring
+# - PostgreSQL job status tracking
+# - Container orchestrator liveness probes (checking process is running)
+
+# Run the worker
+CMD ["/app/resonance-worker"]
