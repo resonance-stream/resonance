@@ -1,8 +1,11 @@
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
+    extract::Extension,
     http::{header, Method},
-    routing::get,
+    routing::{get, post},
     Router,
 };
+use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -18,7 +21,9 @@ mod websocket;
 
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
-use routes::{health_router, HealthState};
+use graphql::{build_schema, ResonanceSchema};
+use routes::{auth_router, health_router, AuthState, HealthState};
+use services::auth::{AuthConfig, AuthService};
 
 /// Build the CORS layer based on configuration.
 ///
@@ -93,6 +98,23 @@ fn build_cors_layer(config: &config::Config) -> CorsLayer {
     }
 }
 
+/// GraphQL handler that executes queries against the schema
+async fn graphql_handler(
+    Extension(schema): Extension<ResonanceSchema>,
+    req: GraphQLRequest,
+) -> GraphQLResponse {
+    schema.execute(req.into_inner()).await.into()
+}
+
+/// GraphQL Playground handler for development
+async fn graphql_playground() -> impl axum::response::IntoResponse {
+    axum::response::Html(
+        async_graphql::http::playground_source(async_graphql::http::GraphQLPlaygroundConfig::new(
+            "/graphql",
+        )),
+    )
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
@@ -112,8 +134,44 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting Resonance API server on port {}", config.port);
 
+    // Initialize database pool
+    let database_url = &config.common.database.url;
+    tracing::info!("Connecting to database...");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(config.common.database.max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.common.database.connect_timeout_secs,
+        ))
+        .connect(database_url)
+        .await?;
+
+    tracing::info!("Database connection established");
+
+    // Run migrations
+    tracing::info!("Running database migrations...");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    tracing::info!("Migrations completed successfully");
+
+    // Create AuthService
+    let auth_config = AuthConfig::with_expiry_strings(
+        config.jwt_secret.clone(),
+        &config.jwt_access_expiry,
+        &config.jwt_refresh_expiry,
+    );
+    let auth_service = AuthService::new(pool.clone(), auth_config);
+
+    tracing::info!("AuthService initialized");
+
+    // Build GraphQL schema with services in context
+    let schema = build_schema(pool.clone(), auth_service.clone());
+    tracing::info!("GraphQL schema built");
+
     // Create health check state
     let health_state = HealthState::new(config.clone());
+
+    // Create auth router state
+    let auth_state = AuthState::new(auth_service.clone());
 
     // Build the CORS layer from configuration
     let cors_layer = build_cors_layer(&config);
@@ -121,8 +179,17 @@ async fn main() -> anyhow::Result<()> {
     // Build the router
     let app = Router::new()
         .route("/", get(root))
+        // GraphQL endpoints
+        .route("/graphql", post(graphql_handler))
+        .route("/graphql/playground", get(graphql_playground))
         // Nested health routes: /health, /health/live, /health/ready
         .nest("/health", health_router(health_state))
+        // Auth REST routes: /auth/register, /auth/login, /auth/refresh, /auth/logout
+        .nest("/auth", auth_router(auth_state))
+        // Add services as extensions for middleware extractors
+        .layer(Extension(schema))
+        .layer(Extension(pool.clone()))
+        .layer(Extension(auth_service))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);
 
@@ -131,6 +198,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!("Listening on {}", addr);
+    tracing::info!(
+        "GraphQL Playground available at http://{}:{}/graphql/playground",
+        addr.ip(),
+        addr.port()
+    );
+
     axum::serve(listener, app).await?;
 
     Ok(())
