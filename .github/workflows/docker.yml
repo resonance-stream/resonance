@@ -3,6 +3,7 @@
 # ============================================================================
 # Builds and pushes Docker images to GitHub Container Registry (ghcr.io)
 # Triggered on release tags (v*) and supports multi-platform builds
+# Uses the reusable docker-build.yml workflow to eliminate duplication
 # ============================================================================
 
 name: Docker Build
@@ -19,132 +20,40 @@ on:
         required: false
         type: string
 
-env:
-  REGISTRY: ghcr.io
-  # Images will be published as:
-  # ghcr.io/resonance-stream/resonance-api
-  # ghcr.io/resonance-stream/resonance-worker
-  IMAGE_NAME_API: ${{ github.repository }}-api
-  IMAGE_NAME_WORKER: ${{ github.repository }}-worker
-
 jobs:
   # ==========================================================================
   # Build and Push API Image
   # ==========================================================================
   build-api:
     name: Build API Image
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: resonance-api
+      dockerfile: docker/Dockerfile
+      context: '.'
+      tag-latest: ${{ github.ref_type == 'tag' }}
+      tag-sha: ${{ github.event_name == 'workflow_dispatch' }}
+      custom-tag: ${{ inputs.tag || '' }}
     permissions:
       contents: read
       packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}
-          tags: |
-            # Tag with version for release tags (v1.0.0 -> 1.0.0)
-            type=semver,pattern={{version}}
-            # Tag with major.minor for release tags (v1.0.0 -> 1.0)
-            type=semver,pattern={{major}}.{{minor}}
-            # Tag with major for release tags (v1.0.0 -> 1)
-            type=semver,pattern={{major}}
-            # Tag as latest for default branch releases
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            # Tag with sha for manual runs
-            type=sha,enable=${{ github.event_name == 'workflow_dispatch' }}
-            # Use manual input tag if provided
-            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
-
-      - name: Build and push API image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            BUILDTIME=${{ github.event.repository.updated_at }}
-            VERSION=${{ github.ref_name }}
-            REVISION=${{ github.sha }}
 
   # ==========================================================================
   # Build and Push Worker Image
   # ==========================================================================
   build-worker:
     name: Build Worker Image
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: resonance-worker
+      dockerfile: docker/Dockerfile.worker
+      context: '.'
+      tag-latest: ${{ github.ref_type == 'tag' }}
+      tag-sha: ${{ github.event_name == 'workflow_dispatch' }}
+      custom-tag: ${{ inputs.tag || '' }}
     permissions:
       contents: read
       packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}
-          tags: |
-            # Tag with version for release tags (v1.0.0 -> 1.0.0)
-            type=semver,pattern={{version}}
-            # Tag with major.minor for release tags (v1.0.0 -> 1.0)
-            type=semver,pattern={{major}}.{{minor}}
-            # Tag with major for release tags (v1.0.0 -> 1)
-            type=semver,pattern={{major}}
-            # Tag as latest for default branch releases
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            # Tag with sha for manual runs
-            type=sha,enable=${{ github.event_name == 'workflow_dispatch' }}
-            # Use manual input tag if provided
-            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
-
-      - name: Build and push Worker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./docker/Dockerfile.worker
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            BUILDTIME=${{ github.event.repository.updated_at }}
-            VERSION=${{ github.ref_name }}
-            REVISION=${{ github.sha }}
 
   # ==========================================================================
   # Create Release Summary
@@ -159,6 +68,10 @@ jobs:
 
     steps:
       - name: Generate release summary
+        env:
+          REGISTRY: ghcr.io
+          REPO_OWNER: ${{ github.repository_owner }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           echo "## Docker Images Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -166,16 +79,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### API Server" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${REGISTRY}/${REPO_OWNER}/resonance-api:${TAG_NAME#v}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Worker" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}:${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${REGISTRY}/${REPO_OWNER}/resonance-worker:${TAG_NAME#v}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Available Tags" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ github.ref_name }}\` - This release" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${TAG_NAME#v}\` - This release" >> $GITHUB_STEP_SUMMARY
           echo "- \`latest\` - Latest stable release" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Supported Platforms" >> $GITHUB_STEP_SUMMARY
