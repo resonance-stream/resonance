@@ -9,7 +9,7 @@
 pub mod auth;
 pub mod health;
 
-pub use auth::{auth_router, AuthState};
+pub use auth::{auth_router, auth_router_with_rate_limiting, AuthState};
 pub use health::{health_router, HealthState};
 
 // Future modules:

@@ -1,14 +1,15 @@
 //! Authentication REST route handlers for Resonance
 //!
 //! Provides endpoints for user authentication:
-//! - `POST /auth/register` - Create a new user account
-//! - `POST /auth/login` - Authenticate and get tokens
+//! - `POST /auth/register` - Create a new user account (rate limited: 3/hour per IP)
+//! - `POST /auth/login` - Authenticate and get tokens (rate limited: 5/minute per IP)
 //! - `POST /auth/refresh` - Refresh access token
 //! - `DELETE /auth/logout` - Invalidate current session
 
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::{delete, post},
     Json, Router,
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::error::ApiResult;
-use crate::middleware::AuthUser;
+use crate::middleware::{login_rate_limit, register_rate_limit, AuthRateLimitState, AuthUser};
 use crate::models::user::{AuthTokens, DeviceInfo, User};
 use crate::services::AuthService;
 
@@ -38,7 +39,9 @@ impl AuthState {
     }
 }
 
-/// Create authentication router
+/// Create authentication router without rate limiting
+///
+/// Use `auth_router_with_rate_limiting` for production deployments.
 pub fn auth_router(state: AuthState) -> Router {
     Router::new()
         .route("/register", post(register))
@@ -46,6 +49,49 @@ pub fn auth_router(state: AuthState) -> Router {
         .route("/refresh", post(refresh))
         .route("/logout", delete(logout))
         .with_state(state)
+}
+
+/// Create authentication router with Redis-based rate limiting
+///
+/// # Rate Limits
+/// - `/auth/register`: 3 requests per hour per IP
+/// - `/auth/login`: 5 requests per minute per IP
+///
+/// # Arguments
+/// * `auth_state` - Authentication service state
+/// * `rate_limit_state` - Rate limiting state with Redis client
+pub fn auth_router_with_rate_limiting(
+    auth_state: AuthState,
+    rate_limit_state: AuthRateLimitState,
+) -> Router {
+    // Routes with rate limiting applied
+    let register_route = Router::new()
+        .route("/register", post(register))
+        .route_layer(middleware::from_fn_with_state(
+            rate_limit_state.clone(),
+            register_rate_limit,
+        ))
+        .with_state(auth_state.clone());
+
+    let login_route = Router::new()
+        .route("/login", post(login))
+        .route_layer(middleware::from_fn_with_state(
+            rate_limit_state,
+            login_rate_limit,
+        ))
+        .with_state(auth_state.clone());
+
+    // Routes without rate limiting
+    let other_routes = Router::new()
+        .route("/refresh", post(refresh))
+        .route("/logout", delete(logout))
+        .with_state(auth_state);
+
+    // Merge all routes
+    Router::new()
+        .merge(register_route)
+        .merge(login_route)
+        .merge(other_routes)
 }
 
 // ========== Request/Response Types ==========

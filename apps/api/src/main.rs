@@ -22,7 +22,8 @@ mod websocket;
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
 use graphql::{build_schema, ResonanceSchema};
-use routes::{auth_router, health_router, AuthState, HealthState};
+use middleware::AuthRateLimitState;
+use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
 use services::auth::{AuthConfig, AuthService};
 
 /// Build the CORS layer based on configuration.
@@ -206,8 +207,57 @@ async fn main() -> anyhow::Result<()> {
     // Create auth router state
     let auth_state = AuthState::new(auth_service.clone());
 
+    // Initialize Redis client for rate limiting
+    let redis_url = config.redis().connection_url();
+    let redis_client = match redis::Client::open(redis_url.as_str()) {
+        Ok(client) => {
+            // Test Redis connection
+            match client.get_multiplexed_async_connection().await {
+                Ok(mut conn) => {
+                    let pong: Result<String, _> = redis::cmd("PING").query_async(&mut conn).await;
+                    if pong.is_ok() {
+                        tracing::info!("Redis connected for rate limiting");
+                        Some(client)
+                    } else {
+                        tracing::warn!("Redis ping failed, rate limiting disabled");
+                        None
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Redis connection failed, rate limiting disabled");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Redis client creation failed, rate limiting disabled");
+            None
+        }
+    };
+
     // Build the CORS layer from configuration
     let cors_layer = build_cors_layer(&config);
+
+    // Build the auth router - with or without rate limiting based on Redis availability
+    let auth_routes = match redis_client {
+        Some(client) => {
+            let rate_limit_state = AuthRateLimitState::new(client);
+            tracing::info!(
+                "Auth rate limiting enabled: login={} req/{} sec, register={} req/{} sec",
+                rate_limit_state.login_config.max_requests,
+                rate_limit_state.login_config.window_secs,
+                rate_limit_state.register_config.max_requests,
+                rate_limit_state.register_config.window_secs,
+            );
+            auth_router_with_rate_limiting(auth_state, rate_limit_state)
+        }
+        None => {
+            tracing::warn!(
+                "Auth rate limiting DISABLED - configure Redis (REDIS_URL) to enable protection against brute-force attacks"
+            );
+            auth_router(auth_state)
+        }
+    };
 
     // Build the router
     let app = Router::new()
@@ -218,7 +268,7 @@ async fn main() -> anyhow::Result<()> {
         // Nested health routes: /health, /health/live, /health/ready
         .nest("/health", health_router(health_state))
         // Auth REST routes: /auth/register, /auth/login, /auth/refresh, /auth/logout
-        .nest("/auth", auth_router(auth_state))
+        .nest("/auth", auth_routes)
         // Add services as extensions for middleware extractors
         .layer(Extension(schema))
         .layer(Extension(pool.clone()))
