@@ -9,6 +9,8 @@ const Playlist = lazy(() => import('./pages/Playlist'))
 const Album = lazy(() => import('./pages/Album'))
 const Artist = lazy(() => import('./pages/Artist'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Login = lazy(() => import('./pages/Login'))
+const Register = lazy(() => import('./pages/Register'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 
 function LoadingFallback() {
@@ -34,6 +36,8 @@ function App() {
           <Route path="/album/:id" element={<Album />} />
           <Route path="/artist/:id" element={<Artist />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
