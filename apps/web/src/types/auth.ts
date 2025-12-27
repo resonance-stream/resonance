@@ -24,28 +24,22 @@ export type {
  * Login form credentials
  */
 export interface LoginCredentials {
-  /** Username or email address */
-  usernameOrEmail: string
+  /** User's email address */
+  email: string
   /** User password */
   password: string
-  /** Whether to persist session longer */
-  rememberMe?: boolean
 }
 
 /**
  * Registration form credentials
  */
 export interface RegisterCredentials {
-  /** Desired username */
-  username: string
   /** Email address */
   email: string
   /** Password */
   password: string
-  /** Password confirmation (for validation) */
-  confirmPassword?: string
-  /** Display name (optional) */
-  displayName?: string
+  /** Display name */
+  displayName: string
 }
 
 /**

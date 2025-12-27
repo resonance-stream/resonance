@@ -6,7 +6,6 @@ export default function Register(): JSX.Element {
   const navigate = useNavigate()
   const { register, status, error, clearError } = useAuthStore()
 
-  const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -31,12 +30,14 @@ export default function Register(): JSX.Element {
       return
     }
 
+    // Display name is required - use email prefix as fallback
+    const finalDisplayName = displayName.trim() || email.split('@')[0]
+
     try {
       await register({
-        username,
         email,
         password,
-        displayName: displayName || undefined,
+        displayName: finalDisplayName,
       })
       navigate('/')
     } catch {
@@ -81,29 +82,6 @@ export default function Register(): JSX.Element {
                 <p className="text-sm">{displayedError}</p>
               </div>
             )}
-
-            {/* Username field */}
-            <div>
-              <label
-                htmlFor="username"
-                className="mb-2 block text-sm font-medium text-text-secondary"
-              >
-                Username
-              </label>
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="input w-full"
-                placeholder="Choose a username"
-                required
-                autoComplete="username"
-                disabled={isLoading}
-                pattern="[a-zA-Z0-9_-]+"
-                title="Username can only contain letters, numbers, underscores, and hyphens"
-              />
-            </div>
 
             {/* Email field */}
             <div>
