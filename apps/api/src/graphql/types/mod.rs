@@ -5,4 +5,4 @@
 
 mod user;
 
-pub use user::{AuthPayload, AuthPayloadUser, RefreshPayload, User, UserPreferencesType, UserRole};
+pub use user::{AuthPayload, RefreshPayload, User, UserRole};

@@ -129,6 +129,55 @@ impl UserRepository {
             .await?;
         Ok(())
     }
+
+    /// Create a new user in the database
+    ///
+    /// # Arguments
+    /// * `email` - User's email address (must be unique)
+    /// * `password_hash` - Pre-hashed password (Argon2id)
+    /// * `display_name` - User's display name
+    /// * `role` - User's role (defaults to User)
+    /// * `preferences` - User preferences as JSON value
+    ///
+    /// # Returns
+    /// * `Ok(User)` - The newly created user
+    /// * `Err(sqlx::Error)` - If a database error occurs (including unique constraint violations)
+    pub async fn create(
+        &self,
+        email: &str,
+        password_hash: &str,
+        display_name: &str,
+        role: crate::models::user::UserRole,
+        preferences: &serde_json::Value,
+    ) -> Result<User, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            INSERT INTO users (email, password_hash, display_name, role, preferences)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING
+                id,
+                email,
+                password_hash,
+                display_name,
+                avatar_url,
+                role,
+                preferences,
+                listenbrainz_token,
+                discord_user_id,
+                email_verified,
+                last_seen_at,
+                created_at,
+                updated_at
+            "#,
+        )
+        .bind(email.to_lowercase())
+        .bind(password_hash)
+        .bind(display_name)
+        .bind(role)
+        .bind(preferences)
+        .fetch_one(&self.pool)
+        .await
+    }
 }
 
 #[cfg(test)]

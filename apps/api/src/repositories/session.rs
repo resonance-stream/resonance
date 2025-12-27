@@ -194,6 +194,91 @@ impl SessionRepository {
 
         Ok(())
     }
+
+    /// Delete expired sessions from the database
+    ///
+    /// This method permanently removes sessions that have passed their expiration
+    /// time. It should be called periodically by a background worker to prevent
+    /// database bloat from accumulating expired sessions.
+    ///
+    /// # Arguments
+    /// * `batch_size` - Maximum number of sessions to delete per call (prevents long locks)
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - The number of expired sessions that were deleted
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    ///
+    /// # Example (for worker job)
+    /// ```ignore
+    /// async fn cleanup_expired_sessions(repo: &SessionRepository) {
+    ///     loop {
+    ///         match repo.delete_expired(1000).await {
+    ///             Ok(0) => break, // No more expired sessions
+    ///             Ok(deleted) => {
+    ///                 tracing::info!(deleted, "Cleaned up expired sessions");
+    ///             }
+    ///             Err(e) => {
+    ///                 tracing::error!(error = ?e, "Failed to cleanup sessions");
+    ///                 break;
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn delete_expired(&self, batch_size: i64) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM sessions
+            WHERE id IN (
+                SELECT id FROM sessions
+                WHERE expires_at < NOW()
+                LIMIT $1
+            )
+            "#,
+        )
+        .bind(batch_size)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete all inactive sessions older than a specified duration
+    ///
+    /// This is useful for cleaning up sessions that were explicitly deactivated
+    /// (logged out) but not yet expired. Keeping these for a short time allows
+    /// for audit logging, but they should eventually be purged.
+    ///
+    /// # Arguments
+    /// * `older_than_days` - Delete inactive sessions older than this many days
+    /// * `batch_size` - Maximum number of sessions to delete per call
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - The number of sessions that were deleted
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    pub async fn delete_inactive_older_than(
+        &self,
+        older_than_days: i32,
+        batch_size: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM sessions
+            WHERE id IN (
+                SELECT id FROM sessions
+                WHERE is_active = false
+                  AND last_active_at < NOW() - make_interval(days => $1)
+                LIMIT $2
+            )
+            "#,
+        )
+        .bind(older_than_days)
+        .bind(batch_size)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 #[cfg(test)]

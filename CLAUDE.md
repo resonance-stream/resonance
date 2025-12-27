@@ -468,9 +468,24 @@ Use browser DevTools Network tab → WS filter to inspect WebSocket messages.
 
 ## Security Notes
 
-- JWT tokens in HTTP-only cookies (not localStorage)
+### Authentication & Tokens
+- **Token Storage**: Access and refresh tokens stored in localStorage via Zustand persist
+  - Trade-off: Simpler implementation for self-hosted use case
+  - Risk: Tokens accessible to JavaScript (XSS vulnerable)
+  - Mitigation: Short-lived access tokens (15 min), token rotation on refresh
+  - Future: Consider HTTP-only cookies for public-facing deployments
+- **Password Hashing**: Argon2id with memory-hard parameters
+- **Timing Attack Prevention**: Constant-time password comparison
+
+### Infrastructure Security
 - Row-Level Security (RLS) in PostgreSQL per user
-- Rate limiting on auth endpoints
+- Rate limiting on auth endpoints (Redis-backed with in-memory fallback)
+- Trusted proxy configuration for X-Forwarded-For validation
 - CORS with explicit allowed origins
 - Input validation via serde (backend) and zod (frontend)
 - Never log sensitive data (passwords, tokens)
+
+### JWT Configuration
+- Minimum 32-character secret required (enforced at startup)
+- Access tokens: 15-minute expiry
+- Refresh tokens: 7-day expiry with rotation

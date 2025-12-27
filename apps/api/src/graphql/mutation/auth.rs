@@ -78,6 +78,47 @@ impl From<DeviceInput> for DeviceInfo {
     }
 }
 
+// =============================================================================
+// Request Context Helpers
+// =============================================================================
+
+/// Extracted request context for auth operations
+///
+/// Contains IP address and user agent extracted from GraphQL context,
+/// used for session audit trails and security logging.
+struct RequestContext {
+    ip_address: Option<String>,
+    user_agent: Option<String>,
+}
+
+impl RequestContext {
+    /// Extract request context from GraphQL context
+    ///
+    /// Reads RequestMetadata from context data (set by middleware) and
+    /// extracts relevant fields for auth operations.
+    fn from_graphql_context(ctx: &Context<'_>) -> Self {
+        let metadata = ctx.data_opt::<RequestMetadata>();
+        Self {
+            ip_address: metadata.and_then(|m| m.ip_address.clone()),
+            user_agent: metadata.and_then(|m| m.user_agent.clone()),
+        }
+    }
+
+    /// Get IP address as a str reference
+    fn ip_address(&self) -> Option<&str> {
+        self.ip_address.as_deref()
+    }
+
+    /// Get user agent as a str reference
+    fn user_agent(&self) -> Option<&str> {
+        self.user_agent.as_deref()
+    }
+}
+
+// =============================================================================
+// Input Types
+// =============================================================================
+
 /// Input for token refresh
 #[derive(Debug, InputObject)]
 pub struct RefreshTokenInput {
@@ -106,11 +147,7 @@ impl AuthMutation {
     #[graphql(guard = "RateLimitGuard::new(RateLimitType::Register)")]
     async fn register(&self, ctx: &Context<'_>, input: RegisterInput) -> Result<AuthPayload> {
         let auth_service = ctx.data::<AuthService>()?;
-
-        // Extract request metadata for session audit trail
-        let request_metadata = ctx.data_opt::<RequestMetadata>();
-        let ip_address = request_metadata.and_then(|m| m.ip_address.clone());
-        let user_agent = request_metadata.and_then(|m| m.user_agent.clone());
+        let req_ctx = RequestContext::from_graphql_context(ctx);
 
         // Register and create session in one call to avoid redundant password hashing
         let (user, tokens) = auth_service
@@ -119,8 +156,8 @@ impl AuthMutation {
                 &input.password,
                 &input.display_name,
                 None, // device_info - could be added to RegisterInput in future
-                ip_address.as_deref(),
-                user_agent.as_deref(),
+                req_ctx.ip_address(),
+                req_ctx.user_agent(),
             )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
@@ -141,17 +178,17 @@ impl AuthMutation {
     #[graphql(guard = "RateLimitGuard::new(RateLimitType::Login)")]
     async fn login(&self, ctx: &Context<'_>, input: LoginInput) -> Result<AuthPayload> {
         let auth_service = ctx.data::<AuthService>()?;
-
-        // Extract device info if provided
+        let req_ctx = RequestContext::from_graphql_context(ctx);
         let device_info = input.device.map(DeviceInfo::from);
 
-        // Extract request metadata for session audit trail
-        let request_metadata = ctx.data_opt::<RequestMetadata>();
-        let ip_address = request_metadata.and_then(|m| m.ip_address.clone());
-        let user_agent = request_metadata.and_then(|m| m.user_agent.clone());
-
         let (user, tokens) = auth_service
-            .login(&input.email, &input.password, device_info, ip_address.as_deref(), user_agent.as_deref())
+            .login(
+                &input.email,
+                &input.password,
+                device_info,
+                req_ctx.ip_address(),
+                req_ctx.user_agent(),
+            )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 

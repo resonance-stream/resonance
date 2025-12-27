@@ -26,6 +26,116 @@ use tracing::{debug, warn};
 
 use crate::error::ApiError;
 
+// =============================================================================
+// Trusted Proxy Configuration
+// =============================================================================
+
+/// Configuration for trusted proxy IPs
+///
+/// When running behind a reverse proxy (nginx, Cloudflare, etc.), the X-Forwarded-For
+/// and X-Real-IP headers should only be trusted if the direct connection comes from
+/// a known proxy IP. This prevents attackers from spoofing client IPs to bypass
+/// rate limiting.
+#[derive(Debug, Clone, Default)]
+pub struct TrustedProxies {
+    /// List of trusted proxy IP addresses
+    ips: Vec<IpAddr>,
+    /// Trust all private/localhost IPs (useful for Docker deployments)
+    trust_private: bool,
+}
+
+impl TrustedProxies {
+    /// Create a new empty TrustedProxies config (trusts no forwarding headers)
+    pub fn none() -> Self {
+        Self {
+            ips: Vec::new(),
+            trust_private: false,
+        }
+    }
+
+    /// Create a TrustedProxies config that trusts private/localhost IPs
+    ///
+    /// This is suitable for typical Docker Compose deployments where the
+    /// reverse proxy runs on the same network.
+    pub fn trust_private() -> Self {
+        Self {
+            ips: Vec::new(),
+            trust_private: true,
+        }
+    }
+
+    /// Create from a list of trusted IP addresses
+    pub fn from_ips(ips: Vec<IpAddr>) -> Self {
+        Self {
+            ips,
+            trust_private: false,
+        }
+    }
+
+    /// Add an IP address to the trusted list
+    pub fn add_ip(&mut self, ip: IpAddr) {
+        self.ips.push(ip);
+    }
+
+    /// Parse trusted proxies from a comma-separated string (e.g., from env var)
+    ///
+    /// Format: "192.168.1.1,10.0.0.1" or "private" to trust all private IPs
+    pub fn from_env(value: &str) -> Self {
+        let value = value.trim();
+
+        if value.eq_ignore_ascii_case("private") {
+            return Self::trust_private();
+        }
+
+        if value.is_empty() || value.eq_ignore_ascii_case("none") {
+            return Self::none();
+        }
+
+        let ips: Vec<IpAddr> = value
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        Self {
+            ips,
+            trust_private: false,
+        }
+    }
+
+    /// Check if an IP is a trusted proxy
+    pub fn is_trusted(&self, ip: &IpAddr) -> bool {
+        // Check explicit list
+        if self.ips.contains(ip) {
+            return true;
+        }
+
+        // Check private/localhost if enabled
+        if self.trust_private {
+            return is_private_or_localhost(ip);
+        }
+
+        false
+    }
+}
+
+/// Check if an IP is private (RFC 1918) or localhost
+fn is_private_or_localhost(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            ipv4.is_loopback()           // 127.0.0.0/8
+                || ipv4.is_private()     // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || ipv4.is_link_local()  // 169.254.0.0/16
+        }
+        IpAddr::V6(ipv6) => {
+            ipv6.is_loopback() // ::1
+        }
+    }
+}
+
+// =============================================================================
+// Rate Limit Configuration
+// =============================================================================
+
 /// Rate limit configuration for a specific endpoint
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
@@ -351,37 +461,97 @@ impl RateLimiter {
 }
 
 /// Extract client IP from request headers or connection info
+///
+/// This function trusts X-Forwarded-For and X-Real-IP headers by default for
+/// backwards compatibility. For production deployments behind a reverse proxy,
+/// use `extract_client_ip_trusted` with explicit proxy configuration.
+///
+/// # Security Note
+/// If this service is exposed directly to the internet (not behind a reverse
+/// proxy), attackers can spoof the X-Forwarded-For header to bypass rate limiting.
+/// Use `extract_client_ip_trusted` with `TrustedProxies::none()` to disable
+/// header trust, or configure specific trusted proxy IPs.
 pub fn extract_client_ip(
     headers: &HeaderMap,
     connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
 ) -> String {
-    // Try X-Forwarded-For first (for proxied requests)
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(value) = forwarded.to_str() {
-            // X-Forwarded-For can contain multiple IPs, take the first (client IP)
-            if let Some(ip) = value.split(',').next() {
-                let ip = ip.trim();
-                // Validate it's a proper IP
+    // Default: trust private IPs (typical Docker Compose setup)
+    extract_client_ip_trusted(headers, connect_info, &TrustedProxies::trust_private())
+}
+
+/// Extract client IP with explicit trusted proxy configuration
+///
+/// Only trusts X-Forwarded-For and X-Real-IP headers when the direct connection
+/// comes from a trusted proxy IP. This prevents IP spoofing attacks when the
+/// service is exposed directly to the internet.
+///
+/// # Arguments
+/// * `headers` - Request headers
+/// * `connect_info` - Connection info containing the direct peer IP
+/// * `trusted_proxies` - Configuration for which proxy IPs to trust
+///
+/// # Example
+/// ```ignore
+/// // Trust only specific proxy IPs
+/// let proxies = TrustedProxies::from_ips(vec!["10.0.0.1".parse().unwrap()]);
+/// let ip = extract_client_ip_trusted(&headers, connect_info.as_ref(), &proxies);
+///
+/// // Trust all private IPs (Docker networks)
+/// let proxies = TrustedProxies::trust_private();
+/// let ip = extract_client_ip_trusted(&headers, connect_info.as_ref(), &proxies);
+///
+/// // Trust no proxies (direct connections only)
+/// let proxies = TrustedProxies::none();
+/// let ip = extract_client_ip_trusted(&headers, connect_info.as_ref(), &proxies);
+/// ```
+pub fn extract_client_ip_trusted(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
+    trusted_proxies: &TrustedProxies,
+) -> String {
+    // Get the direct peer IP first
+    let direct_ip = connect_info.map(|ci| ci.0.ip());
+
+    // Only trust forwarding headers if the direct connection is from a trusted proxy
+    let should_trust_headers = direct_ip
+        .map(|ip| trusted_proxies.is_trusted(&ip))
+        .unwrap_or(false);
+
+    if should_trust_headers {
+        // Try X-Forwarded-For first (for proxied requests)
+        if let Some(forwarded) = headers.get("x-forwarded-for") {
+            if let Ok(value) = forwarded.to_str() {
+                // X-Forwarded-For can contain multiple IPs, take the first (client IP)
+                if let Some(ip) = value.split(',').next() {
+                    let ip = ip.trim();
+                    // Validate it's a proper IP
+                    if ip.parse::<IpAddr>().is_ok() {
+                        return ip.to_string();
+                    }
+                }
+            }
+        }
+
+        // Try X-Real-IP (common with nginx)
+        if let Some(real_ip) = headers.get("x-real-ip") {
+            if let Ok(value) = real_ip.to_str() {
+                let ip = value.trim();
                 if ip.parse::<IpAddr>().is_ok() {
                     return ip.to_string();
                 }
             }
         }
-    }
-
-    // Try X-Real-IP (common with nginx)
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(value) = real_ip.to_str() {
-            let ip = value.trim();
-            if ip.parse::<IpAddr>().is_ok() {
-                return ip.to_string();
-            }
-        }
+    } else if headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip") {
+        // Log when we're ignoring forwarding headers from untrusted source
+        debug!(
+            direct_ip = ?direct_ip,
+            "Ignoring X-Forwarded-For/X-Real-IP from untrusted proxy"
+        );
     }
 
     // Fall back to connection info
-    if let Some(connect_info) = connect_info {
-        return connect_info.0.ip().to_string();
+    if let Some(ip) = direct_ip {
+        return ip.to_string();
     }
 
     // Last resort - use a placeholder (shouldn't happen in production)

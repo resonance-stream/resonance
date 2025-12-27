@@ -14,5 +14,6 @@ pub mod rate_limit;
 
 pub use auth::{AdminUser, AuthUser, MaybeAuthUser};
 pub use rate_limit::{
-    login_rate_limit, register_rate_limit, AuthRateLimitState, RateLimitConfig, RateLimiter,
+    extract_client_ip, extract_client_ip_trusted, login_rate_limit, register_rate_limit,
+    AuthRateLimitState, RateLimitConfig, RateLimiter, TrustedProxies,
 };

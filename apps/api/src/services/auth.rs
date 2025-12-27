@@ -22,6 +22,22 @@ use crate::models::user::{
 };
 use crate::repositories::{SessionRepository, UserRepository};
 
+// =============================================================================
+// Security Constants
+// =============================================================================
+
+/// Minimum length for JWT secret (256 bits for HS256)
+pub const MIN_JWT_SECRET_LENGTH: usize = 32;
+
+/// Minimum password length
+pub const MIN_PASSWORD_LENGTH: usize = 8;
+
+/// Maximum password length (prevent DoS via extremely long passwords)
+pub const MAX_PASSWORD_LENGTH: usize = 128;
+
+/// Maximum display name length
+pub const MAX_DISPLAY_NAME_LENGTH: usize = 100;
+
 /// Authentication service configuration
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
@@ -39,7 +55,11 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     /// Create a new AuthConfig with default TTLs
+    ///
+    /// # Panics
+    /// Panics if jwt_secret is shorter than MIN_JWT_SECRET_LENGTH (32 bytes)
     pub fn new(jwt_secret: String) -> Self {
+        Self::validate_jwt_secret(&jwt_secret);
         Self {
             jwt_secret,
             access_token_ttl_secs: 15 * 60,        // 15 minutes
@@ -50,17 +70,33 @@ impl AuthConfig {
     }
 
     /// Create AuthConfig from expiry strings (e.g., "15m", "7d")
+    ///
+    /// # Panics
+    /// Panics if jwt_secret is shorter than MIN_JWT_SECRET_LENGTH (32 bytes)
     pub fn with_expiry_strings(
         jwt_secret: String,
         access_expiry: &str,
         refresh_expiry: &str,
     ) -> Self {
+        Self::validate_jwt_secret(&jwt_secret);
         Self {
             jwt_secret,
             access_token_ttl_secs: parse_duration_string(access_expiry).unwrap_or(15 * 60),
             refresh_token_ttl_secs: parse_duration_string(refresh_expiry).unwrap_or(7 * 24 * 3600),
             issuer: "resonance".to_string(),
             audience: "resonance".to_string(),
+        }
+    }
+
+    /// Validate JWT secret meets minimum security requirements
+    fn validate_jwt_secret(secret: &str) {
+        if secret.len() < MIN_JWT_SECRET_LENGTH {
+            panic!(
+                "JWT_SECRET must be at least {} characters for security (got {}). \
+                 Generate a secure secret with: openssl rand -base64 48",
+                MIN_JWT_SECRET_LENGTH,
+                secret.len()
+            );
         }
     }
 }
@@ -628,10 +664,21 @@ impl PasswordValidation {
 pub fn validate_password_complexity(password: &str) -> PasswordValidation {
     let mut result = PasswordValidation::new();
 
-    // Check minimum length (8 characters)
-    result.has_min_length = password.len() >= 8;
+    // Check minimum length
+    result.has_min_length = password.len() >= MIN_PASSWORD_LENGTH;
     if !result.has_min_length {
-        result.errors.push("Password must be at least 8 characters".to_string());
+        result.errors.push(format!(
+            "Password must be at least {} characters",
+            MIN_PASSWORD_LENGTH
+        ));
+    }
+
+    // Check maximum length (prevent DoS via extremely long passwords)
+    if password.len() > MAX_PASSWORD_LENGTH {
+        result.errors.push(format!(
+            "Password must be at most {} characters",
+            MAX_PASSWORD_LENGTH
+        ));
     }
 
     // Check for at least one uppercase letter

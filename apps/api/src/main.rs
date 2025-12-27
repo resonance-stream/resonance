@@ -23,7 +23,7 @@ mod websocket;
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
 use graphql::{build_schema, build_schema_with_rate_limiting, GraphQLRateLimiter, ResonanceSchema};
-use middleware::AuthRateLimitState;
+use middleware::{extract_client_ip, AuthRateLimitState};
 use models::user::RequestMetadata;
 use repositories::UserRepository;
 use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
@@ -110,40 +110,6 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
-/// Extract client IP address from headers or connection info
-///
-/// Checks common proxy headers in order of preference:
-/// 1. X-Forwarded-For (may contain multiple IPs, use first)
-/// 2. X-Real-IP
-/// 3. Falls back to connection peer address
-fn extract_client_ip(headers: &HeaderMap, connect_info: Option<&ConnectInfo<SocketAddr>>) -> Option<String> {
-    // Try X-Forwarded-For first (standard proxy header)
-    if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-        if let Ok(value) = forwarded_for.to_str() {
-            // X-Forwarded-For may contain comma-separated IPs, first is the client
-            if let Some(first_ip) = value.split(',').next() {
-                let ip = first_ip.trim();
-                if !ip.is_empty() {
-                    return Some(ip.to_string());
-                }
-            }
-        }
-    }
-
-    // Try X-Real-IP (nginx default)
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(value) = real_ip.to_str() {
-            let ip = value.trim();
-            if !ip.is_empty() {
-                return Some(ip.to_string());
-            }
-        }
-    }
-
-    // Fall back to connection peer address
-    connect_info.map(|info| info.0.ip().to_string())
-}
-
 /// Extract user agent from headers
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
     headers
@@ -171,7 +137,7 @@ async fn graphql_handler(
     let mut request = req.into_inner();
 
     // Extract request metadata for audit trails
-    let ip_address = extract_client_ip(&headers, connect_info.as_ref());
+    let ip_address = Some(extract_client_ip(&headers, connect_info.as_ref()));
     let user_agent = extract_user_agent(&headers);
     let request_metadata = RequestMetadata::new(ip_address, user_agent);
 
