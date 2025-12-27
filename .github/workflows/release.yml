@@ -52,10 +52,21 @@ jobs:
       - name: Run Release Please
         id: release
         uses: googleapis/release-please-action@v4
+        continue-on-error: true
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Check Release Please Result
+        if: steps.release.outcome == 'failure'
+        run: |
+          echo "::warning::Release Please failed. This may be due to missing permissions."
+          echo "To enable automated releases, go to:"
+          echo "  Settings > Actions > General > Workflow permissions"
+          echo "  and enable 'Allow GitHub Actions to create and approve pull requests'"
+          echo ""
+          echo "Alternatively, configure a GitHub App with RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY"
 
   # ==========================================================================
   # Build and Publish Docker Images (API)
