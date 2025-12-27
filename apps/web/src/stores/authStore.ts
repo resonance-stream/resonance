@@ -10,7 +10,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { User } from '@resonance/shared-types'
+import type { User, UserRole } from '@resonance/shared-types'
 import type { LoginCredentials, RegisterCredentials, AuthStatus, AuthError } from '../types/auth'
 import { graphqlClient, setAuthToken } from '../lib/api'
 import {
@@ -105,13 +105,21 @@ interface AuthPayloadResponse {
  * Extract user object from flattened auth payload response
  */
 function extractUserFromPayload(payload: AuthPayloadResponse): User {
+  // Convert role to lowercase to match UserRole type
+  const role = payload.role.toLowerCase() as UserRole
+  // Use email prefix as username (backend doesn't return username yet)
+  const username = payload.email.split('@')[0] ?? payload.email
+
   return {
     id: payload.id,
+    username,
     email: payload.email,
     displayName: payload.displayName,
-    avatarUrl: payload.avatarUrl,
-    role: payload.role as 'Admin' | 'User' | 'Guest',
+    avatarUrl: payload.avatarUrl ?? undefined, // Convert null to undefined
+    role,
     emailVerified: payload.emailVerified,
+    createdAt: new Date().toISOString(), // Placeholder until backend returns it
+    updatedAt: new Date().toISOString(),
   }
 }
 
