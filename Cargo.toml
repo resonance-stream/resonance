@@ -53,3 +53,6 @@ symphonia = { version = "0.5", features = ["all"] }
 # Auth
 argon2 = "0.5"
 jsonwebtoken = "9"
+
+# URL parsing
+url = "2"

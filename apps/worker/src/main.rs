@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
+use url::Url;
 use tokio::signal;
 use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -57,8 +58,8 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env()?;
     tracing::info!("Loaded configuration");
-    tracing::debug!("Database URL: {}", config.database_url);
-    tracing::debug!("Redis URL: {}", config.redis_url);
+    tracing::debug!("Database URL: {}", redact_url_password(&config.database_url));
+    tracing::debug!("Redis URL: {}", redact_url_password(&config.redis_url));
     tracing::debug!("Music library path: {}", config.music_library_path);
 
     // Initialize database connection pool
@@ -120,6 +121,63 @@ async fn main() -> Result<()> {
     tracing::info!("Worker shutdown complete");
 
     Ok(())
+}
+
+/// Redact password from a URL for safe logging
+///
+/// Parses the URL and masks the password portion with asterisks.
+/// If the URL cannot be parsed, returns a generic redacted message.
+fn redact_url_password(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(mut parsed) => {
+            if parsed.password().is_some() {
+                // Set password to redacted value
+                let _ = parsed.set_password(Some("****"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => {
+            // If we can't parse, be safe and don't expose anything
+            "[URL parse error - redacted]".to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redact_url_password_with_password() {
+        let url = "postgres://user:secretpassword@localhost:5432/dbname";
+        let redacted = redact_url_password(url);
+        assert!(redacted.contains("****"));
+        assert!(!redacted.contains("secretpassword"));
+        assert!(redacted.contains("user"));
+        assert!(redacted.contains("localhost"));
+    }
+
+    #[test]
+    fn test_redact_url_password_without_password() {
+        let url = "postgres://localhost:5432/dbname";
+        let redacted = redact_url_password(url);
+        assert_eq!(redacted, "postgres://localhost:5432/dbname");
+    }
+
+    #[test]
+    fn test_redact_url_password_redis() {
+        let url = "redis://:myredispassword@localhost:6379";
+        let redacted = redact_url_password(url);
+        assert!(redacted.contains("****"));
+        assert!(!redacted.contains("myredispassword"));
+    }
+
+    #[test]
+    fn test_redact_url_password_invalid_url() {
+        let url = "not a valid url";
+        let redacted = redact_url_password(url);
+        assert_eq!(redacted, "[URL parse error - redacted]");
+    }
 }
 
 /// Wait for shutdown signal (Ctrl+C or SIGTERM)

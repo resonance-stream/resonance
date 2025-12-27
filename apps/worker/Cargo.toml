@@ -32,6 +32,9 @@ dotenvy = { workspace = true }
 redis = { workspace = true }
 reqwest = { workspace = true }
 
+# URL parsing (for credential redaction)
+url = { workspace = true }
+
 # Audio processing
 symphonia = { workspace = true }
 
