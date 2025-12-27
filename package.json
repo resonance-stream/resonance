@@ -1,0 +1,22 @@
+{
+  "name": "resonance",
+  "private": true,
+  "description": "Self-hosted Spotify-like music streaming platform",
+  "scripts": {
+    "dev": "pnpm --filter @resonance/web dev",
+    "build": "pnpm --filter @resonance/web build",
+    "preview": "pnpm --filter @resonance/web preview",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r exec rm -rf node_modules dist .turbo"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.1"
+}
