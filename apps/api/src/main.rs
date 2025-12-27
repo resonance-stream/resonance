@@ -10,6 +10,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config;
 mod error;
 mod graphql;
+mod middleware;
 mod models;
 mod routes;
 mod services;
