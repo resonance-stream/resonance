@@ -77,12 +77,42 @@ function parseAuthError(error: unknown): AuthError {
 }
 
 /**
- * Calculate token expiration timestamp
+ * Parse DateTime string to timestamp with buffer for early refresh
  */
-function calculateExpiresAt(expiresIn: number): number {
-  // expiresIn is in seconds, convert to milliseconds and add to current time
-  // Subtract 60 seconds as buffer to refresh before actual expiration
-  return Date.now() + (expiresIn - 60) * 1000
+function parseExpiresAt(expiresAt: string): number {
+  // Parse ISO8601 DateTime and subtract 60 seconds as buffer
+  return new Date(expiresAt).getTime() - 60 * 1000
+}
+
+/**
+ * Auth payload response from login/register mutations
+ * Fields are flattened from AuthPayloadUser via #[graphql(flatten)]
+ */
+interface AuthPayloadResponse {
+  id: string
+  email: string
+  displayName: string
+  avatarUrl: string | null
+  role: string
+  emailVerified: boolean
+  accessToken: string
+  refreshToken: string
+  expiresAt: string
+  tokenType: string
+}
+
+/**
+ * Extract user object from flattened auth payload response
+ */
+function extractUserFromPayload(payload: AuthPayloadResponse): User {
+  return {
+    id: payload.id,
+    email: payload.email,
+    displayName: payload.displayName,
+    avatarUrl: payload.avatarUrl,
+    role: payload.role as 'Admin' | 'User' | 'Guest',
+    emailVerified: payload.emailVerified,
+  }
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -142,10 +172,11 @@ export const useAuthStore = create<AuthState>()(
           const response = await graphqlClient.request<{ register: AuthPayload }>(
             REGISTER_MUTATION,
             {
-              username: credentials.username,
-              email: credentials.email,
-              password: credentials.password,
-              displayName: credentials.displayName,
+              input: {
+                email: credentials.email,
+                password: credentials.password,
+                display_name: credentials.displayName,
+              },
             }
           )
 
@@ -211,23 +242,32 @@ export const useAuthStore = create<AuthState>()(
         }
 
         try {
-          // Temporarily set refresh token as auth header for this request
-          setAuthToken(refreshToken)
+          // Response type for RefreshPayload (no user, has expiresAt timestamp)
+          interface RefreshPayloadResponse {
+            accessToken: string
+            refreshToken: string
+            expiresAt: string
+            tokenType: string
+          }
 
-          const response = await graphqlClient.request<{ refreshToken: AuthPayload }>(
-            REFRESH_TOKEN_MUTATION
+          // Pass refresh token as mutation variable (not as Authorization header)
+          const response = await graphqlClient.request<{ refreshToken: RefreshPayloadResponse }>(
+            REFRESH_TOKEN_MUTATION,
+            { refreshToken }
           )
 
-          const { user, accessToken, refreshToken: newRefreshToken, expiresIn } = response.refreshToken
+          const { accessToken, refreshToken: newRefreshToken, expiresAt } = response.refreshToken
 
           // Set new auth header
           setAuthToken(accessToken)
 
+          // Parse expiresAt timestamp and subtract buffer for early refresh
+          const expiresAtMs = new Date(expiresAt).getTime() - 60 * 1000
+
           set({
-            user,
             accessToken,
             refreshToken: newRefreshToken,
-            expiresAt: calculateExpiresAt(expiresIn),
+            expiresAt: expiresAtMs,
             status: 'authenticated',
             error: null,
           })

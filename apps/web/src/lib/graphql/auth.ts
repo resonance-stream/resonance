@@ -13,26 +13,21 @@ import { gql } from 'graphql-request'
 
 /**
  * Login mutation
- * Authenticates user with username/email and password
+ * Authenticates user with email and password
  */
 export const LOGIN_MUTATION = gql`
-  mutation Login($usernameOrEmail: String!, $password: String!, $rememberMe: Boolean) {
-    login(usernameOrEmail: $usernameOrEmail, password: $password, rememberMe: $rememberMe) {
-      user {
-        id
-        username
-        email
-        displayName
-        avatarUrl
-        role
-        emailVerified
-        createdAt
-        updatedAt
-        lastLoginAt
-      }
+  mutation Login($input: LoginInput!) {
+    login(input: $input) {
+      id
+      email
+      displayName
+      avatarUrl
+      role
+      emailVerified
       accessToken
       refreshToken
-      expiresIn
+      expiresAt
+      tokenType
     }
   }
 `
@@ -42,23 +37,18 @@ export const LOGIN_MUTATION = gql`
  * Creates a new user account
  */
 export const REGISTER_MUTATION = gql`
-  mutation Register($username: String!, $email: String!, $password: String!, $displayName: String) {
-    register(username: $username, email: $email, password: $password, displayName: $displayName) {
-      user {
-        id
-        username
-        email
-        displayName
-        avatarUrl
-        role
-        emailVerified
-        createdAt
-        updatedAt
-        lastLoginAt
-      }
+  mutation Register($input: RegisterInput!) {
+    register(input: $input) {
+      id
+      email
+      displayName
+      avatarUrl
+      role
+      emailVerified
       accessToken
       refreshToken
-      expiresIn
+      expiresAt
+      tokenType
     }
   }
 `
@@ -76,25 +66,15 @@ export const LOGOUT_MUTATION = gql`
 /**
  * Refresh token mutation
  * Exchanges a refresh token for new access/refresh tokens
+ * Note: Uses snake_case for input field to match backend RefreshTokenInput
  */
 export const REFRESH_TOKEN_MUTATION = gql`
-  mutation RefreshToken {
-    refreshToken {
-      user {
-        id
-        username
-        email
-        displayName
-        avatarUrl
-        role
-        emailVerified
-        createdAt
-        updatedAt
-        lastLoginAt
-      }
+  mutation RefreshToken($refreshToken: String!) {
+    refreshToken(input: { refresh_token: $refreshToken }) {
       accessToken
       refreshToken
-      expiresIn
+      expiresAt
+      tokenType
     }
   }
 `
@@ -107,15 +87,14 @@ export const ME_QUERY = gql`
   query Me {
     me {
       id
-      username
       email
       displayName
       avatarUrl
       role
       emailVerified
+      lastSeenAt
       createdAt
       updatedAt
-      lastLoginAt
     }
   }
 `
