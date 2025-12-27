@@ -17,6 +17,7 @@ pub struct FeatureExtractionJob {
 
 /// Extracted audio features
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct AudioFeatures {
     /// Beats per minute (tempo)
     pub bpm: Option<f32>,
