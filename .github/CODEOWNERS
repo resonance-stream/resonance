@@ -1,0 +1,113 @@
+# CODEOWNERS - Automatic review assignment for Resonance
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Each line is a file pattern followed by one or more owners.
+# Order matters: later patterns override earlier ones.
+# Teams use the format @org/team-name, users use @username
+
+# =============================================================================
+# Default Owners - Fallback for any files not matched below
+# =============================================================================
+*                                       @resonance-stream/maintainers
+
+# =============================================================================
+# Root Configuration Files
+# =============================================================================
+# Package management and build configuration
+package.json                            @resonance-stream/maintainers
+pnpm-lock.yaml                          @resonance-stream/maintainers
+pnpm-workspace.yaml                     @resonance-stream/maintainers
+Cargo.toml                              @resonance-stream/backend
+Cargo.lock                              @resonance-stream/backend
+
+# Docker configuration
+docker-compose.yml                      @resonance-stream/devops
+docker-compose.dev.yml                  @resonance-stream/devops
+docker/                                 @resonance-stream/devops
+
+# Environment and configuration
+.env.example                            @resonance-stream/maintainers
+.gitignore                              @resonance-stream/maintainers
+.dockerignore                           @resonance-stream/devops
+
+# =============================================================================
+# Documentation
+# =============================================================================
+*.md                                    @resonance-stream/maintainers
+docs/                                   @resonance-stream/maintainers
+CLAUDE.md                               @resonance-stream/maintainers
+README.md                               @resonance-stream/maintainers
+CONTRIBUTING.md                         @resonance-stream/maintainers
+CODE_OF_CONDUCT.md                      @resonance-stream/maintainers
+SECURITY.md                             @resonance-stream/security
+LICENSE                                 @resonance-stream/maintainers
+
+# =============================================================================
+# GitHub Configuration
+# =============================================================================
+.github/                                @resonance-stream/maintainers
+.github/workflows/                      @resonance-stream/devops
+.github/ISSUE_TEMPLATE/                 @resonance-stream/maintainers
+.github/CODEOWNERS                      @resonance-stream/maintainers
+.github/dependabot.yml                  @resonance-stream/devops @resonance-stream/security
+
+# =============================================================================
+# Backend - Rust API Server
+# =============================================================================
+apps/api/                               @resonance-stream/backend
+apps/api/Cargo.toml                     @resonance-stream/backend
+apps/api/src/                           @resonance-stream/backend
+apps/api/src/routes/                    @resonance-stream/backend
+apps/api/src/services/                  @resonance-stream/backend
+apps/api/src/models/                    @resonance-stream/backend
+apps/api/src/graphql/                   @resonance-stream/backend
+apps/api/src/websocket/                 @resonance-stream/backend
+apps/api/migrations/                    @resonance-stream/backend @resonance-stream/database
+apps/api/tests/                         @resonance-stream/backend
+
+# =============================================================================
+# Backend - Background Worker
+# =============================================================================
+apps/worker/                            @resonance-stream/backend
+apps/worker/Cargo.toml                  @resonance-stream/backend
+apps/worker/src/                        @resonance-stream/backend
+apps/worker/src/jobs/                   @resonance-stream/backend
+
+# =============================================================================
+# Frontend - React Web Application
+# =============================================================================
+apps/web/                               @resonance-stream/frontend
+apps/web/package.json                   @resonance-stream/frontend
+apps/web/tsconfig.json                  @resonance-stream/frontend
+apps/web/vite.config.ts                 @resonance-stream/frontend
+apps/web/src/                           @resonance-stream/frontend
+apps/web/src/components/                @resonance-stream/frontend
+apps/web/src/hooks/                     @resonance-stream/frontend
+apps/web/src/stores/                    @resonance-stream/frontend
+apps/web/src/lib/                       @resonance-stream/frontend
+apps/web/src/pages/                     @resonance-stream/frontend
+apps/web/src/test/                      @resonance-stream/frontend
+
+# =============================================================================
+# Shared Packages
+# =============================================================================
+packages/                               @resonance-stream/maintainers
+packages/shared-types/                  @resonance-stream/frontend @resonance-stream/backend
+packages/shared-config/                 @resonance-stream/maintainers
+
+# =============================================================================
+# Scripts and Tooling
+# =============================================================================
+scripts/                                @resonance-stream/devops
+
+# =============================================================================
+# Security-Sensitive Files
+# =============================================================================
+# These files require security team review in addition to regular owners
+**/auth/                                @resonance-stream/backend @resonance-stream/security
+**/authentication/                      @resonance-stream/backend @resonance-stream/security
+**/authorization/                       @resonance-stream/backend @resonance-stream/security
+**/security/                            @resonance-stream/security
+**/*secret*                             @resonance-stream/security
+**/*credential*                         @resonance-stream/security
+**/*password*                           @resonance-stream/security
