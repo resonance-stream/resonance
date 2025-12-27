@@ -10,17 +10,17 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use sha2::{Digest, Sha256};
-use sqlx::{FromRow, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
 use crate::models::user::{
     AuthTokens, Claims, DeviceInfo, RefreshClaims, User, UserPreferences, UserRole,
 };
-use crate::repositories::UserRepository;
+use crate::repositories::{SessionRepository, UserRepository};
 
 /// Authentication service configuration
 #[derive(Debug, Clone)]
@@ -85,18 +85,9 @@ fn parse_duration_string(s: &str) -> Option<i64> {
     }
 }
 
-/// Session row from database query
-#[derive(Debug, FromRow)]
-struct SessionRow {
-    id: Uuid,
-    user_id: Uuid,
-    expires_at: DateTime<Utc>,
-}
-
 /// Authentication service providing registration, login, and token management
 #[derive(Clone)]
 pub struct AuthService {
-    pool: PgPool,
     config: AuthConfig,
     argon2: Argon2<'static>,
     /// Pre-computed dummy hash for timing attack prevention.
@@ -105,6 +96,8 @@ pub struct AuthService {
     dummy_password_hash: String,
     /// User repository for centralized database operations
     user_repo: UserRepository,
+    /// Session repository for centralized session database operations
+    session_repo: SessionRepository,
 }
 
 impl AuthService {
@@ -122,15 +115,16 @@ impl AuthService {
             .expect("dummy password hashing should not fail")
             .to_string();
 
-        // Create user repository for centralized database operations
+        // Create repositories for centralized database operations
         let user_repo = UserRepository::new(pool.clone());
+        let session_repo = SessionRepository::new(pool);
 
         Self {
-            pool,
             config,
             argon2,
             dummy_password_hash,
             user_repo,
+            session_repo,
         }
     }
 
@@ -139,14 +133,14 @@ impl AuthService {
     /// # Arguments
     /// * `email` - User's email address (must be unique)
     /// * `password` - User's plaintext password (will be hashed with Argon2id)
-    /// * `display_name` - User's display name
+    /// * `display_name` - User's display name (1-100 characters)
     ///
     /// # Returns
     /// The newly created User on success
     ///
     /// # Errors
     /// - `ApiError::Conflict` if email already exists
-    /// - `ApiError::ValidationError` if email or password is invalid
+    /// - `ApiError::ValidationError` if email, password, or display_name is invalid
     pub async fn register(
         &self,
         email: &str,
@@ -160,10 +154,18 @@ impl AuthService {
             ));
         }
 
-        // Validate password strength
-        if password.len() < 8 {
+        // Validate password complexity
+        let password_validation = validate_password_complexity(password);
+        if !password_validation.is_valid {
             return Err(ApiError::ValidationError(
-                "password must be at least 8 characters".to_string(),
+                password_validation.errors.join("; "),
+            ));
+        }
+
+        // Validate display_name length (1-100 characters)
+        if !is_valid_display_name(display_name) {
+            return Err(ApiError::ValidationError(
+                "display_name must be between 1 and 100 characters".to_string(),
             ));
         }
 
@@ -338,31 +340,19 @@ impl AuthService {
         // Decode and validate refresh token
         let claims = self.verify_refresh_token(refresh_token)?;
 
-        // Find the session and verify refresh token hash matches
+        // Find the session and verify refresh token hash matches using repository
         let refresh_token_hash = hash_token(refresh_token);
 
-        let session: Option<SessionRow> = sqlx::query_as(
-            r#"
-            SELECT id, user_id, expires_at
-            FROM sessions
-            WHERE id = $1 AND refresh_token_hash = $2 AND is_active = true
-            "#,
-        )
-        .bind(claims.sid)
-        .bind(&refresh_token_hash)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        let session = session
+        let session = self
+            .session_repo
+            .find_active_by_refresh_token(claims.sid, &refresh_token_hash)
+            .await?
             .ok_or_else(|| ApiError::InvalidToken("session not found or inactive".to_string()))?;
 
         // Check if session has expired
         if session.expires_at < Utc::now() {
-            // Deactivate expired session
-            sqlx::query("UPDATE sessions SET is_active = false WHERE id = $1")
-                .bind(session.id)
-                .execute(&self.pool)
-                .await?;
+            // Deactivate expired session using repository
+            let _ = self.session_repo.deactivate(session.id).await?;
             return Err(ApiError::InvalidToken("session expired".to_string()));
         }
 
@@ -380,26 +370,18 @@ impl AuthService {
         let access_expires_at = Utc::now() + Duration::seconds(self.config.access_token_ttl_secs);
         let session_expires_at = Utc::now() + Duration::seconds(self.config.refresh_token_ttl_secs);
 
-        // Update session with new token hashes
+        // Update session with new token hashes using repository
         let access_token_hash = hash_token(&access_token);
         let new_refresh_token_hash = hash_token(&new_refresh_token);
 
-        sqlx::query(
-            r#"
-            UPDATE sessions
-            SET token_hash = $1,
-                refresh_token_hash = $2,
-                last_active_at = NOW(),
-                expires_at = $3
-            WHERE id = $4
-            "#,
-        )
-        .bind(&access_token_hash)
-        .bind(&new_refresh_token_hash)
-        .bind(session_expires_at)
-        .bind(session.id)
-        .execute(&self.pool)
-        .await?;
+        self.session_repo
+            .update_tokens(
+                session.id,
+                &access_token_hash,
+                &new_refresh_token_hash,
+                session_expires_at,
+            )
+            .await?;
 
         tracing::debug!(session_id = %session.id, user_id = %user.id, "Token refreshed successfully");
 
@@ -418,12 +400,9 @@ impl AuthService {
     /// # Errors
     /// - `ApiError::NotFound` if session doesn't exist
     pub async fn logout(&self, session_id: Uuid) -> ApiResult<()> {
-        let result = sqlx::query("UPDATE sessions SET is_active = false WHERE id = $1")
-            .bind(session_id)
-            .execute(&self.pool)
-            .await?;
+        let deactivated = self.session_repo.deactivate(session_id).await?;
 
-        if result.rows_affected() == 0 {
+        if !deactivated {
             return Err(ApiError::NotFound {
                 resource_type: "session",
                 id: session_id.to_string(),
@@ -440,14 +419,8 @@ impl AuthService {
     /// # Arguments
     /// * `user_id` - The user whose sessions to invalidate
     pub async fn logout_all(&self, user_id: Uuid) -> ApiResult<u64> {
-        let result = sqlx::query(
-            "UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true",
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        let count = self.session_repo.deactivate_all_for_user(user_id).await?;
 
-        let count = result.rows_affected();
         tracing::info!(user_id = %user_id, sessions_invalidated = count, "All sessions logged out");
 
         Ok(count)
@@ -537,29 +510,21 @@ impl AuthService {
             })
             .unwrap_or((None, None, None));
 
-        // Create session record
-        sqlx::query(
-            r#"
-            INSERT INTO sessions (
-                id, user_id, token_hash, refresh_token_hash,
-                device_name, device_type, device_id,
-                ip_address, user_agent, expires_at
+        // Create session record using repository
+        self.session_repo
+            .create(
+                session_id,
+                user.id,
+                &access_token_hash,
+                &refresh_token_hash,
+                device_name.as_deref(),
+                device_type.as_deref(),
+                device_id.as_deref(),
+                ip_address,
+                user_agent,
+                session_expires_at,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::inet, $9, $10)
-            "#,
-        )
-        .bind(session_id)
-        .bind(user.id)
-        .bind(&access_token_hash)
-        .bind(&refresh_token_hash)
-        .bind(&device_name)
-        .bind(&device_type)
-        .bind(&device_id)
-        .bind(ip_address)
-        .bind(user_agent)
-        .bind(session_expires_at)
-        .execute(&self.pool)
-        .await?;
+            .await?;
 
         Ok(AuthTokens::new(
             access_token,
@@ -623,6 +588,95 @@ fn hash_token(token: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Password complexity validation result
+#[derive(Debug, Clone, PartialEq)]
+pub struct PasswordValidation {
+    pub is_valid: bool,
+    pub has_min_length: bool,
+    pub has_uppercase: bool,
+    pub has_lowercase: bool,
+    pub has_number: bool,
+    pub errors: Vec<String>,
+}
+
+impl PasswordValidation {
+    fn new() -> Self {
+        Self {
+            is_valid: false,
+            has_min_length: false,
+            has_uppercase: false,
+            has_lowercase: false,
+            has_number: false,
+            errors: Vec::new(),
+        }
+    }
+}
+
+/// Validate password complexity
+///
+/// Password must meet the following requirements:
+/// - At least 8 characters long
+/// - Contains at least one uppercase letter (A-Z)
+/// - Contains at least one lowercase letter (a-z)
+/// - Contains at least one number (0-9)
+///
+/// # Arguments
+/// * `password` - The password to validate
+///
+/// # Returns
+/// A `PasswordValidation` struct containing validation results and any errors
+pub fn validate_password_complexity(password: &str) -> PasswordValidation {
+    let mut result = PasswordValidation::new();
+
+    // Check minimum length (8 characters)
+    result.has_min_length = password.len() >= 8;
+    if !result.has_min_length {
+        result.errors.push("Password must be at least 8 characters".to_string());
+    }
+
+    // Check for at least one uppercase letter
+    result.has_uppercase = password.chars().any(|c| c.is_ascii_uppercase());
+    if !result.has_uppercase {
+        result.errors.push("Password must contain at least one uppercase letter".to_string());
+    }
+
+    // Check for at least one lowercase letter
+    result.has_lowercase = password.chars().any(|c| c.is_ascii_lowercase());
+    if !result.has_lowercase {
+        result.errors.push("Password must contain at least one lowercase letter".to_string());
+    }
+
+    // Check for at least one number
+    result.has_number = password.chars().any(|c| c.is_ascii_digit());
+    if !result.has_number {
+        result.errors.push("Password must contain at least one number".to_string());
+    }
+
+    // Password is valid if all requirements are met
+    result.is_valid = result.has_min_length
+        && result.has_uppercase
+        && result.has_lowercase
+        && result.has_number;
+
+    result
+}
+
+/// Validate display_name length (1-100 characters)
+///
+/// Display name must:
+/// - Not be empty (after trimming whitespace)
+/// - Not exceed 100 characters
+///
+/// # Arguments
+/// * `display_name` - The display name to validate
+///
+/// # Returns
+/// `true` if the display name is valid, `false` otherwise
+fn is_valid_display_name(display_name: &str) -> bool {
+    let trimmed = display_name.trim();
+    !trimmed.is_empty() && trimmed.len() <= 100
+}
+
 /// Simple email validation
 fn is_valid_email(email: &str) -> bool {
     let email = email.trim();
@@ -682,6 +736,37 @@ mod tests {
     }
 
     #[test]
+    fn test_is_valid_display_name() {
+        // Valid display names
+        assert!(is_valid_display_name("John Doe"));
+        assert!(is_valid_display_name("A")); // minimum length (1 char)
+        assert!(is_valid_display_name("DJ Music Lover 123"));
+        assert!(is_valid_display_name("用户名")); // Unicode characters
+
+        // Exactly 100 characters (should be valid)
+        let exactly_100 = "a".repeat(100);
+        assert!(is_valid_display_name(&exactly_100));
+
+        // Invalid: empty string
+        assert!(!is_valid_display_name(""));
+
+        // Invalid: only whitespace
+        assert!(!is_valid_display_name("   "));
+        assert!(!is_valid_display_name("\t\n"));
+
+        // Invalid: exceeds 100 characters
+        let too_long = "a".repeat(101);
+        assert!(!is_valid_display_name(&too_long));
+
+        // Edge case: whitespace padding should be trimmed
+        // " A " should be valid (trimmed to "A")
+        assert!(is_valid_display_name(" A "));
+
+        // Edge case: name with only leading/trailing whitespace but empty content
+        assert!(!is_valid_display_name("     "));
+    }
+
+    #[test]
     fn test_hash_token() {
         let token = "test_token_123";
         let hash = hash_token(token);
@@ -717,6 +802,103 @@ mod tests {
             AuthConfig::with_expiry_strings("secret".to_string(), "invalid", "also_invalid");
         assert_eq!(config.access_token_ttl_secs, 15 * 60);
         assert_eq!(config.refresh_token_ttl_secs, 7 * 24 * 3600);
+    }
+
+    #[test]
+    fn test_validate_password_complexity_valid_password() {
+        let result = validate_password_complexity("ValidPass1");
+        assert!(result.is_valid);
+        assert!(result.has_min_length);
+        assert!(result.has_uppercase);
+        assert!(result.has_lowercase);
+        assert!(result.has_number);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_password_complexity_too_short() {
+        let result = validate_password_complexity("Pass1");
+        assert!(!result.is_valid);
+        assert!(!result.has_min_length);
+        assert!(result.has_uppercase);
+        assert!(result.has_lowercase);
+        assert!(result.has_number);
+        assert!(result
+            .errors
+            .contains(&"Password must be at least 8 characters".to_string()));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_missing_uppercase() {
+        let result = validate_password_complexity("password1");
+        assert!(!result.is_valid);
+        assert!(result.has_min_length);
+        assert!(!result.has_uppercase);
+        assert!(result.has_lowercase);
+        assert!(result.has_number);
+        assert!(result
+            .errors
+            .contains(&"Password must contain at least one uppercase letter".to_string()));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_missing_lowercase() {
+        let result = validate_password_complexity("PASSWORD1");
+        assert!(!result.is_valid);
+        assert!(result.has_min_length);
+        assert!(result.has_uppercase);
+        assert!(!result.has_lowercase);
+        assert!(result.has_number);
+        assert!(result
+            .errors
+            .contains(&"Password must contain at least one lowercase letter".to_string()));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_missing_number() {
+        let result = validate_password_complexity("Password");
+        assert!(!result.is_valid);
+        assert!(result.has_min_length);
+        assert!(result.has_uppercase);
+        assert!(result.has_lowercase);
+        assert!(!result.has_number);
+        assert!(result
+            .errors
+            .contains(&"Password must contain at least one number".to_string()));
+    }
+
+    #[test]
+    fn test_validate_password_complexity_all_numbers() {
+        let result = validate_password_complexity("12345678");
+        assert!(!result.is_valid);
+        assert!(result.has_min_length);
+        assert!(!result.has_uppercase);
+        assert!(!result.has_lowercase);
+        assert!(result.has_number);
+        assert_eq!(result.errors.len(), 2);
+    }
+
+    #[test]
+    fn test_validate_password_complexity_empty() {
+        let result = validate_password_complexity("");
+        assert!(!result.is_valid);
+        assert!(!result.has_min_length);
+        assert!(!result.has_uppercase);
+        assert!(!result.has_lowercase);
+        assert!(!result.has_number);
+        assert_eq!(result.errors.len(), 4);
+    }
+
+    #[test]
+    fn test_validate_password_complexity_edge_cases() {
+        // Exactly 8 characters with all requirements
+        let result = validate_password_complexity("Abcdef1!");
+        assert!(result.is_valid);
+
+        // Just at the boundary
+        let result = validate_password_complexity("Abcde12");
+        assert!(!result.is_valid);
+        assert!(!result.has_min_length);
     }
 
     #[test]
