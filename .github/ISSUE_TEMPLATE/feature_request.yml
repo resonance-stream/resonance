@@ -1,0 +1,114 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Resonance
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to suggest a feature for Resonance!
+        Please fill out this form to help us understand your request.
+
+  - type: checkboxes
+    id: existing-check
+    attributes:
+      label: Pre-submission checklist
+      description: Please confirm the following before submitting
+      options:
+        - label: I have searched the existing issues to make sure this feature hasn't already been requested
+          required: true
+        - label: I have checked the project roadmap/discussions for planned features
+          required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature Area
+      description: Which part of Resonance does this feature relate to?
+      options:
+        - Playback (gapless, crossfade, equalizer)
+        - Library Management
+        - Search & Discovery
+        - AI Features (recommendations, mood detection, natural language)
+        - Cross-device Sync
+        - Offline/PWA
+        - Lidarr Integration
+        - User Interface
+        - API/Backend
+        - Docker/Deployment
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: |
+        Describe the problem you're trying to solve or the workflow you want to improve.
+        Why do you need this feature? What are you trying to accomplish?
+      placeholder: |
+        Example: As a user with a large music library, I want to quickly filter my collection by decade so that I can find music from a specific era without scrolling through thousands of tracks.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: |
+        Describe how you envision this feature working. Be as specific as possible.
+        Include UI mockups, API designs, or workflow diagrams if helpful.
+      placeholder: |
+        Example: Add a "Decade" filter dropdown in the library view that shows options like "1970s", "1980s", "1990s", etc. Clicking a decade would filter the track list to only show songs released in that time period.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: |
+        Have you considered any alternative solutions or workarounds?
+        Why wouldn't these alternatives work for your use case?
+      placeholder: |
+        Example: I tried using the search feature to find songs by year, but it only matches exact years and doesn't support ranges. I also considered creating smart playlists, but the current playlist system doesn't support date-based rules.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to your use of Resonance?
+      options:
+        - Nice to have - Would improve my experience
+        - Important - I need this for my workflow
+        - Critical - I cannot use Resonance without this
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, screenshots, or references about the feature request.
+        Links to similar features in other applications are helpful.
+      placeholder: |
+        - Screenshots or mockups
+        - Links to similar features in other apps
+        - Technical considerations
+        - Related issues or discussions
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you be interested in contributing to this feature?
+      options:
+        - label: I would be willing to submit a pull request for this feature
+        - label: I can help with testing this feature
+        - label: I can help with documentation for this feature
