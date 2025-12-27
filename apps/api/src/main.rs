@@ -1,7 +1,7 @@
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::Extension,
-    http::{header, Method},
+    http::{header, header::HeaderMap, Method},
     routing::{get, post},
     Router,
 };
@@ -98,12 +98,45 @@ fn build_cors_layer(config: &config::Config) -> CorsLayer {
     }
 }
 
+/// Extract bearer token from Authorization header
+fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
 /// GraphQL handler that executes queries against the schema
+///
+/// This handler extracts the Bearer token from the Authorization header,
+/// verifies it using AuthService, and injects the Claims into the GraphQL
+/// context so that queries like `me` and mutations like `logout` can access
+/// the authenticated user's information.
 async fn graphql_handler(
     Extension(schema): Extension<ResonanceSchema>,
+    Extension(auth_service): Extension<AuthService>,
+    headers: HeaderMap,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
+    let mut request = req.into_inner();
+
+    // Try to extract and verify the Bearer token
+    if let Some(token) = extract_bearer_token(&headers) {
+        match auth_service.verify_access_token(token) {
+            Ok(claims) => {
+                // Inject Claims into the GraphQL context
+                request = request.data(claims);
+                tracing::debug!("GraphQL request authenticated");
+            }
+            Err(e) => {
+                // Log the error but don't fail the request - unauthenticated
+                // requests are allowed (they'll fail on protected resolvers)
+                tracing::debug!(error = %e, "GraphQL auth token verification failed");
+            }
+        }
+    }
+
+    schema.execute(request).await.into()
 }
 
 /// GraphQL Playground handler for development
