@@ -31,11 +31,15 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
       # Individual package outputs
-      resonance--release_created: ${{ steps.release.outputs['resonance--release_created'] }}
-      resonance--tag_name: ${{ steps.release.outputs['resonance--tag_name'] }}
-      resonance--version: ${{ steps.release.outputs['resonance--version'] }}
+      api--release_created: ${{ steps.release.outputs['apps/api--release_created'] }}
+      api--tag_name: ${{ steps.release.outputs['apps/api--tag_name'] }}
+      api--version: ${{ steps.release.outputs['apps/api--version'] }}
+      worker--release_created: ${{ steps.release.outputs['apps/worker--release_created'] }}
+      worker--tag_name: ${{ steps.release.outputs['apps/worker--tag_name'] }}
+      worker--version: ${{ steps.release.outputs['apps/worker--version'] }}
       web--release_created: ${{ steps.release.outputs['apps/web--release_created'] }}
       web--tag_name: ${{ steps.release.outputs['apps/web--tag_name'] }}
+      web--version: ${{ steps.release.outputs['apps/web--version'] }}
     steps:
       - name: Generate GitHub App Token
         id: app-token
@@ -59,13 +63,13 @@ jobs:
   publish-docker-api:
     name: Publish API Docker Image
     needs: release-please
-    if: ${{ needs.release-please.outputs.resonance--release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.api--release_created == 'true' }}
     uses: ./.github/workflows/docker-build.yml
     with:
       image-name: resonance-api
       dockerfile: docker/Dockerfile
       context: '.'
-      version: ${{ needs.release-please.outputs.resonance--version }}
+      version: ${{ needs.release-please.outputs.api--version }}
       tag-latest: true
     permissions:
       contents: read
@@ -77,13 +81,13 @@ jobs:
   publish-docker-worker:
     name: Publish Worker Docker Image
     needs: release-please
-    if: ${{ needs.release-please.outputs.resonance--release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.worker--release_created == 'true' }}
     uses: ./.github/workflows/docker-build.yml
     with:
       image-name: resonance-worker
       dockerfile: docker/Dockerfile.worker
       context: '.'
-      version: ${{ needs.release-please.outputs.resonance--version }}
+      version: ${{ needs.release-please.outputs.worker--version }}
       tag-latest: true
     permissions:
       contents: read
@@ -95,7 +99,7 @@ jobs:
   build-binaries:
     name: Build Release Binaries
     needs: release-please
-    if: ${{ needs.release-please.outputs.resonance--release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.api--release_created == 'true' || needs.release-please.outputs.worker--release_created == 'true' }}
     strategy:
       matrix:
         include:
@@ -152,7 +156,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.resonance--tag_name }}
+          tag_name: ${{ needs.release-please.outputs.api--tag_name || needs.release-please.outputs.worker--tag_name }}
           files: |
             dist/resonance-${{ matrix.name }}.tar.gz
             dist/resonance-${{ matrix.name }}.tar.gz.sha256
@@ -163,7 +167,7 @@ jobs:
   update-release-notes:
     name: Update Release Notes
     needs: [release-please, publish-docker-api, publish-docker-worker, build-binaries]
-    if: ${{ needs.release-please.outputs.resonance--release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.api--release_created == 'true' || needs.release-please.outputs.worker--release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -172,7 +176,7 @@ jobs:
       - name: Update release with installation info
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.resonance--tag_name }}
+          tag_name: ${{ needs.release-please.outputs.api--tag_name || needs.release-please.outputs.worker--tag_name }}
           append_body: true
           body: |
 
@@ -184,8 +188,8 @@ jobs:
 
             ```bash
             # Pull the latest images
-            docker pull ghcr.io/${{ github.repository_owner }}/resonance-api:${{ needs.release-please.outputs.resonance--version }}
-            docker pull ghcr.io/${{ github.repository_owner }}/resonance-worker:${{ needs.release-please.outputs.resonance--version }}
+            docker pull ghcr.io/${{ github.repository_owner }}/resonance-api:${{ needs.release-please.outputs.api--version }}
+            docker pull ghcr.io/${{ github.repository_owner }}/resonance-worker:${{ needs.release-please.outputs.worker--version }}
 
             # Or use docker-compose
             curl -O https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml

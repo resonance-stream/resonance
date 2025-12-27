@@ -1,6 +1,5 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "simple",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "include-component-in-tag": true,
@@ -22,26 +21,20 @@
     {"type": "ci", "section": "Continuous Integration", "hidden": true}
   ],
   "packages": {
-    ".": {
+    "apps/api": {
       "release-type": "rust",
-      "component": "resonance",
-      "changelog-path": "CHANGELOG.md",
-      "extra-files": [
-        "apps/api/Cargo.toml",
-        "apps/worker/Cargo.toml",
-        "packages/shared-config/Cargo.toml"
-      ]
+      "component": "api",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "apps/worker": {
+      "release-type": "rust",
+      "component": "worker",
+      "changelog-path": "CHANGELOG.md"
     },
     "apps/web": {
       "release-type": "node",
       "component": "web",
       "changelog-path": "CHANGELOG.md"
     }
-  },
-  "plugins": [
-    {
-      "type": "cargo-workspace",
-      "merge": true
-    }
-  ]
+  }
 }
