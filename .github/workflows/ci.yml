@@ -170,5 +170,9 @@ jobs:
       - name: Build Rust workspace
         run: cargo build --release
 
+      # Build shared-types first as other packages depend on it
+      - name: Build shared-types
+        run: pnpm --filter @resonance/shared-types build
+
       - name: Build frontend
         run: pnpm build

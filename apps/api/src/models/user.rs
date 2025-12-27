@@ -355,6 +355,9 @@ pub struct RefreshClaims {
     /// Session ID
     pub sid: Uuid,
 
+    /// JWT ID - unique identifier for token rotation
+    pub jti: Uuid,
+
     /// Issued at timestamp
     pub iat: i64,
 
@@ -380,6 +383,7 @@ impl RefreshClaims {
         Self {
             sub: user_id,
             sid: session_id,
+            jti: Uuid::new_v4(), // Unique ID ensures token rotation produces different tokens
             iat: now,
             exp: now + refresh_token_ttl_secs,
             typ: "refresh".to_string(),
