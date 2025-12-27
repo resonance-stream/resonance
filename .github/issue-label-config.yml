@@ -1,0 +1,215 @@
+# Issue Label Configuration
+# This file externalizes keyword-to-label mappings for the auto-label-issues workflow.
+# Edit this file to customize which keywords trigger which labels.
+#
+# Format:
+#   label_name:
+#     keywords:
+#       - keyword1
+#       - keyword2
+#     description: Optional description of what this label covers
+
+# General issue types
+bug:
+  description: Something isn't working correctly
+  keywords:
+    - bug
+    - error
+    - crash
+    - broken
+    - fix
+    - issue
+    - problem
+    - fail
+    - exception
+    - not working
+
+enhancement:
+  description: New feature or request
+  keywords:
+    - feature
+    - request
+    - enhancement
+    - add
+    - new
+    - implement
+    - support
+    - would be nice
+    - suggestion
+
+documentation:
+  description: Improvements or additions to documentation
+  keywords:
+    - documentation
+    - docs
+    - readme
+    - wiki
+    - guide
+    - tutorial
+    - example
+    - typo
+
+question:
+  description: Further information is requested
+  keywords:
+    - question
+    - help
+    - how to
+    - how do
+    - what is
+    - why does
+    - confused
+    - unclear
+
+performance:
+  description: Performance-related issues
+  keywords:
+    - performance
+    - slow
+    - memory
+    - cpu
+    - optimize
+    - speed
+    - latency
+    - lag
+
+security:
+  description: Security vulnerabilities or concerns
+  keywords:
+    - security
+    - vulnerability
+    - cve
+    - exploit
+    - authentication
+    - authorization
+    - xss
+    - injection
+    - csrf
+
+# Component-specific labels
+ui/ux:
+  description: User interface and experience
+  keywords:
+    - ui
+    - ux
+    - design
+    - layout
+    - style
+    - css
+    - theme
+    - dark mode
+    - light mode
+    - responsive
+    - mobile
+
+api:
+  description: API-related issues
+  keywords:
+    - api
+    - graphql
+    - rest
+    - endpoint
+    - route
+    - request
+    - response
+    - websocket
+
+database:
+  description: Database-related issues
+  keywords:
+    - database
+    - postgresql
+    - postgres
+    - redis
+    - migration
+    - query
+    - sql
+    - meilisearch
+
+# Project-specific labels (Resonance)
+playback:
+  description: Audio playback and streaming
+  keywords:
+    - playback
+    - audio
+    - streaming
+    - gapless
+    - crossfade
+    - equalizer
+    - eq
+    - volume
+    - buffer
+
+ai:
+  description: AI features and recommendations
+  keywords:
+    - ai
+    - recommendation
+    - mood
+    - ollama
+    - embedding
+    - vector
+    - natural language
+    - nlp
+
+sync:
+  description: Real-time synchronization features
+  keywords:
+    - sync
+    - synchronization
+    - real-time
+    - cross-device
+    - multi-device
+
+pwa:
+  description: Progressive Web App and offline features
+  keywords:
+    - pwa
+    - offline
+    - service worker
+    - cache
+    - install
+    - manifest
+
+integration:
+  description: External integrations (Lidarr, etc.)
+  keywords:
+    - lidarr
+    - integration
+    - import
+    - library
+    - scan
+
+# Infrastructure labels
+deployment:
+  description: Docker and deployment related
+  keywords:
+    - docker
+    - container
+    - compose
+    - deployment
+    - kubernetes
+    - k8s
+    - helm
+
+frontend:
+  description: Frontend/React application
+  keywords:
+    - frontend
+    - react
+    - typescript
+    - vite
+    - component
+    - hook
+    - zustand
+    - radix
+
+backend:
+  description: Backend/Rust application
+  keywords:
+    - backend
+    - rust
+    - axum
+    - server
+    - tokio
+    - sqlx

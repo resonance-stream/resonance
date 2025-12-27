@@ -6,15 +6,39 @@ on:
 
 permissions:
   issues: write
+  contents: read
 
 jobs:
   label-issues:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/issue-label-config.yml
+          sparse-checkout-cone-mode: false
+
       - name: Label issues based on keywords
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const yaml = require('js-yaml');
+
+            // Read the external configuration file
+            let labelConfig;
+            try {
+              const configPath = '.github/issue-label-config.yml';
+              const configContent = fs.readFileSync(configPath, 'utf8');
+              labelConfig = yaml.load(configContent);
+              console.log('Loaded label configuration successfully');
+            } catch (error) {
+              console.log(`Warning: Could not load config file: ${error.message}`);
+              console.log('Falling back to empty configuration');
+              labelConfig = {};
+            }
+
             const issue = context.payload.issue;
             const title = issue.title.toLowerCase();
             const body = (issue.body || '').toLowerCase();
@@ -22,106 +46,16 @@ jobs:
 
             const labelsToAdd = new Set();
 
-            // Bug-related keywords
-            const bugKeywords = ['bug', 'error', 'crash', 'broken', 'fix', 'issue', 'problem', 'fail', 'exception', 'not working'];
-            if (bugKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('bug');
-            }
-
-            // Feature request keywords
-            const featureKeywords = ['feature', 'request', 'enhancement', 'add', 'new', 'implement', 'support', 'would be nice', 'suggestion'];
-            if (featureKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('enhancement');
-            }
-
-            // Documentation keywords
-            const docsKeywords = ['documentation', 'docs', 'readme', 'wiki', 'guide', 'tutorial', 'example', 'typo'];
-            if (docsKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('documentation');
-            }
-
-            // Question/help keywords
-            const questionKeywords = ['question', 'help', 'how to', 'how do', 'what is', 'why does', 'confused', 'unclear'];
-            if (questionKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('question');
-            }
-
-            // Performance keywords
-            const perfKeywords = ['performance', 'slow', 'memory', 'cpu', 'optimize', 'speed', 'latency', 'lag'];
-            if (perfKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('performance');
-            }
-
-            // Security keywords
-            const securityKeywords = ['security', 'vulnerability', 'cve', 'exploit', 'authentication', 'authorization', 'xss', 'injection', 'csrf'];
-            if (securityKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('security');
-            }
-
-            // UI/UX keywords
-            const uiKeywords = ['ui', 'ux', 'design', 'layout', 'style', 'css', 'theme', 'dark mode', 'light mode', 'responsive', 'mobile'];
-            if (uiKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('ui/ux');
-            }
-
-            // API keywords
-            const apiKeywords = ['api', 'graphql', 'rest', 'endpoint', 'route', 'request', 'response', 'websocket'];
-            if (apiKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('api');
-            }
-
-            // Database keywords
-            const dbKeywords = ['database', 'postgresql', 'postgres', 'redis', 'migration', 'query', 'sql', 'meilisearch'];
-            if (dbKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('database');
-            }
-
-            // Playback/audio keywords (project-specific)
-            const audioKeywords = ['playback', 'audio', 'streaming', 'gapless', 'crossfade', 'equalizer', 'eq', 'volume', 'buffer'];
-            if (audioKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('playback');
-            }
-
-            // AI/recommendations keywords (project-specific)
-            const aiKeywords = ['ai', 'recommendation', 'mood', 'ollama', 'embedding', 'vector', 'natural language', 'nlp'];
-            if (aiKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('ai');
-            }
-
-            // Sync keywords (project-specific)
-            const syncKeywords = ['sync', 'synchronization', 'real-time', 'cross-device', 'multi-device'];
-            if (syncKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('sync');
-            }
-
-            // PWA/offline keywords (project-specific)
-            const pwaKeywords = ['pwa', 'offline', 'service worker', 'cache', 'install', 'manifest'];
-            if (pwaKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('pwa');
-            }
-
-            // Lidarr integration keywords (project-specific)
-            const lidarrKeywords = ['lidarr', 'integration', 'import', 'library', 'scan'];
-            if (lidarrKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('integration');
-            }
-
-            // Docker/deployment keywords
-            const dockerKeywords = ['docker', 'container', 'compose', 'deployment', 'kubernetes', 'k8s', 'helm'];
-            if (dockerKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('deployment');
-            }
-
-            // Frontend keywords
-            const frontendKeywords = ['frontend', 'react', 'typescript', 'vite', 'component', 'hook', 'zustand', 'radix'];
-            if (frontendKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('frontend');
-            }
-
-            // Backend keywords
-            const backendKeywords = ['backend', 'rust', 'axum', 'server', 'tokio', 'sqlx'];
-            if (backendKeywords.some(kw => content.includes(kw))) {
-              labelsToAdd.add('backend');
+            // Process each label from the configuration
+            for (const [label, config] of Object.entries(labelConfig)) {
+              if (config && config.keywords && Array.isArray(config.keywords)) {
+                const hasMatch = config.keywords.some(keyword =>
+                  content.includes(keyword.toLowerCase())
+                );
+                if (hasMatch) {
+                  labelsToAdd.add(label);
+                }
+              }
             }
 
             // Add labels if any were detected

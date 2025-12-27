@@ -22,10 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
         with:
           components: rustfmt
+          cache-enabled: 'false'
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -129,9 +130,13 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      # NOTE: pnpm install must run from repo root (not apps/web) because:
+      # 1. pnpm-workspace.yaml defines the workspace structure at repo root
+      # 2. Running from a subdirectory would miss workspace dependencies in packages/
+      # 3. The lockfile (pnpm-lock.yaml) is at repo root and contains all workspace deps
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: .
+        working-directory: .  # Must run from root for workspace dependencies
 
       - name: Run ESLint
         run: pnpm lint
@@ -156,9 +161,10 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      # See typescript-lint job for explanation of why we install from root
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: .
+        working-directory: .  # Must run from root for workspace dependencies
 
       - name: Run type check
         run: pnpm typecheck
@@ -183,9 +189,10 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      # See typescript-lint job for explanation of why we install from root
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: .
+        working-directory: .  # Must run from root for workspace dependencies
 
       - name: Run tests
         run: pnpm test
