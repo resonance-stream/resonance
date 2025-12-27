@@ -4,10 +4,10 @@ This document describes all GitHub Actions workflows configured for the Resonanc
 
 ## CI Badges
 
-[![CI](https://github.com/cj-vana/resonance/actions/workflows/ci.yml/badge.svg)](https://github.com/cj-vana/resonance/actions/workflows/ci.yml)
-[![Security Scanning](https://github.com/cj-vana/resonance/actions/workflows/security.yml/badge.svg)](https://github.com/cj-vana/resonance/actions/workflows/security.yml)
-[![Docker Build](https://github.com/cj-vana/resonance/actions/workflows/docker.yml/badge.svg)](https://github.com/cj-vana/resonance/actions/workflows/docker.yml)
-[![Release](https://github.com/cj-vana/resonance/actions/workflows/release.yml/badge.svg)](https://github.com/cj-vana/resonance/actions/workflows/release.yml)
+[![CI](https://github.com/resonance-stream/resonance/actions/workflows/ci.yml/badge.svg)](https://github.com/resonance-stream/resonance/actions/workflows/ci.yml)
+[![Security Scanning](https://github.com/resonance-stream/resonance/actions/workflows/security.yml/badge.svg)](https://github.com/resonance-stream/resonance/actions/workflows/security.yml)
+[![Docker Build](https://github.com/resonance-stream/resonance/actions/workflows/docker.yml/badge.svg)](https://github.com/resonance-stream/resonance/actions/workflows/docker.yml)
+[![Release](https://github.com/resonance-stream/resonance/actions/workflows/release.yml/badge.svg)](https://github.com/resonance-stream/resonance/actions/workflows/release.yml)
 
 ---
 
@@ -21,6 +21,67 @@ This document describes all GitHub Actions workflows configured for the Resonanc
 | [Docker Build](#docker-build) | `docker.yml` | Build and publish Docker images | Version tags (`v*`), manual |
 | [Auto Label Issues](#auto-label-issues) | `auto-label-issues.yml` | Label issues based on keywords | Issue opened/edited |
 | [PR Labeler](#pr-labeler) | `labeler.yml` | Label PRs based on changed files | PR opened/synchronized/reopened |
+
+---
+
+## Reusable Components
+
+The Resonance project uses reusable GitHub Actions components to reduce duplication and ensure consistency across workflows.
+
+### Composite Actions
+
+Composite actions are located in `.github/actions/` and encapsulate common setup steps:
+
+| Action | Location | Purpose |
+|--------|----------|---------|
+| **rust-setup** | `.github/actions/rust-setup/` | Sets up Rust toolchain with caching, optional components (clippy, rustfmt), and configurable cache keys |
+| **setup-node-pnpm** | `.github/actions/setup-node-pnpm/` | Sets up Node.js and pnpm with caching, optionally installs dependencies |
+
+**Usage Example (Rust):**
+```yaml
+- name: Setup Rust
+  uses: ./.github/actions/rust-setup
+  with:
+    components: clippy,rustfmt  # Optional: rustfmt, clippy
+    cache-key: build            # Optional: cache key suffix
+```
+
+**Usage Example (Node.js/pnpm):**
+```yaml
+- name: Setup Node.js and pnpm
+  uses: ./.github/actions/setup-node-pnpm
+  with:
+    node-version: '20'          # Optional: defaults to 20
+    pnpm-version: '9'           # Optional: defaults to 9
+    install-dependencies: true  # Optional: defaults to true
+```
+
+### Reusable Workflows
+
+Reusable workflows use the `workflow_call` trigger and are invoked from other workflows:
+
+| Workflow | File | Purpose |
+|----------|------|---------|
+| **Docker Build** | `docker-build.yml` | Builds and pushes Docker images to GHCR with multi-platform support |
+
+**Usage Example:**
+```yaml
+jobs:
+  build-api:
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: resonance-api
+      dockerfile: ./docker/Dockerfile
+      context: .
+    secrets: inherit
+```
+
+### When to Use Each Pattern
+
+| Pattern | Use When |
+|---------|----------|
+| **Composite Action** | Reusing setup steps (toolchain, caching, dependencies) across multiple jobs |
+| **Reusable Workflow** | Reusing entire job definitions with consistent inputs/outputs |
 
 ---
 
@@ -329,5 +390,5 @@ Labels are configured in [`.github/labeler.yml`](../labeler.yml). The labeler us
 ### Labeling Issues
 
 1. **Labels not applied:** Ensure the labels exist in repository settings
-2. **Wrong labels:** Review keyword mappings in `auto-label-issues.yml`
+2. **Wrong labels:** Review keyword mappings in `issue-label-config.yml`
 3. **PR labels missing:** Check `.github/labeler.yml` file path patterns

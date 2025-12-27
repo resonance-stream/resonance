@@ -100,24 +100,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      # NOTE: pnpm install must run from repo root (not apps/web) because:
+      # NOTE: pnpm install runs from repo root (default) because:
       # 1. pnpm-workspace.yaml defines the workspace structure at repo root
       # 2. Running from a subdirectory would miss workspace dependencies in packages/
       # 3. The lockfile (pnpm-lock.yaml) is at repo root and contains all workspace deps
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .  # Must run from root for workspace dependencies
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Run ESLint
         run: pnpm lint
@@ -131,21 +119,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      # See typescript-lint job for explanation of why we install from root
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .  # Must run from root for workspace dependencies
+      # See typescript-lint job for explanation of why pnpm install runs from root
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Run type check
         run: pnpm typecheck
@@ -159,21 +135,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      # See typescript-lint job for explanation of why we install from root
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .  # Must run from root for workspace dependencies
+      # See typescript-lint job for explanation of why pnpm install runs from root
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Run tests
         run: pnpm test
@@ -191,22 +155,11 @@ jobs:
         with:
           cache-key: build
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Build Rust workspace
         run: cargo build --release
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Build frontend
         run: pnpm build

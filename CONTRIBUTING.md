@@ -19,7 +19,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/resonance-music/resonance.git
+   git clone https://github.com/resonance-stream/resonance.git
    cd resonance
    ```
 
@@ -167,6 +167,11 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 resonance/
+├── .github/
+│   ├── actions/          # Reusable composite actions
+│   │   ├── rust-setup/   # Rust toolchain setup
+│   │   └── setup-node-pnpm/  # Node.js + pnpm setup
+│   └── workflows/        # CI/CD workflows
 ├── apps/
 │   ├── api/          # Rust backend (Axum)
 │   ├── worker/       # Background job processor
@@ -176,6 +181,33 @@ resonance/
 │   └── shared-types/     # Shared TypeScript types
 └── docker/           # Docker configurations
 ```
+
+## CI/CD Workflows
+
+The project uses GitHub Actions for continuous integration and deployment. Key workflows:
+
+| Workflow | Purpose |
+|----------|---------|
+| `ci.yml` | Build, test, and lint on every PR |
+| `security.yml` | Vulnerability scanning (daily + on PR) |
+| `release.yml` | Automated releases via release-please |
+| `docker.yml` | Build and publish Docker images |
+
+### Reusable Components
+
+When adding new workflows, use the existing composite actions for consistency:
+
+```yaml
+# For Rust jobs
+- uses: ./.github/actions/rust-setup
+  with:
+    components: clippy  # Optional
+
+# For Node.js/pnpm jobs
+- uses: ./.github/actions/setup-node-pnpm
+```
+
+See [.github/workflows/README.md](.github/workflows/README.md) for complete documentation.
 
 ## Getting Help
 

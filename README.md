@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/cj-vana/resonance/actions/workflows/ci.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/cj-vana/resonance/actions/workflows/security.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/security.yml/badge.svg" alt="Security Scanning" /></a>
-  <a href="https://github.com/cj-vana/resonance/actions/workflows/docker.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/docker.yml/badge.svg" alt="Docker Build" /></a>
-  <a href="https://github.com/cj-vana/resonance/actions/workflows/release.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+  <a href="https://github.com/resonance-stream/resonance/actions/workflows/ci.yml"><img src="https://github.com/resonance-stream/resonance/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/resonance-stream/resonance/actions/workflows/security.yml"><img src="https://github.com/resonance-stream/resonance/actions/workflows/security.yml/badge.svg" alt="Security Scanning" /></a>
+  <a href="https://github.com/resonance-stream/resonance/actions/workflows/docker.yml"><img src="https://github.com/resonance-stream/resonance/actions/workflows/docker.yml/badge.svg" alt="Docker Build" /></a>
+  <a href="https://github.com/resonance-stream/resonance/actions/workflows/release.yml"><img src="https://github.com/resonance-stream/resonance/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
 </p>
 
 <p align="center">
@@ -84,7 +84,7 @@ Before you begin, ensure you have the following installed:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/resonance.git
+   git clone https://github.com/resonance-stream/resonance.git
    cd resonance
    ```
 
@@ -209,6 +209,12 @@ Device C ──────┘     └──────────────
 
 ```
 resonance/
+├── .github/
+│   ├── actions/                # Reusable composite actions
+│   │   ├── rust-setup/         # Rust toolchain setup
+│   │   └── setup-node-pnpm/    # Node.js + pnpm setup
+│   └── workflows/              # CI/CD workflows
+│
 ├── apps/
 │   ├── api/                    # Rust backend
 │   │   ├── src/
@@ -217,6 +223,7 @@ resonance/
 │   │   │   ├── models/         # Database models
 │   │   │   ├── websocket/      # Real-time sync
 │   │   │   └── graphql/        # GraphQL schema
+│   │   ├── migrations/         # SQLx database migrations
 │   │   └── Cargo.toml
 │   │
 │   ├── worker/                 # Background job processor
@@ -232,12 +239,12 @@ resonance/
 │           └── pages/          # Route pages
 │
 ├── packages/
+│   ├── shared-config/          # Shared Rust configuration
 │   └── shared-types/           # Shared TypeScript types
 │
 ├── docker/
 │   ├── Dockerfile              # API container
-│   ├── Dockerfile.worker       # Worker container
-│   └── init.sql                # Database initialization
+│   └── Dockerfile.worker       # Worker container
 │
 ├── docker-compose.yml
 ├── .env.example
