@@ -1,61 +1,40 @@
 //! Worker configuration loaded from environment variables
 
 use std::env;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use resonance_shared_config::{
+    CommonConfig, DatabaseConfig, Environment, LidarrConfig, OllamaConfig, RedisConfig,
+};
 
 /// Worker configuration
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Database connection URL
-    pub database_url: String,
-
-    /// Redis connection URL
-    pub redis_url: String,
-
-    /// Path to music library
-    pub music_library_path: String,
-
-    /// Lidarr API URL (optional)
-    pub lidarr_url: Option<String>,
-
-    /// Lidarr API key (optional)
-    pub lidarr_api_key: Option<String>,
-
-    /// Ollama URL for AI features
-    pub ollama_url: String,
-
-    /// Ollama model to use
-    pub ollama_model: String,
+    /// Common configuration shared with other services
+    pub common: CommonConfig,
 
     /// Job polling interval in seconds
     pub poll_interval_secs: u64,
 
     /// Maximum concurrent jobs
     pub max_concurrent_jobs: usize,
+
+    /// Maximum retry attempts for failed jobs
+    pub max_retries: u32,
+
+    /// Retry delay base in seconds (exponential backoff)
+    pub retry_delay_secs: u64,
 }
 
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
+        let common =
+            CommonConfig::from_env().map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+
         Ok(Self {
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgres://resonance:resonance@localhost:5432/resonance".to_string()),
-
-            redis_url: env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
-
-            music_library_path: env::var("MUSIC_LIBRARY_PATH")
-                .unwrap_or_else(|_| "/music".to_string()),
-
-            lidarr_url: env::var("LIDARR_URL").ok(),
-            lidarr_api_key: env::var("LIDARR_API_KEY").ok(),
-
-            ollama_url: env::var("OLLAMA_URL")
-                .unwrap_or_else(|_| "http://localhost:11434".to_string()),
-
-            ollama_model: env::var("OLLAMA_MODEL")
-                .unwrap_or_else(|_| "mistral".to_string()),
+            common,
 
             poll_interval_secs: env::var("WORKER_POLL_INTERVAL")
                 .unwrap_or_else(|_| "5".to_string())
@@ -66,11 +45,68 @@ impl Config {
                 .unwrap_or_else(|_| "4".to_string())
                 .parse()
                 .context("Invalid WORKER_MAX_CONCURRENT_JOBS value")?,
+
+            max_retries: env::var("WORKER_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .context("Invalid WORKER_MAX_RETRIES value")?,
+
+            retry_delay_secs: env::var("WORKER_RETRY_DELAY")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .context("Invalid WORKER_RETRY_DELAY value")?,
         })
+    }
+
+    // Convenience accessors for common config fields
+
+    /// Get database URL (for backward compatibility)
+    pub fn database_url(&self) -> &str {
+        &self.common.database.url
+    }
+
+    /// Get Redis URL (for backward compatibility)
+    pub fn redis_url(&self) -> &str {
+        &self.common.redis.url
+    }
+
+    /// Get music library path
+    pub fn music_library_path(&self) -> &PathBuf {
+        &self.common.music_library_path
+    }
+
+    /// Get database configuration
+    pub fn database(&self) -> &DatabaseConfig {
+        &self.common.database
+    }
+
+    /// Get Redis configuration
+    pub fn redis(&self) -> &RedisConfig {
+        &self.common.redis
+    }
+
+    /// Get Ollama configuration
+    pub fn ollama(&self) -> &OllamaConfig {
+        &self.common.ollama
+    }
+
+    /// Get Lidarr configuration (if configured)
+    pub fn lidarr(&self) -> Option<&LidarrConfig> {
+        self.common.lidarr.as_ref()
+    }
+
+    /// Get environment mode
+    pub fn environment(&self) -> Environment {
+        self.common.environment
     }
 
     /// Check if Lidarr integration is configured
     pub fn has_lidarr(&self) -> bool {
-        self.lidarr_url.is_some() && self.lidarr_api_key.is_some()
+        self.common.has_lidarr()
+    }
+
+    /// Check if running in production
+    pub fn is_production(&self) -> bool {
+        self.common.environment.is_production()
     }
 }

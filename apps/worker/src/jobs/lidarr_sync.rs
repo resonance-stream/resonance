@@ -3,9 +3,9 @@
 //! Syncs with Lidarr to monitor for new releases from followed artists
 //! and automatically add them to the library.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Lidarr sync job payload
@@ -49,15 +49,18 @@ struct LidarrAlbum {
 }
 
 /// Execute the Lidarr sync job
-pub async fn execute(state: &AppState, job: &LidarrSyncJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &LidarrSyncJob) -> WorkerResult<()> {
     // Check if Lidarr is configured
-    if !state.config.has_lidarr() {
-        tracing::debug!("Lidarr not configured, skipping sync");
-        return Ok(());
-    }
+    let lidarr_config = match state.config.lidarr() {
+        Some(config) => config,
+        None => {
+            tracing::debug!("Lidarr not configured, skipping sync");
+            return Ok(());
+        }
+    };
 
-    let lidarr_url = state.config.lidarr_url.as_ref().unwrap();
-    let api_key = state.config.lidarr_api_key.as_ref().unwrap();
+    let lidarr_url = &lidarr_config.url;
+    let api_key = &lidarr_config.api_key;
 
     tracing::info!("Starting Lidarr sync");
 
@@ -75,7 +78,7 @@ pub async fn execute(state: &AppState, job: &LidarrSyncJob) -> Result<()> {
 }
 
 /// Sync artist metadata from Lidarr
-async fn sync_artists(state: &AppState, lidarr_url: &str, api_key: &str) -> Result<()> {
+async fn sync_artists(state: &AppState, lidarr_url: &str, api_key: &str) -> WorkerResult<()> {
     tracing::debug!("Syncing artists from Lidarr");
 
     // TODO: Implement artist sync
@@ -97,7 +100,7 @@ async fn sync_artists(state: &AppState, lidarr_url: &str, api_key: &str) -> Resu
 }
 
 /// Check for new releases from monitored artists
-async fn check_new_releases(state: &AppState, lidarr_url: &str, api_key: &str) -> Result<()> {
+async fn check_new_releases(state: &AppState, lidarr_url: &str, api_key: &str) -> WorkerResult<()> {
     tracing::debug!("Checking for new releases");
 
     // TODO: Implement new release checking

@@ -38,6 +38,9 @@ url = { workspace = true }
 # Audio processing
 symphonia = { workspace = true }
 
+# Internal crates
+resonance-shared-config = { workspace = true }
+
 [[bin]]
 name = "resonance-worker"
 path = "src/main.rs"

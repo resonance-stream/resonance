@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/api",
     "apps/worker",
+    "packages/shared-config",
 ]
 
 [workspace.package]
@@ -56,3 +57,6 @@ jsonwebtoken = "9"
 
 # URL parsing
 url = "2"
+
+# Internal crates
+resonance-shared-config = { path = "packages/shared-config" }

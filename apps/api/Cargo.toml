@@ -49,6 +49,9 @@ symphonia = { workspace = true }
 argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 
+# Internal crates
+resonance-shared-config = { workspace = true }
+
 [[bin]]
 name = "resonance-api"
 path = "src/main.rs"

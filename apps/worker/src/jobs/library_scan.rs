@@ -5,9 +5,9 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Library scan job payload
@@ -30,11 +30,11 @@ impl Default for LibraryScanJob {
 }
 
 /// Execute the library scan job
-pub async fn execute(state: &AppState, job: &LibraryScanJob) -> Result<()> {
+pub async fn execute(state: &AppState, job: &LibraryScanJob) -> WorkerResult<()> {
     let scan_path = job
         .path
         .clone()
-        .unwrap_or_else(|| PathBuf::from(&state.config.music_library_path));
+        .unwrap_or_else(|| state.config.music_library_path().clone());
 
     tracing::info!("Starting library scan: {:?}", scan_path);
 

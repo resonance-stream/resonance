@@ -18,10 +18,13 @@ use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod error;
 mod jobs;
 
 use config::Config;
 use jobs::JobRunner;
+
+pub use error::{ErrorSeverity, JobResult, WorkerError, WorkerResult};
 
 /// Application state shared across job handlers
 #[derive(Clone)]
@@ -58,19 +61,19 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env()?;
     tracing::info!("Loaded configuration");
-    tracing::debug!("Database URL: {}", redact_url_password(&config.database_url));
-    tracing::debug!("Redis URL: {}", redact_url_password(&config.redis_url));
-    tracing::debug!("Music library path: {}", config.music_library_path);
+    tracing::debug!("Database URL: {}", redact_url_password(config.database_url()));
+    tracing::debug!("Redis URL: {}", redact_url_password(config.redis_url()));
+    tracing::debug!("Music library path: {:?}", config.music_library_path());
 
     // Initialize database connection pool
     let db = PgPoolOptions::new()
         .max_connections(config.max_concurrent_jobs as u32 + 2)
-        .connect(&config.database_url)
+        .connect(config.database_url())
         .await?;
     tracing::info!("Connected to PostgreSQL");
 
     // Initialize Redis client
-    let redis = redis::Client::open(config.redis_url.clone())?;
+    let redis = redis::Client::open(config.redis_url())?;
     // Test Redis connection
     let mut conn = redis.get_multiplexed_async_connection().await?;
     let _: String = redis::cmd("PING")
