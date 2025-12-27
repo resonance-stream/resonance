@@ -84,7 +84,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-resonance}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Note: Database schema is now managed via SQLx migrations in apps/api/migrations/
+      # The API service runs migrations automatically on startup
+      # For fresh deployments, no init.sql is needed
     networks:
       - resonance-network
     healthcheck:

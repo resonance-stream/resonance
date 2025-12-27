@@ -1,5 +1,10 @@
 -- Resonance: PostgreSQL Schema Initialization
--- This file is executed on first database start
+--
+-- DEPRECATED: This file is kept for backward compatibility only.
+-- New deployments should use SQLx migrations in apps/api/migrations/
+-- The API service runs migrations automatically on startup.
+--
+-- This file is executed on first database start (if mounted)
 
 -- ============================================================================
 -- EXTENSIONS
