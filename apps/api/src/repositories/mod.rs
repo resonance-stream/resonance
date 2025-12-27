@@ -7,6 +7,8 @@
 //! - Makes testing easier through dependency injection
 //! - Keeps SQL queries consistent across the codebase
 
+pub mod session;
 pub mod user;
 
+pub use session::SessionRepository;
 pub use user::UserRepository;
