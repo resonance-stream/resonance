@@ -37,7 +37,7 @@ export interface User {
 /**
  * User role for access control
  */
-export type UserRole = 'user' | 'admin';
+export type UserRole = 'user' | 'admin' | 'guest';
 
 /**
  * Public user profile (for sharing/display)

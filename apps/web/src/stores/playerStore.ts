@@ -1,14 +1,43 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { Track } from '@resonance/shared-types'
 
-export interface Track {
-  id: string
-  title: string
-  artist: string
-  albumId: string
-  albumTitle: string
-  duration: number
-  coverUrl?: string
+export type { Track }
+
+/**
+ * Fisher-Yates shuffle algorithm for proper randomization
+ * Returns a new shuffled array without modifying the original
+ */
+function fisherYatesShuffle<T>(array: T[]): T[] {
+  const shuffled = [...array]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    // Swap elements - both indices are guaranteed to be in bounds
+    const temp = shuffled[i]!
+    shuffled[i] = shuffled[j]!
+    shuffled[j] = temp
+  }
+  return shuffled
+}
+
+/**
+ * Select a random track index from the queue, excluding the current track
+ * Uses Fisher-Yates shuffle for proper randomization
+ */
+function getShuffledNextIndex(queue: readonly { id: string }[], currentIndex: number): number {
+  if (queue.length <= 1) return currentIndex
+
+  // Create array of indices excluding current
+  const availableIndices = queue
+    .map((_, index) => index)
+    .filter((index) => index !== currentIndex)
+
+  if (availableIndices.length === 0) return currentIndex
+
+  // Shuffle and pick the first one for true randomness
+  const shuffled = fisherYatesShuffle(availableIndices)
+  // Safe to assert: we already checked availableIndices has elements
+  return shuffled[0]!
 }
 
 interface PlayerState {
@@ -93,7 +122,8 @@ export const usePlayerStore = create<PlayerState>()(
         let nextIndex: number
 
         if (shuffle) {
-          nextIndex = Math.floor(Math.random() * queue.length)
+          // Use Fisher-Yates shuffle to select next track, excluding current track
+          nextIndex = getShuffledNextIndex(queue, queueIndex)
         } else if (queueIndex < queue.length - 1) {
           nextIndex = queueIndex + 1
         } else if (repeat === 'queue') {
