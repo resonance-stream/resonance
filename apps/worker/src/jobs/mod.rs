@@ -186,6 +186,7 @@ impl JobRunner {
 }
 
 /// Helper to enqueue a job
+#[allow(dead_code)]
 pub async fn enqueue_job(redis: &redis::Client, job: &Job) -> WorkerResult<()> {
     let mut conn = redis.get_multiplexed_async_connection().await?;
     let data = serde_json::to_string(job)?;

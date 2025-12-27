@@ -26,6 +26,7 @@ pub struct PrefetchJob {
 }
 
 impl PrefetchJob {
+    #[allow(dead_code)]
     pub fn for_autoplay(user_id: Uuid, current_track_id: i64) -> Self {
         Self {
             user_id,

@@ -52,16 +52,19 @@ pub enum Environment {
     Production,
 }
 
-impl Environment {
-    /// Parse environment from string
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for Environment {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "production" | "prod" => Self::Production,
             "staging" | "stage" => Self::Staging,
             _ => Self::Development,
-        }
+        })
     }
+}
 
+impl Environment {
     /// Check if this is a production environment
     pub fn is_production(&self) -> bool {
         matches!(self, Self::Production)
@@ -94,9 +97,10 @@ impl CommonConfig {
             ),
             lidarr: LidarrConfig::from_env().ok(),
             ollama: OllamaConfig::from_env()?,
-            environment: Environment::from_str(
-                &env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()),
-            ),
+            environment: env::var("ENVIRONMENT")
+                .unwrap_or_else(|_| "development".to_string())
+                .parse()
+                .unwrap_or_default(),
             log_level: env::var("RUST_LOG")
                 .or_else(|_| env::var("LOG_LEVEL"))
                 .unwrap_or_else(|_| "info".to_string()),
@@ -139,16 +143,34 @@ mod tests {
 
     #[test]
     fn test_environment_parsing() {
-        assert_eq!(Environment::from_str("production"), Environment::Production);
-        assert_eq!(Environment::from_str("prod"), Environment::Production);
-        assert_eq!(Environment::from_str("staging"), Environment::Staging);
-        assert_eq!(Environment::from_str("stage"), Environment::Staging);
         assert_eq!(
-            Environment::from_str("development"),
+            "production".parse::<Environment>().unwrap(),
+            Environment::Production
+        );
+        assert_eq!(
+            "prod".parse::<Environment>().unwrap(),
+            Environment::Production
+        );
+        assert_eq!(
+            "staging".parse::<Environment>().unwrap(),
+            Environment::Staging
+        );
+        assert_eq!(
+            "stage".parse::<Environment>().unwrap(),
+            Environment::Staging
+        );
+        assert_eq!(
+            "development".parse::<Environment>().unwrap(),
             Environment::Development
         );
-        assert_eq!(Environment::from_str("dev"), Environment::Development);
-        assert_eq!(Environment::from_str("anything"), Environment::Development);
+        assert_eq!(
+            "dev".parse::<Environment>().unwrap(),
+            Environment::Development
+        );
+        assert_eq!(
+            "anything".parse::<Environment>().unwrap(),
+            Environment::Development
+        );
     }
 
     #[test]

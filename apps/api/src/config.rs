@@ -1,6 +1,7 @@
 //! API server configuration
 
 use std::env;
+use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 use resonance_shared_config::{
@@ -12,6 +13,7 @@ const MIN_JWT_SECRET_LENGTH: usize = 32;
 
 /// API server configuration loaded from environment variables
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Config {
     /// Common configuration shared with other services
     pub common: CommonConfig,
@@ -57,7 +59,8 @@ impl Config {
         // Determine environment first to know if we need strict validation
         let environment = Environment::from_str(
             &env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()),
-        );
+        )
+        .unwrap_or_default();
         let is_production = environment.is_production();
 
         // Validate and load security-critical configuration
@@ -182,46 +185,55 @@ impl Config {
     // Convenience accessors for common config fields
 
     /// Get database configuration
+    #[allow(dead_code)]
     pub fn database(&self) -> &DatabaseConfig {
         &self.common.database
     }
 
     /// Get Redis configuration
+    #[allow(dead_code)]
     pub fn redis(&self) -> &RedisConfig {
         &self.common.redis
     }
 
     /// Get Ollama configuration
+    #[allow(dead_code)]
     pub fn ollama(&self) -> &OllamaConfig {
         &self.common.ollama
     }
 
     /// Get Lidarr configuration (if configured)
+    #[allow(dead_code)]
     pub fn lidarr(&self) -> Option<&LidarrConfig> {
         self.common.lidarr.as_ref()
     }
 
     /// Get environment mode
+    #[allow(dead_code)]
     pub fn environment(&self) -> Environment {
         self.common.environment
     }
 
     /// Check if Lidarr integration is configured
+    #[allow(dead_code)]
     pub fn has_lidarr(&self) -> bool {
         self.common.has_lidarr()
     }
 
     /// Check if ListenBrainz scrobbling is configured
+    #[allow(dead_code)]
     pub fn has_listenbrainz(&self) -> bool {
         self.listenbrainz_api_key.is_some()
     }
 
     /// Check if Discord Rich Presence is configured
+    #[allow(dead_code)]
     pub fn has_discord(&self) -> bool {
         self.discord_client_id.is_some()
     }
 
     /// Check if running in production
+    #[allow(dead_code)]
     pub fn is_production(&self) -> bool {
         self.common.environment.is_production()
     }

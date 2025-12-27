@@ -2,6 +2,8 @@
 //!
 //! Provides reusable test data and configuration builders.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 /// Test environment variables builder

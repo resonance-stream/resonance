@@ -11,22 +11,14 @@ use crate::error::WorkerResult;
 use crate::AppState;
 
 /// Library scan job payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LibraryScanJob {
     /// Optional: Scan only a specific subdirectory
     pub path: Option<PathBuf>,
 
     /// Whether to force rescan even if file hasn't changed
+    #[serde(default)]
     pub force_rescan: bool,
-}
-
-impl Default for LibraryScanJob {
-    fn default() -> Self {
-        Self {
-            path: None,
-            force_rescan: false,
-        }
-    }
 }
 
 /// Execute the library scan job
@@ -53,11 +45,13 @@ pub async fn execute(state: &AppState, job: &LibraryScanJob) -> WorkerResult<()>
 }
 
 /// Supported audio file extensions
+#[allow(dead_code)]
 pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "opus", "m4a", "aac", "wav", "aiff", "wma",
 ];
 
 /// Check if a file path has a supported audio extension
+#[allow(dead_code)]
 pub fn is_audio_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())

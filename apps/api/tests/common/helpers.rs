@@ -3,6 +3,8 @@
 //! Provides utility functions for setting up test environments,
 //! creating mock servers, and asserting responses.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 /// Temporarily set environment variables for the duration of a test
