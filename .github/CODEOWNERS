@@ -4,110 +4,120 @@
 # Each line is a file pattern followed by one or more owners.
 # Order matters: later patterns override earlier ones.
 # Teams use the format @org/team-name, users use @username
+#
+# NOTE: Using @cj-vana as default owner until GitHub teams are created.
+# TODO: Replace @cj-vana with appropriate teams once organization is set up:
+#   - @resonance-stream/maintainers (general maintainers)
+#   - @resonance-stream/backend (Rust/API developers)
+#   - @resonance-stream/frontend (React/TypeScript developers)
+#   - @resonance-stream/devops (CI/CD and infrastructure)
+#   - @resonance-stream/security (security-sensitive files)
+#   - @resonance-stream/database (database and migrations)
 
 # =============================================================================
 # Default Owners - Fallback for any files not matched below
 # =============================================================================
-*                                       @resonance-stream/maintainers
+*                                       @cj-vana
 
 # =============================================================================
 # Root Configuration Files
 # =============================================================================
 # Package management and build configuration
-package.json                            @resonance-stream/maintainers
-pnpm-lock.yaml                          @resonance-stream/maintainers
-pnpm-workspace.yaml                     @resonance-stream/maintainers
-Cargo.toml                              @resonance-stream/backend
-Cargo.lock                              @resonance-stream/backend
+package.json                            @cj-vana
+pnpm-lock.yaml                          @cj-vana
+pnpm-workspace.yaml                     @cj-vana
+Cargo.toml                              @cj-vana
+Cargo.lock                              @cj-vana
 
 # Docker configuration
-docker-compose.yml                      @resonance-stream/devops
-docker-compose.dev.yml                  @resonance-stream/devops
-docker/                                 @resonance-stream/devops
+docker-compose.yml                      @cj-vana
+docker-compose.dev.yml                  @cj-vana
+docker/                                 @cj-vana
 
 # Environment and configuration
-.env.example                            @resonance-stream/maintainers
-.gitignore                              @resonance-stream/maintainers
-.dockerignore                           @resonance-stream/devops
+.env.example                            @cj-vana
+.gitignore                              @cj-vana
+.dockerignore                           @cj-vana
 
 # =============================================================================
 # Documentation
 # =============================================================================
-*.md                                    @resonance-stream/maintainers
-docs/                                   @resonance-stream/maintainers
-CLAUDE.md                               @resonance-stream/maintainers
-README.md                               @resonance-stream/maintainers
-CONTRIBUTING.md                         @resonance-stream/maintainers
-CODE_OF_CONDUCT.md                      @resonance-stream/maintainers
-SECURITY.md                             @resonance-stream/security
-LICENSE                                 @resonance-stream/maintainers
+*.md                                    @cj-vana
+docs/                                   @cj-vana
+CLAUDE.md                               @cj-vana
+README.md                               @cj-vana
+CONTRIBUTING.md                         @cj-vana
+CODE_OF_CONDUCT.md                      @cj-vana
+SECURITY.md                             @cj-vana
+LICENSE                                 @cj-vana
 
 # =============================================================================
 # GitHub Configuration
 # =============================================================================
-.github/                                @resonance-stream/maintainers
-.github/workflows/                      @resonance-stream/devops
-.github/ISSUE_TEMPLATE/                 @resonance-stream/maintainers
-.github/CODEOWNERS                      @resonance-stream/maintainers
-.github/dependabot.yml                  @resonance-stream/devops @resonance-stream/security
+.github/                                @cj-vana
+.github/workflows/                      @cj-vana
+.github/ISSUE_TEMPLATE/                 @cj-vana
+.github/CODEOWNERS                      @cj-vana
+.github/dependabot.yml                  @cj-vana
 
 # =============================================================================
 # Backend - Rust API Server
 # =============================================================================
-apps/api/                               @resonance-stream/backend
-apps/api/Cargo.toml                     @resonance-stream/backend
-apps/api/src/                           @resonance-stream/backend
-apps/api/src/routes/                    @resonance-stream/backend
-apps/api/src/services/                  @resonance-stream/backend
-apps/api/src/models/                    @resonance-stream/backend
-apps/api/src/graphql/                   @resonance-stream/backend
-apps/api/src/websocket/                 @resonance-stream/backend
-apps/api/migrations/                    @resonance-stream/backend @resonance-stream/database
-apps/api/tests/                         @resonance-stream/backend
+apps/api/                               @cj-vana
+apps/api/Cargo.toml                     @cj-vana
+apps/api/src/                           @cj-vana
+apps/api/src/routes/                    @cj-vana
+apps/api/src/services/                  @cj-vana
+apps/api/src/models/                    @cj-vana
+apps/api/src/graphql/                   @cj-vana
+apps/api/src/websocket/                 @cj-vana
+apps/api/migrations/                    @cj-vana
+apps/api/tests/                         @cj-vana
 
 # =============================================================================
 # Backend - Background Worker
 # =============================================================================
-apps/worker/                            @resonance-stream/backend
-apps/worker/Cargo.toml                  @resonance-stream/backend
-apps/worker/src/                        @resonance-stream/backend
-apps/worker/src/jobs/                   @resonance-stream/backend
+apps/worker/                            @cj-vana
+apps/worker/Cargo.toml                  @cj-vana
+apps/worker/src/                        @cj-vana
+apps/worker/src/jobs/                   @cj-vana
 
 # =============================================================================
 # Frontend - React Web Application
 # =============================================================================
-apps/web/                               @resonance-stream/frontend
-apps/web/package.json                   @resonance-stream/frontend
-apps/web/tsconfig.json                  @resonance-stream/frontend
-apps/web/vite.config.ts                 @resonance-stream/frontend
-apps/web/src/                           @resonance-stream/frontend
-apps/web/src/components/                @resonance-stream/frontend
-apps/web/src/hooks/                     @resonance-stream/frontend
-apps/web/src/stores/                    @resonance-stream/frontend
-apps/web/src/lib/                       @resonance-stream/frontend
-apps/web/src/pages/                     @resonance-stream/frontend
-apps/web/src/test/                      @resonance-stream/frontend
+apps/web/                               @cj-vana
+apps/web/package.json                   @cj-vana
+apps/web/tsconfig.json                  @cj-vana
+apps/web/vite.config.ts                 @cj-vana
+apps/web/src/                           @cj-vana
+apps/web/src/components/                @cj-vana
+apps/web/src/hooks/                     @cj-vana
+apps/web/src/stores/                    @cj-vana
+apps/web/src/lib/                       @cj-vana
+apps/web/src/pages/                     @cj-vana
+apps/web/src/test/                      @cj-vana
 
 # =============================================================================
 # Shared Packages
 # =============================================================================
-packages/                               @resonance-stream/maintainers
-packages/shared-types/                  @resonance-stream/frontend @resonance-stream/backend
-packages/shared-config/                 @resonance-stream/maintainers
+packages/                               @cj-vana
+packages/shared-types/                  @cj-vana
+packages/shared-config/                 @cj-vana
 
 # =============================================================================
 # Scripts and Tooling
 # =============================================================================
-scripts/                                @resonance-stream/devops
+scripts/                                @cj-vana
 
 # =============================================================================
 # Security-Sensitive Files
 # =============================================================================
 # These files require security team review in addition to regular owners
-**/auth/                                @resonance-stream/backend @resonance-stream/security
-**/authentication/                      @resonance-stream/backend @resonance-stream/security
-**/authorization/                       @resonance-stream/backend @resonance-stream/security
-**/security/                            @resonance-stream/security
-**/*secret*                             @resonance-stream/security
-**/*credential*                         @resonance-stream/security
-**/*password*                           @resonance-stream/security
+# TODO: Add @resonance-stream/security as additional reviewer once team exists
+**/auth/                                @cj-vana
+**/authentication/                      @cj-vana
+**/authorization/                       @cj-vana
+**/security/                            @cj-vana
+**/*secret*                             @cj-vana
+**/*credential*                         @cj-vana
+**/*password*                           @cj-vana
