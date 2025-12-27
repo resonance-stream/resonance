@@ -15,6 +15,7 @@ mod error;
 mod graphql;
 mod middleware;
 mod models;
+mod repositories;
 mod routes;
 mod services;
 mod websocket;
@@ -23,6 +24,7 @@ pub use error::{ApiError, ApiResult, ErrorResponse};
 
 use graphql::{build_schema, ResonanceSchema};
 use middleware::AuthRateLimitState;
+use repositories::UserRepository;
 use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
 use services::auth::{AuthConfig, AuthService};
 
@@ -142,11 +144,9 @@ async fn graphql_handler(
 
 /// GraphQL Playground handler for development
 async fn graphql_playground() -> impl axum::response::IntoResponse {
-    axum::response::Html(
-        async_graphql::http::playground_source(async_graphql::http::GraphQLPlaygroundConfig::new(
-            "/graphql",
-        )),
-    )
+    axum::response::Html(async_graphql::http::playground_source(
+        async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"),
+    ))
 }
 
 #[tokio::main]
