@@ -9,6 +9,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/cj-vana/resonance/actions/workflows/ci.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/cj-vana/resonance/actions/workflows/security.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/security.yml/badge.svg" alt="Security Scanning" /></a>
+  <a href="https://github.com/cj-vana/resonance/actions/workflows/docker.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/docker.yml/badge.svg" alt="Docker Build" /></a>
+  <a href="https://github.com/cj-vana/resonance/actions/workflows/release.yml"><img src="https://github.com/cj-vana/resonance/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+</p>
+
+<p align="center">
   <a href="#features"><img src="https://img.shields.io/badge/Status-In%20Development-yellow" alt="Status" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License" /></a>
   <a href="#tech-stack"><img src="https://img.shields.io/badge/Backend-Rust-orange" alt="Rust" /></a>
