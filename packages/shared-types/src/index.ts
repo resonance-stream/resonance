@@ -1,188 +1,153 @@
-// Shared types between frontend and backend
-// This package provides type definitions that are shared across the monorepo
+/**
+ * @resonance/shared-types
+ *
+ * Shared TypeScript type definitions for the Resonance music streaming platform.
+ * This package provides type definitions used across the frontend and for API contracts.
+ */
 
-// ============================================================================
-// User Types
-// ============================================================================
+// API types - responses, errors, pagination
+export type {
+  ApiError,
+  ValidationError,
+  AuthError,
+  RateLimitError,
+  PaginatedResponse,
+  ApiResponse,
+  HealthCheckResponse,
+  ServiceHealth,
+  PaginationParams,
+  SortParams,
+  SearchParams,
+  StreamRequest,
+  StreamMetadata,
+} from './api.js';
 
-export interface User {
-  id: string
-  username: string
-  email: string
-  avatarUrl?: string
-  role: 'user' | 'admin'
-  createdAt: string
-  updatedAt: string
-}
+// Library types - tracks, albums, artists, playlists
+export type {
+  Artist,
+  Album,
+  AlbumType,
+  CoverColors,
+  Track,
+  AudioFormat,
+  SyncedLyricLine,
+  Playlist,
+  PlaylistTrack,
+  SmartPlaylist,
+  SmartPlaylistRule,
+  SmartPlaylistField,
+  SmartPlaylistOperator,
+  SmartPlaylistSort,
+  Recommendation,
+  RecommendationSource,
+  MoodAnalysis,
+  ChatMessage,
+  ChatAction,
+  SearchResults,
+  SearchFilters,
+} from './library.js';
 
-export interface Session {
-  id: string
-  userId: string
-  deviceName: string
-  expiresAt: string
-}
+// Player types - playback state, queue, devices, audio settings
+export type {
+  PlaybackState,
+  RepeatMode,
+  PlaybackQuality,
+  QueueItem,
+  QueueContext,
+  QueueAction,
+  Device,
+  DeviceType,
+  DeviceCapabilities,
+  EqualizerSettings,
+  EqualizerBands,
+  EqualizerPreset,
+  CrossfadeSettings,
+  NormalizationSettings,
+  PlaybackHistoryEntry,
+  ListeningStats,
+} from './player.js';
 
-// ============================================================================
-// Library Types
-// ============================================================================
+// User types - accounts, sessions, preferences
+export type {
+  User,
+  UserRole,
+  UserProfile,
+  Session,
+  AuthTokens,
+  LoginRequest,
+  RegisterRequest,
+  UserPreferences,
+  AudioPreferences,
+  UIPreferences,
+  PrivacyPreferences,
+  NotificationPreferences,
+  IntegrationPreferences,
+  ActivityItem,
+  ActivityType,
+  Follow,
+} from './user.js';
 
-export interface Artist {
-  id: string
-  name: string
-  musicBrainzId?: string
-  lidarrId?: number
-  imageUrl?: string
-  biography?: string
-  genres: string[]
-}
+// WebSocket types - real-time sync and presence
+export type {
+  WebSocketMessage,
+  WebSocketError,
+  SyncMessage,
+  PlaybackSyncMessage,
+  QueueSyncMessage,
+  VolumeSyncMessage,
+  SeekSyncMessage,
+  DeviceSyncMessage,
+  TransferSyncMessage,
+  PresenceMessage,
+  UserPresenceMessage,
+  ListeningActivityMessage,
+  TypingIndicatorMessage,
+  NotificationMessage,
+  NewFollowerNotification,
+  PlaylistUpdateNotification,
+  NewReleaseNotification,
+  SystemNotification,
+  ClientCommand,
+  SubscribeCommand,
+  UnsubscribeCommand,
+  PlaybackCommand,
+  QueueCommand,
+  PresenceCommand,
+  ChannelType,
+  ConnectionState,
+  ConnectionEstablished,
+  HeartbeatMessage,
+  HeartbeatResponse,
+} from './websocket.js';
 
-export interface Album {
-  id: string
-  title: string
-  artistId: string
-  artistName: string
-  musicBrainzId?: string
-  releaseDate?: string
-  coverUrl?: string
-  coverColors?: {
-    primary: string
-    secondary: string
-    accent: string
-  }
-  genres: string[]
-  trackCount: number
-  duration: number
-}
-
-export interface Track {
-  id: string
-  title: string
-  artistId: string
-  artistName: string
-  albumId: string
-  albumTitle: string
-  trackNumber: number
-  discNumber: number
-  duration: number
-  filePath: string
-  fileSize: number
-  format: 'flac' | 'mp3' | 'aac' | 'ogg' | 'opus'
-  bitrate?: number
-  sampleRate?: number
-  coverUrl?: string
-  lyrics?: string
-  syncedLyrics?: SyncedLyricLine[]
-  aiTags?: string[]
-  mood?: string
-}
-
-export interface SyncedLyricLine {
-  time: number
-  text: string
-}
-
-// ============================================================================
-// Playlist Types
-// ============================================================================
-
-export interface Playlist {
-  id: string
-  name: string
-  description?: string
-  ownerId: string
-  ownerName: string
-  coverUrl?: string
-  isPublic: boolean
-  isCollaborative: boolean
-  trackCount: number
-  duration: number
-  createdAt: string
-  updatedAt: string
-}
-
-export interface SmartPlaylistRule {
-  field: 'artist' | 'album' | 'genre' | 'year' | 'mood' | 'plays' | 'added' | 'rating'
-  operator: 'equals' | 'contains' | 'startsWith' | 'greaterThan' | 'lessThan' | 'between'
-  value: string | number | [number, number]
-}
-
-export interface SmartPlaylist extends Omit<Playlist, 'trackCount'> {
-  rules: SmartPlaylistRule[]
-  limit?: number
-  sortBy?: 'random' | 'recent' | 'plays' | 'added'
-}
-
-// ============================================================================
-// Playback Types
-// ============================================================================
-
-export interface PlaybackState {
-  trackId: string | null
-  isPlaying: boolean
-  position: number
-  volume: number
-  isMuted: boolean
-  shuffle: boolean
-  repeat: 'off' | 'track' | 'queue'
-  queueIds: string[]
-  queueIndex: number
-}
-
-export interface Device {
-  id: string
-  name: string
-  type: 'web' | 'mobile' | 'desktop'
-  isActive: boolean
-  lastSeen: string
-}
-
-// ============================================================================
-// AI Types
-// ============================================================================
-
-export interface Recommendation {
-  trackId: string
-  score: number
-  reason: string
-  source: 'collaborative' | 'content-based' | 'ai'
-}
-
-export interface MoodAnalysis {
-  primary: string
-  secondary?: string
-  energy: number
-  valence: number
-  danceability: number
-}
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: string
-  actions?: ChatAction[]
-}
-
-export interface ChatAction {
-  type: 'play' | 'queue' | 'playlist' | 'search'
-  label: string
-  data: Record<string, unknown>
-}
-
-// ============================================================================
-// API Response Types
-// ============================================================================
-
-export interface PaginatedResponse<T> {
-  items: T[]
-  total: number
-  offset: number
-  limit: number
-  hasMore: boolean
-}
-
-export interface ApiError {
-  code: string
-  message: string
-  details?: Record<string, unknown>
-}
+// GraphQL types - query/mutation placeholders
+export type {
+  QueryTypes,
+  TracksQueryArgs,
+  AlbumsQueryArgs,
+  ArtistsQueryArgs,
+  PlaylistsQueryArgs,
+  SearchQueryArgs,
+  RecommendationsQueryArgs,
+  RadioQueryArgs,
+  StatsPeriod,
+  MutationTypes,
+  LoginMutationArgs,
+  RegisterMutationArgs,
+  AuthPayload,
+  UpdateProfileArgs,
+  CreatePlaylistArgs,
+  UpdatePlaylistArgs,
+  AddTracksToPlaylistArgs,
+  RemoveTracksFromPlaylistArgs,
+  ReorderPlaylistTracksArgs,
+  PlayMutationArgs,
+  SubscriptionTypes,
+  NowPlayingUpdate,
+  PlaylistUpdate,
+  PaginationInput,
+  SortInput,
+  DateRangeInput,
+  OperationResult,
+  GraphQLError,
+} from './graphql.js';
