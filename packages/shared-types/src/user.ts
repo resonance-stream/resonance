@@ -35,7 +35,9 @@ export interface User {
 }
 
 /**
- * User role for access control
+ * User role for access control.
+ * Values are always lowercase (the backend may return PascalCase,
+ * but the frontend normalizes to lowercase in authStore).
  */
 export type UserRole = 'user' | 'admin' | 'guest';
 
