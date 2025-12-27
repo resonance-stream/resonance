@@ -95,6 +95,8 @@ interface AuthPayloadResponse {
   avatarUrl: string | null
   role: string
   emailVerified: boolean
+  createdAt: string
+  updatedAt: string
   accessToken: string
   refreshToken: string
   expiresAt: string
@@ -118,8 +120,8 @@ function extractUserFromPayload(payload: AuthPayloadResponse): User {
     avatarUrl: payload.avatarUrl ?? undefined, // Convert null to undefined
     role,
     emailVerified: payload.emailVerified,
-    createdAt: new Date().toISOString(), // Placeholder until backend returns it
-    updatedAt: new Date().toISOString(),
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
   }
 }
 
@@ -272,13 +274,10 @@ export const useAuthStore = create<AuthState>()(
           // Set new auth header
           setAuthToken(accessToken)
 
-          // Parse expiresAt timestamp and subtract buffer for early refresh
-          const expiresAtMs = new Date(expiresAt).getTime() - 60 * 1000
-
           set({
             accessToken,
             refreshToken: newRefreshToken,
-            expiresAt: expiresAtMs,
+            expiresAt: parseExpiresAt(expiresAt),
             status: 'authenticated',
             error: null,
           })
@@ -353,7 +352,8 @@ export const useAuthStore = create<AuthState>()(
         if (accessToken && expiresAt) {
           // Check if token is expired
           if (Date.now() >= expiresAt) {
-            // Token expired, try to refresh
+            // Token expired, set loading state and try to refresh
+            set({ status: 'loading' })
             void refresh()
           } else {
             // Token still valid, set auth header

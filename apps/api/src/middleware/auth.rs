@@ -40,7 +40,7 @@ use uuid::Uuid;
 
 use crate::error::{ApiError, ErrorResponse};
 use crate::models::user::{Claims, User, UserRole};
-use crate::repositories::UserRepository;
+use crate::repositories::{SessionRepository, UserRepository};
 use crate::services::AuthService;
 
 /// Authenticated user extractor - requires valid authentication
@@ -215,6 +215,24 @@ where
             .verify_access_token(token)
             .map_err(|e| AuthRejection::InvalidToken(e.to_string()))?;
 
+        // Get SessionRepository from extensions
+        let session_repo = parts
+            .extensions
+            .get::<SessionRepository>()
+            .ok_or(AuthRejection::MissingServices)?;
+
+        // Verify that the session is still active (prevents token reuse after logout)
+        let session_active = session_repo
+            .is_active(claims.sid, claims.sub)
+            .await
+            .map_err(|e| AuthRejection::DatabaseError(e.to_string()))?;
+
+        if !session_active {
+            return Err(AuthRejection::InvalidToken(
+                "session is no longer active".to_string(),
+            ));
+        }
+
         // Get UserRepository from extensions
         let user_repo = parts
             .extensions
@@ -347,6 +365,24 @@ where
         // Check role from claims first for fast rejection
         if claims.role != UserRole::Admin {
             return Err(AuthRejection::InsufficientPermissions);
+        }
+
+        // Get SessionRepository from extensions
+        let session_repo = parts
+            .extensions
+            .get::<SessionRepository>()
+            .ok_or(AuthRejection::MissingServices)?;
+
+        // Verify that the session is still active (prevents token reuse after logout)
+        let session_active = session_repo
+            .is_active(claims.sid, claims.sub)
+            .await
+            .map_err(|e| AuthRejection::DatabaseError(e.to_string()))?;
+
+        if !session_active {
+            return Err(AuthRejection::InvalidToken(
+                "session is no longer active".to_string(),
+            ));
         }
 
         // Get UserRepository from extensions

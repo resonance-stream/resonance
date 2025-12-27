@@ -235,6 +235,7 @@ impl SessionRepository {
                 SELECT id FROM sessions
                 WHERE expires_at < NOW()
                 LIMIT $1
+                FOR UPDATE SKIP LOCKED
             )
             "#,
         )
@@ -243,6 +244,31 @@ impl SessionRepository {
         .await?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Check if a session is active for a given user
+    ///
+    /// # Arguments
+    /// * `session_id` - The session ID to check
+    /// * `user_id` - The user ID who should own the session
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the session exists, is active, and belongs to the user
+    /// * `Ok(false)` - If the session doesn't exist, is inactive, or belongs to another user
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    pub async fn is_active(&self, session_id: Uuid, user_id: Uuid) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM sessions
+                WHERE id = $1 AND user_id = $2 AND is_active = true AND expires_at > NOW()
+            )
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
     }
 
     /// Delete all inactive sessions older than a specified duration
@@ -272,6 +298,7 @@ impl SessionRepository {
                 WHERE is_active = false
                   AND last_active_at < NOW() - make_interval(days => $1)
                 LIMIT $2
+                FOR UPDATE SKIP LOCKED
             )
             "#,
         )

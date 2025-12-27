@@ -25,7 +25,7 @@ pub use error::{ApiError, ApiResult, ErrorResponse};
 use graphql::{build_schema, build_schema_with_rate_limiting, GraphQLRateLimiter, ResonanceSchema};
 use middleware::{extract_client_ip, AuthRateLimitState};
 use models::user::RequestMetadata;
-use repositories::UserRepository;
+use repositories::{SessionRepository, UserRepository};
 use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
 use services::auth::{AuthConfig, AuthService};
 
@@ -212,6 +212,10 @@ async fn main() -> anyhow::Result<()> {
     let user_repo = UserRepository::new(pool.clone());
     tracing::info!("UserRepository initialized");
 
+    // Create SessionRepository for session validation in auth middleware
+    let session_repo = SessionRepository::new(pool.clone());
+    tracing::info!("SessionRepository initialized");
+
     // Create AuthService
     let auth_config = AuthConfig::with_expiry_strings(
         config.jwt_secret.clone(),
@@ -315,6 +319,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(schema))
         .layer(Extension(pool.clone()))
         .layer(Extension(user_repo))
+        .layer(Extension(session_repo))
         .layer(Extension(auth_service))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);

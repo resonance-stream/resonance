@@ -597,11 +597,12 @@ impl AuthRateLimitState {
 /// Middleware for rate limiting login requests
 pub async fn login_rate_limit(
     State(state): State<AuthRateLimitState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers, None);
+    let client_ip = extract_client_ip(&headers, Some(&ConnectInfo(addr)));
 
     match state.limiter.check(&client_ip, &state.login_config).await {
         Ok(remaining) => {
@@ -635,11 +636,12 @@ pub async fn login_rate_limit(
 /// Middleware for rate limiting registration requests
 pub async fn register_rate_limit(
     State(state): State<AuthRateLimitState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers, None);
+    let client_ip = extract_client_ip(&headers, Some(&ConnectInfo(addr)));
 
     match state
         .limiter

@@ -177,6 +177,10 @@ pub struct AuthPayloadUser {
     pub role: UserRole,
     /// Whether email has been verified
     pub email_verified: bool,
+    /// Account creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last profile update timestamp
+    pub updated_at: DateTime<Utc>,
 }
 
 impl AuthPayload {
@@ -190,6 +194,8 @@ impl AuthPayload {
                 avatar_url: user.avatar_url,
                 role: user.role.into(),
                 email_verified: user.email_verified,
+                created_at: user.created_at,
+                updated_at: user.updated_at,
             },
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,

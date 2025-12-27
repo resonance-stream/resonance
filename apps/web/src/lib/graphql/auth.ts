@@ -24,6 +24,8 @@ export const LOGIN_MUTATION = gql`
       avatarUrl
       role
       emailVerified
+      createdAt
+      updatedAt
       accessToken
       refreshToken
       expiresAt
@@ -45,6 +47,8 @@ export const REGISTER_MUTATION = gql`
       avatarUrl
       role
       emailVerified
+      createdAt
+      updatedAt
       accessToken
       refreshToken
       expiresAt
