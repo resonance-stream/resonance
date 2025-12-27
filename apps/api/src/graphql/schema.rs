@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::services::auth::AuthService;
 
+use super::guards::GraphQLRateLimiter;
 use super::mutation::Mutation;
 use super::query::Query;
 
@@ -17,6 +18,7 @@ pub type ResonanceSchema = Schema<Query, Mutation, EmptySubscription>;
 pub struct SchemaBuilder {
     pool: Option<PgPool>,
     auth_service: Option<AuthService>,
+    rate_limiter: Option<GraphQLRateLimiter>,
 }
 
 impl SchemaBuilder {
@@ -25,6 +27,7 @@ impl SchemaBuilder {
         Self {
             pool: None,
             auth_service: None,
+            rate_limiter: None,
         }
     }
 
@@ -40,6 +43,14 @@ impl SchemaBuilder {
         self
     }
 
+    /// Set the rate limiter for GraphQL mutations
+    ///
+    /// If not set, rate limiting guards will be skipped (permissive).
+    pub fn rate_limiter(mut self, rate_limiter: GraphQLRateLimiter) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
     /// Build the schema with all configured services
     ///
     /// # Panics
@@ -48,10 +59,16 @@ impl SchemaBuilder {
         let pool = self.pool.expect("database pool is required");
         let auth_service = self.auth_service.expect("auth service is required");
 
-        Schema::build(Query::default(), Mutation::default(), EmptySubscription)
+        let mut builder = Schema::build(Query::default(), Mutation::default(), EmptySubscription)
             .data(pool)
-            .data(auth_service)
-            .finish()
+            .data(auth_service);
+
+        // Add rate limiter if configured
+        if let Some(rate_limiter) = self.rate_limiter {
+            builder = builder.data(rate_limiter);
+        }
+
+        builder.finish()
     }
 }
 
@@ -64,11 +81,28 @@ impl Default for SchemaBuilder {
 /// Create a new GraphQL schema with the provided services
 ///
 /// This is a convenience function for quickly creating a schema
-/// with all required dependencies.
+/// with all required dependencies. Rate limiting is not enabled.
+/// Use `build_schema_with_rate_limiting` for rate-limited schemas.
 pub fn build_schema(pool: PgPool, auth_service: AuthService) -> ResonanceSchema {
     SchemaBuilder::new()
         .pool(pool)
         .auth_service(auth_service)
+        .build()
+}
+
+/// Create a new GraphQL schema with rate limiting enabled
+///
+/// This adds the GraphQL rate limiter to the schema context,
+/// enabling rate limit guards on authentication mutations.
+pub fn build_schema_with_rate_limiting(
+    pool: PgPool,
+    auth_service: AuthService,
+    rate_limiter: GraphQLRateLimiter,
+) -> ResonanceSchema {
+    SchemaBuilder::new()
+        .pool(pool)
+        .auth_service(auth_service)
+        .rate_limiter(rate_limiter)
         .build()
 }
 
@@ -84,5 +118,6 @@ mod tests {
         let builder = SchemaBuilder::default();
         assert!(builder.pool.is_none());
         assert!(builder.auth_service.is_none());
+        assert!(builder.rate_limiter.is_none());
     }
 }

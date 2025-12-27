@@ -22,7 +22,7 @@ mod websocket;
 
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
-use graphql::{build_schema, ResonanceSchema};
+use graphql::{build_schema, build_schema_with_rate_limiting, GraphQLRateLimiter, ResonanceSchema};
 use middleware::AuthRateLimitState;
 use models::user::RequestMetadata;
 use repositories::UserRepository;
@@ -256,10 +256,6 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("AuthService initialized");
 
-    // Build GraphQL schema with services in context
-    let schema = build_schema(pool.clone(), auth_service.clone());
-    tracing::info!("GraphQL schema built");
-
     // Create health check state
     let health_state = HealthState::new(config.clone());
 
@@ -297,24 +293,45 @@ async fn main() -> anyhow::Result<()> {
     // Build the CORS layer from configuration
     let cors_layer = build_cors_layer(&config);
 
-    // Build the auth router - with or without rate limiting based on Redis availability
-    let auth_routes = match redis_client {
+    // Build GraphQL schema and auth router - with or without rate limiting based on Redis availability
+    let (schema, auth_routes) = match redis_client {
         Some(client) => {
-            let rate_limit_state = AuthRateLimitState::new(client);
+            // Create rate limit state for REST endpoints
+            let rate_limit_state = AuthRateLimitState::new(client.clone());
             tracing::info!(
-                "Auth rate limiting enabled: login={} req/{} sec, register={} req/{} sec",
+                "REST auth rate limiting enabled: login={} req/{} sec, register={} req/{} sec",
                 rate_limit_state.login_config.max_requests,
                 rate_limit_state.login_config.window_secs,
                 rate_limit_state.register_config.max_requests,
                 rate_limit_state.register_config.window_secs,
             );
-            auth_router_with_rate_limiting(auth_state, rate_limit_state)
+
+            // Create GraphQL rate limiter
+            let graphql_rate_limiter = GraphQLRateLimiter::new(client);
+            tracing::info!("GraphQL auth rate limiting enabled");
+
+            // Build schema with rate limiting
+            let schema = build_schema_with_rate_limiting(
+                pool.clone(),
+                auth_service.clone(),
+                graphql_rate_limiter,
+            );
+            tracing::info!("GraphQL schema built with rate limiting");
+
+            let auth_routes = auth_router_with_rate_limiting(auth_state, rate_limit_state);
+            (schema, auth_routes)
         }
         None => {
             tracing::warn!(
                 "Auth rate limiting DISABLED - configure Redis (REDIS_URL) to enable protection against brute-force attacks"
             );
-            auth_router(auth_state)
+
+            // Build schema without rate limiting
+            let schema = build_schema(pool.clone(), auth_service.clone());
+            tracing::info!("GraphQL schema built (rate limiting disabled)");
+
+            let auth_routes = auth_router(auth_state);
+            (schema, auth_routes)
         }
     };
 

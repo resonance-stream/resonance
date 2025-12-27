@@ -1,13 +1,14 @@
 //! Authentication mutations for Resonance GraphQL API
 //!
 //! This module provides mutations for user authentication:
-//! - register: Create a new user account
-//! - login: Authenticate and get tokens
-//! - refreshToken: Get new tokens using refresh token
+//! - register: Create a new user account (rate limited: 3/hour)
+//! - login: Authenticate and get tokens (rate limited: 5/minute)
+//! - refreshToken: Get new tokens using refresh token (rate limited: 10/minute)
 //! - logout: Invalidate the current session
 
 use async_graphql::{Context, InputObject, Object, Result};
 
+use crate::graphql::guards::{RateLimitGuard, RateLimitType};
 use crate::graphql::types::{AuthPayload, RefreshPayload};
 use crate::models::user::{DeviceInfo, DeviceType, RequestMetadata};
 use crate::services::auth::AuthService;
@@ -95,10 +96,14 @@ impl AuthMutation {
     /// Creates a new user with the provided email, password, and display name.
     /// Returns the user data along with authentication tokens.
     ///
+    /// Rate limited to 3 attempts per hour per IP address.
+    ///
     /// # Errors
     /// - Returns error if email is already registered
     /// - Returns error if email format is invalid
     /// - Returns error if password is less than 8 characters
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::Register)")]
     async fn register(&self, ctx: &Context<'_>, input: RegisterInput) -> Result<AuthPayload> {
         let auth_service = ctx.data::<AuthService>()?;
 
@@ -128,8 +133,12 @@ impl AuthMutation {
     /// Validates the user's credentials and creates a new session.
     /// Returns the user data along with authentication tokens.
     ///
+    /// Rate limited to 5 attempts per minute per IP address.
+    ///
     /// # Errors
     /// - Returns error if credentials are invalid
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::Login)")]
     async fn login(&self, ctx: &Context<'_>, input: LoginInput) -> Result<AuthPayload> {
         let auth_service = ctx.data::<AuthService>()?;
 
@@ -154,9 +163,13 @@ impl AuthMutation {
     /// Uses a valid refresh token to obtain a new access token and refresh token.
     /// The old refresh token is invalidated (token rotation).
     ///
+    /// Rate limited to 10 attempts per minute per IP address.
+    ///
     /// # Errors
     /// - Returns error if refresh token is invalid or expired
     /// - Returns error if session is no longer active
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::RefreshToken)")]
     async fn refresh_token(
         &self,
         ctx: &Context<'_>,

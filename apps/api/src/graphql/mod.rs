@@ -4,13 +4,16 @@
 //! - Query resolvers for user data, library, search, recommendations
 //! - Mutation resolvers for authentication, playlists, settings
 //! - Type definitions for all GraphQL objects
+//! - Guards for rate limiting and authorization
 
+pub mod guards;
 pub mod mutation;
 pub mod query;
 pub mod schema;
 pub mod types;
 
+pub use guards::{GraphQLRateLimiter, RateLimitGuard};
 pub use mutation::Mutation;
 pub use query::Query;
-pub use schema::{build_schema, ResonanceSchema, SchemaBuilder};
+pub use schema::{build_schema, build_schema_with_rate_limiting, ResonanceSchema, SchemaBuilder};
 pub use types::{AuthPayload, RefreshPayload, User, UserRole};

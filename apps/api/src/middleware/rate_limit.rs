@@ -56,6 +56,15 @@ impl RateLimitConfig {
     pub fn register() -> Self {
         Self::new("auth:register", 3, 3600)
     }
+
+    /// Rate limit for token refresh: 10 attempts per 60 seconds per IP
+    ///
+    /// Token refresh is more lenient than login since it's automated by clients
+    /// and requires a valid refresh token. However, we still limit it to prevent
+    /// abuse of the token rotation mechanism.
+    pub fn refresh_token() -> Self {
+        Self::new("auth:refresh", 10, 60)
+    }
 }
 
 /// Entry for tracking request timestamps in the in-memory rate limiter
