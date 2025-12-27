@@ -52,8 +52,8 @@ Composite actions are located in `.github/actions/` and encapsulate common setup
   uses: ./.github/actions/setup-node-pnpm
   with:
     node-version: '20'          # Optional: defaults to 20
-    pnpm-version: '9'           # Optional: defaults to 9
     install-dependencies: true  # Optional: defaults to true
+# Note: pnpm version is auto-detected from package.json "packageManager" field
 ```
 
 ### Reusable Workflows

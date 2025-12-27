@@ -1,5 +1,8 @@
 # Composite action for Node.js + pnpm setup with caching
 # Consolidates repeated setup steps across CI workflows
+#
+# NOTE: pnpm version is auto-detected from the "packageManager" field in package.json.
+# Do not specify version explicitly as pnpm/action-setup@v4 will error on conflicts.
 
 name: 'Setup Node.js and pnpm'
 description: 'Sets up Node.js, pnpm, and optionally installs dependencies with caching'
@@ -9,10 +12,6 @@ inputs:
     description: 'Node.js version to use'
     required: false
     default: '20'
-  pnpm-version:
-    description: 'pnpm version to use'
-    required: false
-    default: '9'
   install-dependencies:
     description: 'Whether to run pnpm install'
     required: false
@@ -37,10 +36,9 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # pnpm version is auto-detected from package.json "packageManager" field
     - name: Setup pnpm
       uses: pnpm/action-setup@v4
-      with:
-        version: ${{ inputs.pnpm-version }}
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
