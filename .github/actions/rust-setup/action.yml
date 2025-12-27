@@ -1,0 +1,96 @@
+# Reusable Rust Toolchain Setup with Caching
+# Used by ci.yml, security.yml, and release.yml workflows
+#
+# This composite action provides:
+# - Rust toolchain installation via dtolnay/rust-toolchain
+# - Cargo registry and build artifact caching
+# - Optional component installation (clippy, rustfmt, etc.)
+# - Cross-compilation target support
+#
+# Usage:
+#   - uses: ./.github/actions/rust-setup
+#     with:
+#       toolchain: stable  # or nightly, 1.70.0, etc.
+#       components: clippy rustfmt
+#       targets: aarch64-unknown-linux-gnu
+#       cache-key: my-custom-key
+
+name: 'Rust Setup'
+description: 'Set up Rust toolchain with caching for CI workflows'
+
+inputs:
+  toolchain:
+    description: 'Rust toolchain version (stable, nightly, or specific version)'
+    required: false
+    default: 'stable'
+  components:
+    description: 'Space-separated list of components to install (e.g., clippy rustfmt)'
+    required: false
+    default: ''
+  targets:
+    description: 'Space-separated list of targets to install (e.g., aarch64-unknown-linux-gnu)'
+    required: false
+    default: ''
+  cache-key:
+    description: 'Additional cache key suffix for workflow-specific caching'
+    required: false
+    default: 'default'
+  cache-enabled:
+    description: 'Enable cargo caching (disable for minimal setups)'
+    required: false
+    default: 'true'
+  cache-directories:
+    description: 'Additional directories to cache (newline-separated)'
+    required: false
+    default: ''
+
+outputs:
+  cache-hit:
+    description: 'Whether the cache was hit'
+    value: ${{ steps.cache.outputs.cache-hit }}
+  rustc-version:
+    description: 'The installed rustc version'
+    value: ${{ steps.toolchain.outputs.rustc-version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Rust toolchain
+      id: toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Configure Rust environment
+      shell: bash
+      run: |
+        echo "CARGO_TERM_COLOR=always" >> $GITHUB_ENV
+        echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
+        echo "Rust toolchain configured: $(rustc --version)"
+
+    - name: Cache cargo registry and build artifacts
+      id: cache
+      if: inputs.cache-enabled == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          ${{ inputs.cache-directories }}
+        key: ${{ runner.os }}-rust-${{ inputs.toolchain }}-${{ inputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-rust-${{ inputs.toolchain }}-${{ inputs.cache-key }}-
+          ${{ runner.os }}-rust-${{ inputs.toolchain }}-
+          ${{ runner.os }}-rust-
+
+    - name: Display cache status
+      shell: bash
+      run: |
+        if [ "${{ steps.cache.outputs.cache-hit }}" == "true" ]; then
+          echo "✓ Cargo cache restored successfully"
+        else
+          echo "○ No cache found, will build fresh"
+        fi

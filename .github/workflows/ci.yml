@@ -186,8 +186,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-key: build
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -199,17 +201,6 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-
 
       - name: Build Rust workspace
         run: cargo build --release
