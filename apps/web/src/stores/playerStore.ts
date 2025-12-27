@@ -1,8 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Track } from '@resonance/shared-types'
-
-export type { Track }
 
 /**
  * Fisher-Yates shuffle algorithm for proper randomization
@@ -38,6 +35,16 @@ function getShuffledNextIndex(queue: readonly { id: string }[], currentIndex: nu
   const shuffled = fisherYatesShuffle(availableIndices)
   // Safe to assert: we already checked availableIndices has elements
   return shuffled[0]!
+}
+
+export interface Track {
+  id: string
+  title: string
+  artist: string
+  albumId: string
+  albumTitle: string
+  duration: number
+  coverUrl?: string
 }
 
 interface PlayerState {
