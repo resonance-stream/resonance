@@ -1,6 +1,38 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useMemo, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
+
+/** Password complexity validation result */
+interface PasswordValidation {
+  isValid: boolean
+  hasMinLength: boolean
+  hasUppercase: boolean
+  hasLowercase: boolean
+  hasNumber: boolean
+}
+
+/**
+ * Validate password complexity
+ * Password must meet the following requirements:
+ * - At least 8 characters long
+ * - Contains at least one uppercase letter (A-Z)
+ * - Contains at least one lowercase letter (a-z)
+ * - Contains at least one number (0-9)
+ */
+function validatePasswordComplexity(password: string): PasswordValidation {
+  const hasMinLength = password.length >= 8
+  const hasUppercase = /[A-Z]/.test(password)
+  const hasLowercase = /[a-z]/.test(password)
+  const hasNumber = /[0-9]/.test(password)
+
+  return {
+    isValid: hasMinLength && hasUppercase && hasLowercase && hasNumber,
+    hasMinLength,
+    hasUppercase,
+    hasLowercase,
+    hasNumber,
+  }
+}
 
 export default function Register(): JSX.Element {
   const navigate = useNavigate()
@@ -14,6 +46,12 @@ export default function Register(): JSX.Element {
 
   const isLoading = status === 'loading'
 
+  // Memoize password validation to avoid recalculating on every render
+  const passwordValidation = useMemo(
+    () => validatePasswordComplexity(password),
+    [password]
+  )
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault()
     clearError()
@@ -25,8 +63,22 @@ export default function Register(): JSX.Element {
       return
     }
 
-    if (password.length < 8) {
-      setValidationError('Password must be at least 8 characters')
+    // Check password complexity
+    if (!passwordValidation.isValid) {
+      const errors: string[] = []
+      if (!passwordValidation.hasMinLength) {
+        errors.push('at least 8 characters')
+      }
+      if (!passwordValidation.hasUppercase) {
+        errors.push('one uppercase letter')
+      }
+      if (!passwordValidation.hasLowercase) {
+        errors.push('one lowercase letter')
+      }
+      if (!passwordValidation.hasNumber) {
+        errors.push('one number')
+      }
+      setValidationError(`Password must contain: ${errors.join(', ')}`)
       return
     }
 
@@ -139,12 +191,32 @@ export default function Register(): JSX.Element {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="input w-full"
-                placeholder="Create a password (min. 8 characters)"
+                placeholder="Create a strong password"
                 required
                 minLength={8}
                 autoComplete="new-password"
                 disabled={isLoading}
               />
+              {/* Password requirements indicator */}
+              {password.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-xs text-text-muted mb-1">Password requirements:</p>
+                  <div className="grid grid-cols-2 gap-1 text-xs">
+                    <span className={passwordValidation.hasMinLength ? 'text-green-400' : 'text-text-muted'}>
+                      {passwordValidation.hasMinLength ? '\u2713' : '\u2022'} 8+ characters
+                    </span>
+                    <span className={passwordValidation.hasUppercase ? 'text-green-400' : 'text-text-muted'}>
+                      {passwordValidation.hasUppercase ? '\u2713' : '\u2022'} Uppercase (A-Z)
+                    </span>
+                    <span className={passwordValidation.hasLowercase ? 'text-green-400' : 'text-text-muted'}>
+                      {passwordValidation.hasLowercase ? '\u2713' : '\u2022'} Lowercase (a-z)
+                    </span>
+                    <span className={passwordValidation.hasNumber ? 'text-green-400' : 'text-text-muted'}>
+                      {passwordValidation.hasNumber ? '\u2713' : '\u2022'} Number (0-9)
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Confirm password field */}
