@@ -82,6 +82,9 @@ jobs:
         with:
           cache-key: test
 
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
       - name: Run database migrations
         env:
           DATABASE_URL: postgres://resonance:resonance_test@localhost:5432/resonance_test

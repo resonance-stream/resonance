@@ -137,6 +137,7 @@ pub struct User {
 
 /// Public user profile (safe to expose to other users)
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)] // Infrastructure for public profile features
 pub struct PublicUser {
     pub id: Uuid,
     pub display_name: String,
