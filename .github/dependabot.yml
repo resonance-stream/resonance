@@ -1,0 +1,368 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+
+registries:
+  # Add private registries here if needed in the future
+  # crates-io:
+  #   type: cargo-registry
+  #   url: https://crates.io
+
+updates:
+  # =============================================================================
+  # Rust Dependencies (Cargo)
+  # =============================================================================
+  # Root workspace - handles all Rust packages in the monorepo
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "rust"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"
+    groups:
+      # Group minor and patch updates for tokio ecosystem
+      tokio:
+        patterns:
+          - "tokio*"
+          - "tracing*"
+          - "tower*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group axum and related web framework dependencies
+      axum:
+        patterns:
+          - "axum*"
+          - "hyper*"
+          - "http*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group SQLx database dependencies
+      sqlx:
+        patterns:
+          - "sqlx*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group serde serialization dependencies
+      serde:
+        patterns:
+          - "serde*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group testing dependencies
+      rust-testing:
+        patterns:
+          - "rstest*"
+          - "mockall*"
+          - "proptest*"
+          - "criterion*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group async-graphql dependencies
+      graphql:
+        patterns:
+          - "async-graphql*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group all other minor/patch updates
+      rust-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "tokio*"
+          - "tracing*"
+          - "tower*"
+          - "axum*"
+          - "hyper*"
+          - "http*"
+          - "sqlx*"
+          - "serde*"
+          - "rstest*"
+          - "mockall*"
+          - "proptest*"
+          - "criterion*"
+          - "async-graphql*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Ignore pre-release versions unless explicitly needed
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-prerelease"
+
+  # =============================================================================
+  # npm Dependencies (Frontend & Shared Packages)
+  # =============================================================================
+  # Root package.json - monorepo root and workspace tools
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"
+    versioning-strategy: increase
+    groups:
+      # Group all dev dependencies
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-prerelease"
+
+  # Web app (React frontend)
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "frontend"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"
+    versioning-strategy: increase
+    groups:
+      # Group React ecosystem updates
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group Radix UI components
+      radix:
+        patterns:
+          - "@radix-ui/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group TanStack (React Query, Router, etc.)
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group Vite and build tools
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "rollup*"
+          - "esbuild*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group testing libraries
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "@testing-library/*"
+          - "msw"
+          - "jsdom"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group TypeScript and linting
+      typescript-lint:
+        patterns:
+          - "typescript"
+          - "eslint*"
+          - "@typescript-eslint/*"
+          - "prettier*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group PWA/Workbox dependencies
+      pwa:
+        patterns:
+          - "workbox*"
+          - "@vite-pwa/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group state management
+      state:
+        patterns:
+          - "zustand"
+          - "immer"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group remaining minor/patch updates
+      npm-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+          - "@radix-ui/*"
+          - "@tanstack/*"
+          - "vite"
+          - "@vitejs/*"
+          - "rollup*"
+          - "esbuild*"
+          - "vitest"
+          - "@vitest/*"
+          - "@testing-library/*"
+          - "msw"
+          - "jsdom"
+          - "typescript"
+          - "eslint*"
+          - "@typescript-eslint/*"
+          - "prettier*"
+          - "workbox*"
+          - "@vite-pwa/*"
+          - "zustand"
+          - "immer"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-prerelease"
+
+  # Shared types package
+  - package-ecosystem: "npm"
+    directory: "/packages/shared-types"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "shared"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"
+    versioning-strategy: increase
+    groups:
+      # Group GraphQL codegen tools
+      graphql-codegen:
+        patterns:
+          - "@graphql-codegen/*"
+          - "graphql"
+          - "graphql-*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group all other updates
+      shared-types-deps:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@graphql-codegen/*"
+          - "graphql"
+          - "graphql-*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-prerelease"
+
+  # =============================================================================
+  # GitHub Actions
+  # =============================================================================
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"
+    groups:
+      # Group all GitHub Actions updates
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # =============================================================================
+  # Docker Dependencies
+  # =============================================================================
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "infrastructure"
+      - "automated"
+    reviewers:
+      - "resonance-stream/maintainers"

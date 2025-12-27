@@ -1,0 +1,127 @@
+# Configuration for actions/labeler
+# Automatically labels PRs based on changed file paths
+# https://github.com/actions/labeler
+
+# API/Backend labels
+api:
+  - changed-files:
+      - any-glob-to-any-file: 'apps/api/**/*'
+
+rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/api/**/*.rs'
+          - 'apps/worker/**/*.rs'
+          - 'Cargo.toml'
+          - 'Cargo.lock'
+
+# Worker labels
+worker:
+  - changed-files:
+      - any-glob-to-any-file: 'apps/worker/**/*'
+
+# Frontend labels
+web:
+  - changed-files:
+      - any-glob-to-any-file: 'apps/web/**/*'
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/web/**/*'
+          - 'packages/shared-types/**/*'
+
+typescript:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.ts'
+          - '**/*.tsx'
+          - 'tsconfig*.json'
+
+# Database/Migrations
+database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/api/migrations/**/*'
+          - 'docker/init.sql'
+
+# Documentation
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**/*'
+
+# Infrastructure/DevOps
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docker/**/*'
+          - 'docker-compose*.yml'
+          - 'Dockerfile*'
+          - '.dockerignore'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**/*'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Cargo.toml'
+          - 'Cargo.lock'
+          - 'package.json'
+          - 'pnpm-lock.yaml'
+          - 'pnpm-workspace.yaml'
+          - 'apps/*/package.json'
+          - 'packages/*/package.json'
+
+# GraphQL
+graphql:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.graphql'
+          - 'apps/api/src/graphql/**/*'
+          - 'packages/shared-types/**/*'
+
+# Testing
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.test.ts'
+          - '**/*.test.tsx'
+          - '**/*_test.rs'
+          - 'apps/*/tests/**/*'
+          - 'apps/web/src/test/**/*'
+          - 'vitest.config.*'
+
+# Configuration
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.env.example'
+          - 'apps/*/src/config.rs'
+          - 'vite.config.*'
+          - 'tailwind.config.*'
+          - 'postcss.config.*'
+          - 'tsconfig*.json'
+
+# Security-related changes
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'SECURITY.md'
+          - 'apps/api/src/routes/auth*'
+          - 'apps/api/src/services/auth*'
+          - '**/auth/**/*'
+
+# Shared packages
+packages:
+  - changed-files:
+      - any-glob-to-any-file: 'packages/**/*'
+
+# Scripts
+scripts:
+  - changed-files:
+      - any-glob-to-any-file: 'scripts/**/*'

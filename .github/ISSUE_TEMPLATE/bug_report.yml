@@ -1,0 +1,287 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Resonance
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Thank you for reporting a bug!
+
+        Please fill out this form as completely as possible. The more details you provide, the easier it will be to identify and fix the issue.
+
+        Before submitting, please:
+        - [ ] Search [existing issues](https://github.com/resonance-stream/resonance/issues) to avoid duplicates
+        - [ ] Check the [documentation](https://github.com/resonance-stream/resonance#readme) for solutions
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of Resonance is affected?
+      multiple: true
+      options:
+        - API Backend (Rust/Axum)
+        - Web Frontend (React/TypeScript)
+        - Worker Service
+        - Audio Playback
+        - PWA / Offline Mode
+        - Real-time Sync / WebSocket
+        - GraphQL API
+        - Search (Meilisearch)
+        - AI Recommendations (Ollama)
+        - Lidarr Integration
+        - Docker / Deployment
+        - Database (PostgreSQL)
+        - Cache (Redis)
+        - Authentication / Authorization
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: |
+        Example: When I try to play a track while another is already playing, the audio cuts out completely instead of crossfading.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. Navigate to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. Observe error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The audio should crossfade smoothly between tracks as configured in settings.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: The audio stops completely and requires clicking play again to resume.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / Recordings
+      description: |
+        If applicable, add screenshots or screen recordings to help explain the problem.
+
+        Tip: You can paste images directly into this text area.
+      placeholder: Drag and drop images here or paste from clipboard
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      description: How is Resonance deployed?
+      options:
+        - Docker Compose (production)
+        - Docker Compose (development)
+        - Local development (cargo run / pnpm dev)
+        - Kubernetes
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Resonance Version
+      description: |
+        What version of Resonance are you running?
+        Run `docker compose exec api resonance --version` or check the About page.
+      placeholder: "v1.0.0 or commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      description: If this is a frontend issue, which browser(s) are affected?
+      multiple: true
+      options:
+        - Chrome / Chromium
+        - Firefox
+        - Safari
+        - Edge
+        - Mobile Safari (iOS)
+        - Chrome Mobile (Android)
+        - PWA (Installed)
+        - N/A (Backend only)
+    validations:
+      required: false
+
+  - type: input
+    id: browser-version
+    attributes:
+      label: Browser Version
+      description: What version of the browser are you using?
+      placeholder: "Chrome 120.0.6099.129"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you using?
+      multiple: true
+      options:
+        - Linux (x86_64)
+        - Linux (ARM64)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Windows 10
+        - Windows 11
+        - iOS
+        - Android
+        - Docker (Linux container)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: |
+        Please provide relevant environment information:
+        - Docker version (if applicable)
+        - PostgreSQL version
+        - Redis version
+        - Meilisearch version
+        - Ollama version and model (if AI-related)
+        - Node.js/pnpm version (if frontend development)
+        - Rust version (if backend development)
+      placeholder: |
+        Docker: 24.0.7
+        PostgreSQL: 16.1
+        Redis: 7.2
+        Meilisearch: 1.6.0
+        Ollama: 0.1.17 (mistral)
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: |
+        Please include relevant log output. For sensitive information, redact appropriately.
+
+        **How to get logs:**
+        - API: `docker compose logs api`
+        - Worker: `docker compose logs worker`
+        - Frontend: Browser DevTools Console (F12)
+        - Database: `docker compose logs postgres`
+      placeholder: |
+        2024-01-15T10:30:00Z ERROR resonance_api::services::playback: Failed to decode track
+          at apps/api/src/services/playback.rs:142
+          track_id=12345
+          error="unsupported codec"
+      render: shell
+
+  - type: textarea
+    id: network
+    attributes:
+      label: Network / API Logs
+      description: |
+        For API or sync issues, include relevant network requests from browser DevTools (Network tab).
+        Include the request URL, method, status code, and response body if applicable.
+      placeholder: |
+        POST /graphql 500 Internal Server Error
+        Response: {"errors":[{"message":"Database connection failed"}]}
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: |
+        Please share relevant configuration (with sensitive values redacted).
+        This includes docker-compose overrides, environment variables, etc.
+      placeholder: |
+        # Relevant environment variables (redact secrets!)
+        OLLAMA_MODEL=mistral
+        MUSIC_LIBRARY_PATH=/music
+        LOG_LEVEL=debug
+      render: yaml
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Is this a regression?
+      description: Did this work correctly in a previous version?
+      options:
+        - "Yes - it worked before"
+        - "No - this is a new feature area"
+        - "Unknown - first time using this feature"
+    validations:
+      required: true
+
+  - type: input
+    id: last-working-version
+    attributes:
+      label: Last Working Version
+      description: If this is a regression, what was the last version where it worked?
+      placeholder: "v0.9.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Have you found any workaround for this issue?
+      placeholder: Restarting the API container temporarily fixes the issue.
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context about the problem here.
+        - Related issues or discussions
+        - Stack traces
+        - Theories about the cause
+        - Links to relevant documentation
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/resonance-stream/resonance/blob/main/CODE_OF_CONDUCT.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you be interested in contributing a fix for this issue?
+      options:
+        - label: I would be willing to submit a PR to fix this issue
+          required: false
