@@ -9,7 +9,7 @@
 use async_graphql::{Context, InputObject, Object, Result};
 
 use crate::graphql::types::{AuthPayload, RefreshPayload};
-use crate::models::user::{DeviceInfo, DeviceType};
+use crate::models::user::{DeviceInfo, DeviceType, RequestMetadata};
 use crate::services::auth::AuthService;
 
 /// Input for user registration
@@ -102,15 +102,21 @@ impl AuthMutation {
     async fn register(&self, ctx: &Context<'_>, input: RegisterInput) -> Result<AuthPayload> {
         let auth_service = ctx.data::<AuthService>()?;
 
-        // Register the user
-        let _user = auth_service
-            .register(&input.email, &input.password, &input.display_name)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        // Extract request metadata for session audit trail
+        let request_metadata = ctx.data_opt::<RequestMetadata>();
+        let ip_address = request_metadata.and_then(|m| m.ip_address.clone());
+        let user_agent = request_metadata.and_then(|m| m.user_agent.clone());
 
-        // Automatically log in the new user to get tokens
+        // Register and create session in one call to avoid redundant password hashing
         let (user, tokens) = auth_service
-            .login(&input.email, &input.password, None, None, None)
+            .register_with_session(
+                &input.email,
+                &input.password,
+                &input.display_name,
+                None, // device_info - could be added to RegisterInput in future
+                ip_address.as_deref(),
+                user_agent.as_deref(),
+            )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -130,12 +136,13 @@ impl AuthMutation {
         // Extract device info if provided
         let device_info = input.device.map(DeviceInfo::from);
 
-        // Get client info from context headers if available
-        // Note: IP and user agent would typically be extracted from HTTP headers
-        // in the route handler and passed via context
+        // Extract request metadata for session audit trail
+        let request_metadata = ctx.data_opt::<RequestMetadata>();
+        let ip_address = request_metadata.and_then(|m| m.ip_address.clone());
+        let user_agent = request_metadata.and_then(|m| m.user_agent.clone());
 
         let (user, tokens) = auth_service
-            .login(&input.email, &input.password, device_info, None, None)
+            .login(&input.email, &input.password, device_info, ip_address.as_deref(), user_agent.as_deref())
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -213,4 +220,3 @@ impl AuthMutation {
         Ok(count as i32)
     }
 }
-

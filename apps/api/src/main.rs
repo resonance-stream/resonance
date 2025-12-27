@@ -1,6 +1,6 @@
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
-    extract::Extension,
+    extract::{ConnectInfo, Extension},
     http::{header, header::HeaderMap, Method},
     routing::{get, post},
     Router,
@@ -24,6 +24,7 @@ pub use error::{ApiError, ApiResult, ErrorResponse};
 
 use graphql::{build_schema, ResonanceSchema};
 use middleware::AuthRateLimitState;
+use models::user::RequestMetadata;
 use repositories::UserRepository;
 use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
 use services::auth::{AuthConfig, AuthService};
@@ -109,19 +110,73 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
+/// Extract client IP address from headers or connection info
+///
+/// Checks common proxy headers in order of preference:
+/// 1. X-Forwarded-For (may contain multiple IPs, use first)
+/// 2. X-Real-IP
+/// 3. Falls back to connection peer address
+fn extract_client_ip(headers: &HeaderMap, connect_info: Option<&ConnectInfo<SocketAddr>>) -> Option<String> {
+    // Try X-Forwarded-For first (standard proxy header)
+    if let Some(forwarded_for) = headers.get("x-forwarded-for") {
+        if let Ok(value) = forwarded_for.to_str() {
+            // X-Forwarded-For may contain comma-separated IPs, first is the client
+            if let Some(first_ip) = value.split(',').next() {
+                let ip = first_ip.trim();
+                if !ip.is_empty() {
+                    return Some(ip.to_string());
+                }
+            }
+        }
+    }
+
+    // Try X-Real-IP (nginx default)
+    if let Some(real_ip) = headers.get("x-real-ip") {
+        if let Ok(value) = real_ip.to_str() {
+            let ip = value.trim();
+            if !ip.is_empty() {
+                return Some(ip.to_string());
+            }
+        }
+    }
+
+    // Fall back to connection peer address
+    connect_info.map(|info| info.0.ip().to_string())
+}
+
+/// Extract user agent from headers
+fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 /// GraphQL handler that executes queries against the schema
 ///
 /// This handler extracts the Bearer token from the Authorization header,
 /// verifies it using AuthService, and injects the Claims into the GraphQL
 /// context so that queries like `me` and mutations like `logout` can access
 /// the authenticated user's information.
+///
+/// It also extracts request metadata (IP address, user-agent) and injects
+/// it into the context for auth mutations to use in session audit trails.
 async fn graphql_handler(
     Extension(schema): Extension<ResonanceSchema>,
     Extension(auth_service): Extension<AuthService>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.into_inner();
+
+    // Extract request metadata for audit trails
+    let ip_address = extract_client_ip(&headers, connect_info.as_ref());
+    let user_agent = extract_user_agent(&headers);
+    let request_metadata = RequestMetadata::new(ip_address, user_agent);
+
+    // Inject RequestMetadata into the GraphQL context
+    request = request.data(request_metadata);
 
     // Try to extract and verify the Bearer token
     if let Some(token) = extract_bearer_token(&headers) {
@@ -281,7 +336,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);
 
-    // Run the server
+    // Run the server with ConnectInfo to capture client addresses
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -292,7 +347,8 @@ async fn main() -> anyhow::Result<()> {
         addr.port()
     );
 
-    axum::serve(listener, app).await?;
+    // Use into_make_service_with_connect_info to enable ConnectInfo extractor
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
 }

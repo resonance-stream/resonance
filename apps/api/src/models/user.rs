@@ -324,6 +324,29 @@ impl AuthTokens {
     }
 }
 
+/// HTTP request metadata extracted from headers for audit trails
+///
+/// This struct captures client information from HTTP requests
+/// to provide context for sessions and audit logging.
+#[derive(Debug, Clone, Default)]
+pub struct RequestMetadata {
+    /// Client IP address (may be from X-Forwarded-For behind proxy)
+    pub ip_address: Option<String>,
+
+    /// Client user agent string
+    pub user_agent: Option<String>,
+}
+
+impl RequestMetadata {
+    /// Create new request metadata with IP and user agent
+    pub fn new(ip_address: Option<String>, user_agent: Option<String>) -> Self {
+        Self {
+            ip_address,
+            user_agent,
+        }
+    }
+}
+
 /// Refresh token claims (simpler than access token claims)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshClaims {
@@ -415,11 +438,7 @@ mod tests {
 
     #[test]
     fn test_auth_tokens_new() {
-        let tokens = AuthTokens::new(
-            "access".to_string(),
-            "refresh".to_string(),
-            Utc::now(),
-        );
+        let tokens = AuthTokens::new("access".to_string(), "refresh".to_string(), Utc::now());
         assert_eq!(tokens.token_type, "Bearer");
         assert_eq!(tokens.access_token, "access");
         assert_eq!(tokens.refresh_token, "refresh");
