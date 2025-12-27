@@ -1,0 +1,172 @@
+# Resonance - Self-hosted Music Streaming Platform
+# Docker Compose configuration for all services
+
+services:
+  # Main API server
+  resonance:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: resonance-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-resonance}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resonance}
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=${MEILISEARCH_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - LIDARR_URL=${LIDARR_URL}
+      - LIDARR_API_KEY=${LIDARR_API_KEY}
+      - MUSIC_LIBRARY_PATH=/music
+      - CACHE_PATH=/cache
+      - TRANSCODE_PATH=/transcodes
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - ${MUSIC_LIBRARY_PATH:-./music}:/music:ro
+      - resonance-cache:/cache
+      - resonance-transcodes:/transcodes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Background worker for scheduled tasks and async jobs
+  resonance-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: resonance-worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-resonance}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resonance}
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=${MEILISEARCH_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - LIDARR_URL=${LIDARR_URL}
+      - LIDARR_API_KEY=${LIDARR_API_KEY}
+      - MUSIC_LIBRARY_PATH=/music
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - ${MUSIC_LIBRARY_PATH:-./music}:/music:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    networks:
+      - resonance-network
+
+  # PostgreSQL with pgvector extension for embeddings
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: resonance-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-resonance}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-resonance}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resonance} -d ${POSTGRES_DB:-resonance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis for caching, sessions, and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: resonance-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Meilisearch for fast full-text search
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: resonance-meilisearch
+    restart: unless-stopped
+    environment:
+      - MEILI_MASTER_KEY=${MEILISEARCH_KEY}
+      - MEILI_ENV=${MEILI_ENV:-production}
+      - MEILI_NO_ANALYTICS=true
+    volumes:
+      - meilisearch-data:/meili_data
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ollama for local AI inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: resonance-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - resonance-network
+    # Uncomment the following lines to enable GPU support (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+# Named volumes for persistent data
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  meilisearch-data:
+    driver: local
+  ollama-data:
+    driver: local
+  resonance-cache:
+    driver: local
+  resonance-transcodes:
+    driver: local
+
+# Network for inter-service communication
+networks:
+  resonance-network:
+    driver: bridge
