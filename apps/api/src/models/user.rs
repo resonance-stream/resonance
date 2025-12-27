@@ -11,18 +11,13 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// User role enum matching PostgreSQL user_role type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
+    #[default]
     User,
     Guest,
-}
-
-impl Default for UserRole {
-    fn default() -> Self {
-        Self::User
-    }
 }
 
 /// User preferences stored as JSONB in the database
