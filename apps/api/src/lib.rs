@@ -13,4 +13,5 @@ pub mod services;
 
 // Re-export commonly used types
 pub use error::{ApiError, ApiResult, ErrorResponse};
+pub use repositories::UserRepository;
 pub use services::{AuthConfig, AuthService};
