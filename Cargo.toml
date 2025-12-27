@@ -22,11 +22,11 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Database
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
 
 # GraphQL
-async-graphql = "6"
-async-graphql-axum = "6"
+async-graphql = "7"
+async-graphql-axum = "7"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

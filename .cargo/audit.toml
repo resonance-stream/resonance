@@ -17,10 +17,6 @@ ignore = [
     # Tracked: These crates need to migrate to http 1.x
     "RUSTSEC-2024-0421",
 
-    # sqlx 0.7.x has a truncation vulnerability - fix requires upgrade to 0.8.x
-    # TODO: Upgrade to sqlx 0.8.x when stable (breaking changes)
-    "RUSTSEC-2024-0363",
-
     # instant is unmaintained - comes from meilisearch-sdk via isahc
     # Tracked: Waiting for upstream crates to update
     "RUSTSEC-2024-0384",
