@@ -187,6 +187,10 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("Migrations completed successfully");
 
+    // Create UserRepository for centralized user database operations
+    let user_repo = UserRepository::new(pool.clone());
+    tracing::info!("UserRepository initialized");
+
     // Create AuthService
     let auth_config = AuthConfig::with_expiry_strings(
         config.jwt_secret.clone(),
@@ -272,6 +276,7 @@ async fn main() -> anyhow::Result<()> {
         // Add services as extensions for middleware extractors
         .layer(Extension(schema))
         .layer(Extension(pool.clone()))
+        .layer(Extension(user_repo))
         .layer(Extension(auth_service))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);

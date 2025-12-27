@@ -36,11 +36,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ErrorResponse};
 use crate::models::user::{Claims, User, UserRole};
+use crate::repositories::UserRepository;
 use crate::services::AuthService;
 
 /// Authenticated user extractor - requires valid authentication
@@ -190,33 +190,6 @@ fn extract_bearer_token(parts: &Parts) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
-/// Fetch user from database by ID
-async fn fetch_user_by_id(pool: &PgPool, user_id: Uuid) -> Result<Option<User>, sqlx::Error> {
-    sqlx::query_as::<_, User>(
-        r#"
-        SELECT
-            id,
-            email,
-            password_hash,
-            display_name,
-            avatar_url,
-            role,
-            preferences,
-            listenbrainz_token,
-            discord_user_id,
-            email_verified,
-            last_seen_at,
-            created_at,
-            updated_at
-        FROM users
-        WHERE id = $1
-        "#,
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-}
-
 #[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
@@ -239,14 +212,15 @@ where
             .verify_access_token(token)
             .map_err(|e| AuthRejection::InvalidToken(e.to_string()))?;
 
-        // Get database pool from extensions
-        let pool = parts
+        // Get UserRepository from extensions
+        let user_repo = parts
             .extensions
-            .get::<PgPool>()
+            .get::<UserRepository>()
             .ok_or(AuthRejection::MissingServices)?;
 
-        // Fetch user from database
-        let user = fetch_user_by_id(pool, claims.sub)
+        // Fetch user from database using repository
+        let user = user_repo
+            .find_by_id(claims.sub)
             .await
             .map_err(|e| AuthRejection::DatabaseError(e.to_string()))?
             .ok_or(AuthRejection::UserNotFound)?;
@@ -305,11 +279,11 @@ where
             }
         };
 
-        // Get database pool from extensions - if missing, return None
-        let pool = match parts.extensions.get::<PgPool>() {
-            Some(p) => p,
+        // Get UserRepository from extensions - if missing, return None
+        let user_repo = match parts.extensions.get::<UserRepository>() {
+            Some(r) => r,
             None => {
-                tracing::warn!("PgPool not in extensions for MaybeAuthUser");
+                tracing::warn!("UserRepository not in extensions for MaybeAuthUser");
                 return Ok(MaybeAuthUser {
                     user: None,
                     claims: None,
@@ -318,8 +292,8 @@ where
             }
         };
 
-        // Fetch user from database - if not found, return None
-        match fetch_user_by_id(pool, claims.sub).await {
+        // Fetch user from database using repository - if not found, return None
+        match user_repo.find_by_id(claims.sub).await {
             Ok(Some(user)) => Ok(MaybeAuthUser {
                 user: Some(user),
                 session_id: Some(claims.sid),
@@ -372,14 +346,15 @@ where
             return Err(AuthRejection::InsufficientPermissions);
         }
 
-        // Get database pool from extensions
-        let pool = parts
+        // Get UserRepository from extensions
+        let user_repo = parts
             .extensions
-            .get::<PgPool>()
+            .get::<UserRepository>()
             .ok_or(AuthRejection::MissingServices)?;
 
-        // Fetch user from database
-        let user = fetch_user_by_id(pool, claims.sub)
+        // Fetch user from database using repository
+        let user = user_repo
+            .find_by_id(claims.sub)
             .await
             .map_err(|e| AuthRejection::DatabaseError(e.to_string()))?
             .ok_or(AuthRejection::UserNotFound)?;
