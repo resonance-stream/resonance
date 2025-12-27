@@ -363,6 +363,14 @@ pub struct RefreshClaims {
 
     /// Token type identifier
     pub typ: String,
+
+    /// Issuer
+    #[serde(default = "default_issuer")]
+    pub iss: String,
+
+    /// Audience
+    #[serde(default = "default_audience")]
+    pub aud: String,
 }
 
 impl RefreshClaims {
@@ -375,6 +383,8 @@ impl RefreshClaims {
             iat: now,
             exp: now + refresh_token_ttl_secs,
             typ: "refresh".to_string(),
+            iss: default_issuer(),
+            aud: default_audience(),
         }
     }
 

@@ -94,7 +94,7 @@ impl UserRepository {
             WHERE email = $1
             "#,
         )
-        .bind(email.to_lowercase())
+        .bind(email.trim().to_lowercase())
         .fetch_optional(&self.pool)
         .await
     }
@@ -110,7 +110,7 @@ impl UserRepository {
     /// * `Err(sqlx::Error)` - If a database error occurs
     pub async fn email_exists(&self, email: &str) -> Result<bool, sqlx::Error> {
         sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"#)
-            .bind(email.to_lowercase())
+            .bind(email.trim().to_lowercase())
             .fetch_one(&self.pool)
             .await
     }
@@ -171,7 +171,7 @@ impl UserRepository {
                 updated_at
             "#,
         )
-        .bind(email.to_lowercase())
+        .bind(email.trim().to_lowercase())
         .bind(password_hash)
         .bind(display_name)
         .bind(role)

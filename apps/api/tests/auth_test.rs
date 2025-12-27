@@ -770,11 +770,14 @@ async fn test_logout_success() {
     // We need to inject services into extensions for the auth extractor to work
     // For this test, we'll create a custom app setup
     use axum::Extension;
+    use resonance_api::repositories::UserRepository;
 
     let auth_svc = auth_service.clone();
+    let user_repo = UserRepository::new(pool.clone());
     let app = Router::new()
         .merge(auth_router(AuthState::new(auth_service.clone())))
         .layer(Extension(auth_svc))
+        .layer(Extension(user_repo))
         .layer(Extension(pool.clone()));
 
     let email = unique_email();
@@ -832,11 +835,14 @@ async fn test_logout_unauthenticated() {
     let auth_service = create_auth_service(pool.clone());
 
     use axum::Extension;
+    use resonance_api::repositories::UserRepository;
 
     let auth_svc = auth_service.clone();
+    let user_repo = UserRepository::new(pool.clone());
     let app = Router::new()
         .merge(auth_router(AuthState::new(auth_service)))
         .layer(Extension(auth_svc))
+        .layer(Extension(user_repo))
         .layer(Extension(pool.clone()));
 
     // Try to logout without auth token
@@ -863,11 +869,14 @@ async fn test_logout_invalid_token() {
     let auth_service = create_auth_service(pool.clone());
 
     use axum::Extension;
+    use resonance_api::repositories::UserRepository;
 
     let auth_svc = auth_service.clone();
+    let user_repo = UserRepository::new(pool.clone());
     let app = Router::new()
         .merge(auth_router(AuthState::new(auth_service)))
         .layer(Extension(auth_svc))
+        .layer(Extension(user_repo))
         .layer(Extension(pool.clone()));
 
     // Try to logout with invalid token
@@ -888,11 +897,14 @@ async fn test_logout_prevents_refresh_token_usage() {
     let auth_service = create_auth_service(pool.clone());
 
     use axum::Extension;
+    use resonance_api::repositories::UserRepository;
 
     let auth_svc = auth_service.clone();
+    let user_repo = UserRepository::new(pool.clone());
     let app = Router::new()
         .merge(auth_router(AuthState::new(auth_service.clone())))
         .layer(Extension(auth_svc))
+        .layer(Extension(user_repo))
         .layer(Extension(pool.clone()));
 
     let email = unique_email();
