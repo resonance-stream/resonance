@@ -44,6 +44,8 @@ const mockAuthPayload = {
   avatarUrl: null,
   role: 'USER',
   emailVerified: true,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
   accessToken: 'mock-access-token',
   refreshToken: 'mock-refresh-token',
   expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(), // 1 hour from now
@@ -646,11 +648,26 @@ describe('authStore', () => {
           tokenType: 'Bearer',
         },
       })
+      // Third call succeeds (me query retry after refresh)
+      mockGraphqlRequest.mockResolvedValueOnce({
+        me: {
+          id: 'user-123',
+          username: 'test',
+          email: 'test@example.com',
+          displayName: 'Test User',
+          avatarUrl: null,
+          role: 'user',
+          emailVerified: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      })
 
       await useAuthStore.getState().fetchCurrentUser()
 
-      // Should have attempted refresh
+      // Should have attempted refresh and retried me query
       expect(useAuthStore.getState().accessToken).toBe('new-access-token')
+      expect(useAuthStore.getState().user).not.toBeNull()
     })
 
     it('sets unauthenticated if refresh also fails', async () => {
@@ -709,12 +726,28 @@ describe('authStore', () => {
       const pastExpiry = Date.now() - 3600 * 1000 // 1 hour ago
       const newExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString()
 
+      // Mock the refresh token mutation
       mockGraphqlRequest.mockResolvedValueOnce({
         refreshToken: {
           accessToken: 'new-access-token',
           refreshToken: 'new-refresh-token',
           expiresAt: newExpiresAt,
           tokenType: 'Bearer',
+        },
+      })
+
+      // Mock the me query that is called after refresh (fetchCurrentUser)
+      mockGraphqlRequest.mockResolvedValueOnce({
+        me: {
+          id: 'user-123',
+          username: 'test',
+          email: 'test@example.com',
+          displayName: 'Test User',
+          avatarUrl: null,
+          role: 'user',
+          emailVerified: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         },
       })
 
@@ -1037,11 +1070,15 @@ describe('extractUserFromPayload (integration tests)', () => {
     expect(useAuthStore.getState().user?.avatarUrl).toBe('https://example.com/avatar.jpg')
   })
 
-  it('sets createdAt and updatedAt to current time', async () => {
-    const beforeTime = new Date().toISOString()
+  it('preserves createdAt and updatedAt from payload', async () => {
+    const timestamp = new Date().toISOString()
 
     mockGraphqlRequest.mockResolvedValueOnce({
-      login: mockAuthPayload,
+      login: {
+        ...mockAuthPayload,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
     })
 
     await useAuthStore.getState().login({
@@ -1049,20 +1086,16 @@ describe('extractUserFromPayload (integration tests)', () => {
       password: 'password',
     })
 
-    const afterTime = new Date().toISOString()
     const user = useAuthStore.getState().user
 
-    expect(user?.createdAt).toBeDefined()
-    expect(user?.updatedAt).toBeDefined()
-    // The timestamps should be between beforeTime and afterTime
-    expect(user).not.toBeNull()
-    if (user) {
-      expect(user.createdAt >= beforeTime).toBe(true)
-      expect(user.createdAt <= afterTime).toBe(true)
-    }
+    expect(user?.createdAt).toBe(timestamp)
+    expect(user?.updatedAt).toBe(timestamp)
   })
 
   it('correctly maps all user fields', async () => {
+    const now = new Date()
+    const futureExpiry = new Date(now.getTime() + 3600 * 1000).toISOString()
+
     mockGraphqlRequest.mockResolvedValueOnce({
       login: {
         id: 'test-id-456',
@@ -1071,9 +1104,11 @@ describe('extractUserFromPayload (integration tests)', () => {
         avatarUrl: 'https://example.com/img.png',
         role: 'ADMIN',
         emailVerified: false,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
         accessToken: 'token',
         refreshToken: 'refresh',
-        expiresAt: new Date().toISOString(),
+        expiresAt: futureExpiry,
         tokenType: 'Bearer',
       },
     })

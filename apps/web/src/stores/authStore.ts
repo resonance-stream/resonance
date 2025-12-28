@@ -640,15 +640,10 @@ export const useAuthStore = create<AuthState>()(
             }
           })
         } else {
-          // Token still valid, set auth header and fetch user if needed
+          // Token still valid, set auth header
+          // Note: User will be fetched by app when needed (e.g., ProtectedRoute)
           setAuthToken(accessToken)
           set({ status: 'authenticated' })
-
-          // If we don't have a user, fetch it
-          const { user } = get()
-          if (!user) {
-            void fetchUser()
-          }
         }
       },
     }),
