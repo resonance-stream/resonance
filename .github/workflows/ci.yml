@@ -82,6 +82,14 @@ jobs:
         with:
           cache-key: test
 
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgres://resonance:resonance_test@localhost:5432/resonance_test
+        run: cargo sqlx migrate run --source apps/api/migrations
+
       - name: Run tests
         env:
           DATABASE_URL: postgres://resonance:resonance_test@localhost:5432/resonance_test
@@ -113,15 +121,16 @@ jobs:
   typescript-typecheck:
     name: TypeScript Type Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./apps/web
     steps:
       - uses: actions/checkout@v4
 
       # See typescript-lint job for explanation of why pnpm install runs from root
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
+
+      # Build shared-types first as other packages depend on it
+      - name: Build shared-types
+        run: pnpm --filter @resonance/shared-types build
 
       - name: Run type check
         run: pnpm typecheck
@@ -160,6 +169,10 @@ jobs:
 
       - name: Build Rust workspace
         run: cargo build --release
+
+      # Build shared-types first as other packages depend on it
+      - name: Build shared-types
+        run: pnpm --filter @resonance/shared-types build
 
       - name: Build frontend
         run: pnpm build

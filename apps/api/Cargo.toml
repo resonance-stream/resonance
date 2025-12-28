@@ -48,9 +48,14 @@ symphonia = { workspace = true }
 # Auth
 argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
+sha2 = { workspace = true }
 
 # Internal crates
 resonance-shared-config = { workspace = true }
+
+[lib]
+name = "resonance_api"
+path = "src/lib.rs"
 
 [[bin]]
 name = "resonance-api"
