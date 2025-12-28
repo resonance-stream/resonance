@@ -16,13 +16,21 @@ export function useKeyboardShortcuts(): void {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      // Don't trigger shortcuts when typing in inputs
+      // Don't trigger shortcuts when typing in inputs or interacting with form elements
       const target = event.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
+        target.tagName === 'SELECT' ||
+        target.isContentEditable ||
+        target.getAttribute('role') === 'textbox' ||
+        target.getAttribute('role') === 'searchbox'
       ) {
+        return;
+      }
+
+      // Don't interfere with browser/system shortcuts
+      if (event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
 
@@ -49,7 +57,7 @@ export function useKeyboardShortcuts(): void {
           break;
 
         case 'ArrowRight':
-          if (currentTrack) {
+          if (currentTrack && Number.isFinite(currentTrack.duration) && currentTrack.duration > 0) {
             event.preventDefault();
             const maxTime = currentTrack.duration;
             const newTime = Math.min(maxTime, currentTime + 5);

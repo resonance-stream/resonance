@@ -45,8 +45,12 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
       ? Math.min(Math.max(0, time), duration)
       : Math.max(0, time);
 
-    audio.currentTime = clamped;
-    setCurrentTime(clamped);
+    try {
+      audio.currentTime = clamped;
+      setCurrentTime(clamped);
+    } catch {
+      // Ignore failed seeks (e.g., metadata not loaded yet)
+    }
   }, [setCurrentTime]);
 
   // Handle track changes - only update source when track actually changes
@@ -61,7 +65,7 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
       lastTrackIdRef.current = trackId;
 
       if (currentTrack) {
-        const streamUrl = `/api/stream/${currentTrack.id}`;
+        const streamUrl = `/api/stream/${encodeURIComponent(currentTrack.id)}`;
         audio.src = streamUrl;
         audio.load();
       } else {

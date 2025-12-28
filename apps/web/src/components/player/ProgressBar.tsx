@@ -26,7 +26,8 @@ export function ProgressBar(): JSX.Element {
   const [dragProgress, setDragProgress] = useState<number | null>(null);
 
   const duration = currentTrack?.duration ?? 0;
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const isSeekable = duration > 0;
+  const progress = isSeekable ? (currentTime / duration) * 100 : 0;
 
   // Use drag position while dragging, otherwise use actual progress
   const displayProgress = isDragging && dragProgress !== null ? dragProgress : progress;
@@ -42,6 +43,9 @@ export function ProgressBar(): JSX.Element {
   const handleValueCommit = (value: number[]): void => {
     setIsDragging(false);
     setDragProgress(null);
+
+    if (!isSeekable) return;
+
     const percent = value[0] ?? 0;
     const newTime = (percent / 100) * duration;
     seek(newTime);
@@ -56,12 +60,15 @@ export function ProgressBar(): JSX.Element {
 
       {/* Seekable Slider */}
       <Slider.Root
-        className="relative flex items-center select-none touch-none w-full h-5 group"
+        className={`relative flex items-center select-none touch-none w-full h-5 group ${
+          !isSeekable ? 'opacity-50 cursor-not-allowed' : ''
+        }`}
         value={[displayProgress]}
         onValueChange={handleValueChange}
         onValueCommit={handleValueCommit}
         max={100}
         step={0.1}
+        disabled={!isSeekable}
         aria-label="Seek"
       >
         <Slider.Track className="relative h-1 grow rounded-full bg-background-tertiary">
