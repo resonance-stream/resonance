@@ -8,10 +8,65 @@
 
 use async_graphql::{Context, InputObject, Object, Result};
 
+use crate::error::ApiError;
 use crate::graphql::guards::{RateLimitGuard, RateLimitType};
 use crate::graphql::types::{AuthPayload, RefreshPayload};
 use crate::models::user::{DeviceInfo, DeviceType, RequestMetadata};
 use crate::services::auth::AuthService;
+
+// =============================================================================
+// Error Sanitization
+// =============================================================================
+
+/// Sanitize auth errors to prevent information disclosure
+///
+/// Maps internal error variants to generic user-facing messages while
+/// logging the full error details server-side. This prevents leaking
+/// sensitive information like "password hash invalid" or database errors.
+fn sanitize_auth_error(error: &ApiError) -> async_graphql::Error {
+    match error {
+        // Expected user-facing errors with safe messages
+        ApiError::Unauthorized => {
+            tracing::debug!("Auth unauthorized error");
+            async_graphql::Error::new("Invalid credentials")
+        }
+        ApiError::InvalidToken(msg) => {
+            tracing::debug!(error = %msg, "Invalid token error");
+            async_graphql::Error::new("Invalid or expired token")
+        }
+        ApiError::Forbidden(msg) => {
+            tracing::debug!(error = %msg, "Auth forbidden error");
+            async_graphql::Error::new("Access denied")
+        }
+        ApiError::NotFound { .. } => {
+            // Don't reveal whether a user exists
+            async_graphql::Error::new("Invalid credentials")
+        }
+        ApiError::Conflict { resource_type, .. } => {
+            // Email already exists - this is safe to reveal
+            if resource_type.to_lowercase().contains("email")
+                || resource_type.to_lowercase().contains("user")
+            {
+                async_graphql::Error::new("Email already registered")
+            } else {
+                async_graphql::Error::new("Resource conflict")
+            }
+        }
+        ApiError::ValidationError(msg) => {
+            // Validation errors are generally safe to reveal
+            async_graphql::Error::new(msg.clone())
+        }
+        ApiError::RateLimited { retry_after } => async_graphql::Error::new(format!(
+            "Too many requests. Try again in {} seconds",
+            retry_after
+        )),
+        // All other errors (internal, database, etc.) should not be exposed
+        _ => {
+            tracing::error!(error = %error, "Internal auth error");
+            async_graphql::Error::new("An unexpected error occurred")
+        }
+    }
+}
 
 /// Input for user registration
 #[derive(Debug, InputObject)]
@@ -160,7 +215,7 @@ impl AuthMutation {
                 req_ctx.user_agent(),
             )
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(AuthPayload::new(user, tokens))
     }
@@ -190,7 +245,7 @@ impl AuthMutation {
                 req_ctx.user_agent(),
             )
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(AuthPayload::new(user, tokens))
     }
@@ -217,7 +272,7 @@ impl AuthMutation {
         let tokens = auth_service
             .refresh_token(&input.refresh_token)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(RefreshPayload::from(tokens))
     }
@@ -240,7 +295,7 @@ impl AuthMutation {
         auth_service
             .logout(claims.sid)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(true)
     }
@@ -265,7 +320,7 @@ impl AuthMutation {
         let count = auth_service
             .logout_all(claims.sub)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(count as i32)
     }

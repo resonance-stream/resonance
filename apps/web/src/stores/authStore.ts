@@ -42,12 +42,104 @@ interface AuthState {
 }
 
 /**
+ * GraphQL error structure from graphql-request ClientError
+ */
+interface GraphQLErrorResponse {
+  response?: {
+    errors?: Array<{
+      message?: string
+      extensions?: {
+        code?: string
+        [key: string]: unknown
+      }
+    }>
+  }
+}
+
+/**
+ * Check if error is a GraphQL ClientError with response data
+ */
+function isGraphQLError(error: unknown): error is Error & GraphQLErrorResponse {
+  return (
+    error instanceof Error &&
+    'response' in error &&
+    typeof (error as GraphQLErrorResponse).response === 'object'
+  )
+}
+
+/**
  * Parse GraphQL error into AuthError
+ * Extracts error details from graphql-request ClientError response when available
  */
 function parseAuthError(error: unknown): AuthError {
+  // First, try to extract structured error from GraphQL response
+  if (isGraphQLError(error)) {
+    const firstError = error.response?.errors?.[0]
+    if (firstError) {
+      const code = firstError.extensions?.code
+      const message = firstError.message ?? ''
+      const messageLower = message.toLowerCase()
+
+      // Map GraphQL error codes to AuthError codes
+      if (code === 'INVALID_CREDENTIALS' || code === 'UNAUTHORIZED') {
+        return { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' }
+      }
+      if (code === 'USER_NOT_FOUND') {
+        return { code: 'USER_NOT_FOUND', message: 'User not found' }
+      }
+      if (code === 'EMAIL_EXISTS' || code === 'EMAIL_ALREADY_EXISTS') {
+        return { code: 'EMAIL_ALREADY_EXISTS', message: 'Email already in use' }
+      }
+      if (code === 'USERNAME_EXISTS' || code === 'USERNAME_ALREADY_EXISTS') {
+        return { code: 'USERNAME_ALREADY_EXISTS', message: 'Username already taken' }
+      }
+      if (code === 'TOKEN_EXPIRED') {
+        return { code: 'TOKEN_EXPIRED', message: 'Session expired. Please log in again.' }
+      }
+      if (code === 'TOKEN_INVALID' || code === 'INVALID_TOKEN') {
+        return { code: 'TOKEN_INVALID', message: 'Invalid session. Please log in again.' }
+      }
+      if (code === 'RATE_LIMITED') {
+        return { code: 'RATE_LIMITED', message: 'Too many attempts. Please try again later.' }
+      }
+
+      // Fall back to message-based detection for this error
+      if (messageLower.includes('invalid credentials') || messageLower.includes('wrong password')) {
+        return { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' }
+      }
+      if (messageLower.includes('user not found')) {
+        return { code: 'USER_NOT_FOUND', message: 'User not found' }
+      }
+      if (messageLower.includes('email') && messageLower.includes('exists')) {
+        return { code: 'EMAIL_ALREADY_EXISTS', message: 'Email already in use' }
+      }
+      if (messageLower.includes('username') && messageLower.includes('exists')) {
+        return { code: 'USERNAME_ALREADY_EXISTS', message: 'Username already taken' }
+      }
+      if (messageLower.includes('token') && messageLower.includes('expired')) {
+        return { code: 'TOKEN_EXPIRED', message: 'Session expired. Please log in again.' }
+      }
+      if (messageLower.includes('token') && messageLower.includes('invalid')) {
+        return { code: 'TOKEN_INVALID', message: 'Invalid session. Please log in again.' }
+      }
+
+      // Return the server's message if available
+      if (message) {
+        return { code: 'UNKNOWN_ERROR', message }
+      }
+    }
+  }
+
+  // Handle regular Error objects
   if (error instanceof Error) {
     const message = error.message.toLowerCase()
 
+    // Check for network errors
+    if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
+      return { code: 'NETWORK_ERROR', message: 'Network error. Please check your connection.' }
+    }
+
+    // Legacy message-based detection for non-GraphQL errors
     if (message.includes('invalid credentials') || message.includes('wrong password')) {
       return { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' }
     }
@@ -66,9 +158,6 @@ function parseAuthError(error: unknown): AuthError {
     if (message.includes('token') && message.includes('invalid')) {
       return { code: 'TOKEN_INVALID', message: 'Invalid session. Please log in again.' }
     }
-    if (message.includes('network') || message.includes('fetch')) {
-      return { code: 'NETWORK_ERROR', message: 'Network error. Please check your connection.' }
-    }
 
     return { code: 'UNKNOWN_ERROR', message: error.message }
   }
@@ -77,8 +166,15 @@ function parseAuthError(error: unknown): AuthError {
 }
 
 /**
+ * Maximum token expiry buffer: 90 days in milliseconds
+ * Tokens expiring beyond this are capped to prevent excessive durations
+ */
+const MAX_EXPIRY_BUFFER_MS = 90 * 24 * 60 * 60 * 1000
+
+/**
  * Parse DateTime string to timestamp with buffer for early refresh
  * Returns null if the date is invalid to prevent NaN propagation
+ * Clamps the result to ensure it's within a reasonable range
  */
 function parseExpiresAt(expiresAt: string): number | null {
   // Parse ISO8601 DateTime and subtract 60 seconds as buffer
@@ -89,7 +185,17 @@ function parseExpiresAt(expiresAt: string): number | null {
     return null
   }
 
-  return timestamp - 60 * 1000
+  const bufferedExpiry = timestamp - 60 * 1000
+  const now = Date.now()
+
+  // Clamp to ensure the expiry is in the future (at least 1 second from now)
+  // This prevents issues with tokens that are already expired or about to expire
+  const minExpiry = now + 1000
+
+  // Also cap to a maximum reasonable duration (90 days from now)
+  const maxExpiry = now + MAX_EXPIRY_BUFFER_MS
+
+  return Math.max(minExpiry, Math.min(bufferedExpiry, maxExpiry))
 }
 
 /**
@@ -117,11 +223,31 @@ interface AuthPayloadResponse {
 const VALID_ROLES: UserRole[] = ['admin', 'user', 'guest']
 
 /**
- * Validate that a string is a valid ISO8601 timestamp
+ * Minimum valid timestamp (2020-01-01)
+ * Timestamps before this are likely invalid
+ */
+const MIN_VALID_TIMESTAMP = new Date('2020-01-01').getTime()
+
+/**
+ * Maximum valid timestamp (100 years from now)
+ * Timestamps beyond this are likely invalid
+ */
+const MAX_VALID_TIMESTAMP = Date.now() + 100 * 365 * 24 * 60 * 60 * 1000
+
+/**
+ * Validate that a string is a valid ISO8601 timestamp within a reasonable range
+ * Rejects NaN, dates before 2020, and dates more than 100 years in the future
  */
 function isValidTimestamp(value: string): boolean {
   const timestamp = new Date(value).getTime()
-  return !Number.isNaN(timestamp)
+  if (Number.isNaN(timestamp)) {
+    return false
+  }
+  // Reject timestamps outside reasonable bounds
+  if (timestamp < MIN_VALID_TIMESTAMP || timestamp > MAX_VALID_TIMESTAMP) {
+    return false
+  }
+  return true
 }
 
 /**
@@ -345,8 +471,19 @@ export const useAuthStore = create<AuthState>()(
           })
 
           return true
-        } catch {
-          // Refresh failed - clear session
+        } catch (error) {
+          // Check if this is a network error - don't log out on transient failures
+          const authError = parseAuthError(error)
+          if (authError.code === 'NETWORK_ERROR') {
+            // Keep the session intact so user can retry when connectivity returns
+            set({
+              status: 'authenticated',
+              error: authError,
+            })
+            return false
+          }
+
+          // Non-network refresh failure - clear session
           setAuthToken(null)
           set({
             user: null,
@@ -446,19 +583,20 @@ export const useAuthStore = create<AuthState>()(
        * Hydrate auth state after loading from storage
        * Called on app initialization to restore auth header
        * Fully clears invalid persisted sessions to prevent bad state
+       * Note: User object is not required - it can be fetched after hydration
        */
       hydrate: () => {
-        const { accessToken, expiresAt, refreshToken, user, refreshAccessToken: refresh } = get()
+        const { accessToken, expiresAt, refreshToken, fetchCurrentUser: fetchUser, refreshAccessToken: refresh } = get()
 
-        // Validate that all required fields exist and are valid
-        const isValidSession =
+        // Validate that essential token fields exist and are valid
+        // Note: user is not required - it can be fetched after hydration
+        const hasValidTokens =
           accessToken &&
           refreshToken &&
           typeof expiresAt === 'number' &&
-          !Number.isNaN(expiresAt) &&
-          user !== null
+          !Number.isNaN(expiresAt)
 
-        if (!isValidSession) {
+        if (!hasValidTokens) {
           // Fully clear invalid persisted session
           setAuthToken(null)
           set({
@@ -478,9 +616,15 @@ export const useAuthStore = create<AuthState>()(
           set({ status: 'loading' })
           void refresh()
         } else {
-          // Token still valid, set auth header
+          // Token still valid, set auth header and fetch user if needed
           setAuthToken(accessToken)
           set({ status: 'authenticated' })
+
+          // If we don't have a user, fetch it
+          const { user } = get()
+          if (!user) {
+            void fetchUser()
+          }
         }
       },
     }),

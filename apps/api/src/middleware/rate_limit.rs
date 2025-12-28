@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 use axum::{
     body::Body,
@@ -392,6 +393,9 @@ impl RateLimiter {
         // Each request is stored with its timestamp as the score
         let _window_start = now - config.window_secs;
 
+        // Generate a UUID for unique entry identification
+        let nonce = Uuid::new_v4().to_string();
+
         // Lua script for atomic rate limiting operation:
         // 1. Remove expired entries (older than window)
         // 2. Count current entries
@@ -403,6 +407,7 @@ impl RateLimiter {
             local now = tonumber(ARGV[1])
             local window = tonumber(ARGV[2])
             local max_requests = tonumber(ARGV[3])
+            local nonce = ARGV[4]
             local window_start = now - window
 
             -- Remove old entries
@@ -412,8 +417,8 @@ impl RateLimiter {
             local current = redis.call('ZCARD', key)
 
             if current < max_requests then
-                -- Add new request with current timestamp
-                redis.call('ZADD', key, now, now .. ':' .. math.random())
+                -- Add new request with current timestamp and UUID nonce for uniqueness
+                redis.call('ZADD', key, now, now .. ':' .. nonce)
                 -- Set expiry on the key
                 redis.call('EXPIRE', key, window)
                 -- Return remaining requests
@@ -436,6 +441,7 @@ impl RateLimiter {
             .arg(now)
             .arg(config.window_secs)
             .arg(config.max_requests)
+            .arg(&nonce)
             .invoke_async(&mut conn)
             .await
         {
@@ -500,6 +506,9 @@ pub fn extract_client_ip_option(
 /// comes from a trusted proxy IP. This prevents IP spoofing attacks when the
 /// service is exposed directly to the internet.
 ///
+/// When `trust_private` is enabled, private IPs from forwarding headers are also
+/// accepted, allowing proper tracking of internal service clients.
+///
 /// # Arguments
 /// * `headers` - Request headers
 /// * `connect_info` - Connection info containing the direct peer IP
@@ -534,14 +543,18 @@ pub fn extract_client_ip_trusted(
         .unwrap_or(false);
 
     if should_trust_headers {
+        // When trust_private is enabled, also accept private IPs from forwarding headers
+        // (allows tracking internal service clients behind trusted proxies)
+        let accept_private = trusted_proxies.trust_private;
+
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs; pick the first *public* valid one
-                // to prevent IP spoofing with private addresses
+                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                // When not trusting private, skip private addresses to prevent spoofing
                 for ip in value.split(',').map(|s| s.trim()) {
                     if let Ok(parsed) = ip.parse::<IpAddr>() {
-                        if !is_private_or_localhost(&parsed) {
+                        if accept_private || !is_private_or_localhost(&parsed) {
                             return ip.to_string();
                         }
                     }
@@ -554,7 +567,7 @@ pub fn extract_client_ip_trusted(
             if let Ok(value) = real_ip.to_str() {
                 let ip = value.trim();
                 if let Ok(parsed) = ip.parse::<IpAddr>() {
-                    if !is_private_or_localhost(&parsed) {
+                    if accept_private || !is_private_or_localhost(&parsed) {
                         return ip.to_string();
                     }
                 }
@@ -597,14 +610,18 @@ pub fn extract_client_ip_trusted_option(
         .unwrap_or(false);
 
     if should_trust_headers {
+        // When trust_private is enabled, also accept private IPs from forwarding headers
+        // (allows tracking internal service clients behind trusted proxies)
+        let accept_private = trusted_proxies.trust_private;
+
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs; pick the first *public* valid one
-                // to prevent IP spoofing with private addresses
+                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                // When not trusting private, skip private addresses to prevent spoofing
                 for ip in value.split(',').map(|s| s.trim()) {
                     if let Ok(parsed) = ip.parse::<IpAddr>() {
-                        if !is_private_or_localhost(&parsed) {
+                        if accept_private || !is_private_or_localhost(&parsed) {
                             return Some(ip.to_string());
                         }
                     }
@@ -617,7 +634,7 @@ pub fn extract_client_ip_trusted_option(
             if let Ok(value) = real_ip.to_str() {
                 let ip = value.trim();
                 if let Ok(parsed) = ip.parse::<IpAddr>() {
-                    if !is_private_or_localhost(&parsed) {
+                    if accept_private || !is_private_or_localhost(&parsed) {
                         return Some(ip.to_string());
                     }
                 }
@@ -676,15 +693,23 @@ pub async fn login_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Fall back to direct peer IP if forwarded headers unavailable
-    let client_ip = extract_client_ip_option(&headers, Some(&ConnectInfo(addr)))
-        .unwrap_or_else(|| addr.ip().to_string());
+    // Get client IP - if we can't determine it, skip rate limiting rather than
+    // putting all unknown clients in a shared bucket
+    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
+        Some(ip) => ip,
+        None => {
+            warn!("Could not determine client IP for login rate limiting, skipping rate limit");
+            return next.run(request).await;
+        }
+    };
 
     match state.limiter.check(&client_ip, &state.login_config).await {
         Ok(remaining) => {
             let mut response = next.run(request).await;
             // Add rate limit headers to response (handle potential invalid values gracefully)
-            if let Ok(v) = axum::http::HeaderValue::from_str(&state.login_config.max_requests.to_string()) {
+            if let Ok(v) =
+                axum::http::HeaderValue::from_str(&state.login_config.max_requests.to_string())
+            {
                 response.headers_mut().insert("X-RateLimit-Limit", v);
             }
             if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
@@ -707,7 +732,26 @@ pub async fn login_rate_limit(
                 retry_after = retry_after,
                 "Login rate limit exceeded"
             );
-            ApiError::RateLimited { retry_after }.into_response()
+            // Build rate-limited response with comprehensive headers
+            let mut response = ApiError::RateLimited { retry_after }.into_response();
+            // Add rate limit headers to help clients understand limits
+            if let Ok(v) =
+                axum::http::HeaderValue::from_str(&state.login_config.max_requests.to_string())
+            {
+                response.headers_mut().insert("X-RateLimit-Limit", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str("0") {
+                response.headers_mut().insert("X-RateLimit-Remaining", v);
+            }
+            let reset_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_add(retry_after);
+            if let Ok(v) = axum::http::HeaderValue::from_str(&reset_at.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Reset", v);
+            }
+            response
         }
     }
 }
@@ -720,9 +764,17 @@ pub async fn register_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Fall back to direct peer IP if forwarded headers unavailable
-    let client_ip = extract_client_ip_option(&headers, Some(&ConnectInfo(addr)))
-        .unwrap_or_else(|| addr.ip().to_string());
+    // Get client IP - if we can't determine it, skip rate limiting rather than
+    // putting all unknown clients in a shared bucket
+    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
+        Some(ip) => ip,
+        None => {
+            warn!(
+                "Could not determine client IP for registration rate limiting, skipping rate limit"
+            );
+            return next.run(request).await;
+        }
+    };
 
     match state
         .limiter
@@ -732,7 +784,9 @@ pub async fn register_rate_limit(
         Ok(remaining) => {
             let mut response = next.run(request).await;
             // Add rate limit headers to response (handle potential invalid values gracefully)
-            if let Ok(v) = axum::http::HeaderValue::from_str(&state.register_config.max_requests.to_string()) {
+            if let Ok(v) =
+                axum::http::HeaderValue::from_str(&state.register_config.max_requests.to_string())
+            {
                 response.headers_mut().insert("X-RateLimit-Limit", v);
             }
             if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
@@ -755,7 +809,26 @@ pub async fn register_rate_limit(
                 retry_after = retry_after,
                 "Registration rate limit exceeded"
             );
-            ApiError::RateLimited { retry_after }.into_response()
+            // Build rate-limited response with comprehensive headers
+            let mut response = ApiError::RateLimited { retry_after }.into_response();
+            // Add rate limit headers to help clients understand limits
+            if let Ok(v) =
+                axum::http::HeaderValue::from_str(&state.register_config.max_requests.to_string())
+            {
+                response.headers_mut().insert("X-RateLimit-Limit", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str("0") {
+                response.headers_mut().insert("X-RateLimit-Remaining", v);
+            }
+            let reset_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_add(retry_after);
+            if let Ok(v) = axum::http::HeaderValue::from_str(&reset_at.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Reset", v);
+            }
+            response
         }
     }
 }

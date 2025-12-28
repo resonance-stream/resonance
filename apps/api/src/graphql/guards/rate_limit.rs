@@ -167,7 +167,22 @@ impl Guard for RateLimitGuard {
                     "GraphQL rate limit exceeded"
                 );
 
-                // Return a GraphQL error with rate limit information
+                // Get the config for this limit type to include in the error
+                let (limit, _window) = match self.limit_type {
+                    RateLimitType::Login => (5u32, 60u64),
+                    RateLimitType::Register => (3, 3600),
+                    RateLimitType::RefreshToken => (10, 60),
+                };
+
+                // Calculate reset timestamp
+                let reset_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .saturating_add(retry_after);
+
+                // Return a GraphQL error with comprehensive rate limit information
+                // These mirror the HTTP headers: X-RateLimit-Limit, X-RateLimit-Remaining, etc.
                 Err(async_graphql::Error::new(format!(
                     "Rate limit exceeded. Please try again in {} seconds.",
                     retry_after
@@ -175,6 +190,9 @@ impl Guard for RateLimitGuard {
                 .extend_with(|_, e| {
                     e.set("code", "RATE_LIMITED");
                     e.set("retry_after", retry_after);
+                    e.set("limit", limit);
+                    e.set("remaining", 0u32);
+                    e.set("reset_at", reset_at);
                 }))
             }
         }

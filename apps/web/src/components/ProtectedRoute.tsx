@@ -6,6 +6,7 @@
  * Optionally requires admin role for certain routes.
  */
 
+import { useState, useEffect } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import type { ReactNode } from 'react'
@@ -67,13 +68,21 @@ export function ProtectedRoute({
   const status = useAuthStore((state) => state.status)
   const user = useAuthStore((state) => state.user)
 
-  // Show loading while checking auth state (initial load or refreshing)
-  if (status === 'idle' || status === 'loading') {
+  // Track hydration state to prevent infinite loading
+  const [hasHydrated, setHasHydrated] = useState(() => useAuthStore.persist.hasHydrated())
+
+  useEffect(() => {
+    const unsub = useAuthStore.persist.onFinishHydration(() => setHasHydrated(true))
+    return unsub
+  }, [])
+
+  // Show loading only while Zustand persistence is hydrating or during active loading
+  if (!hasHydrated || status === 'loading') {
     return <AuthLoadingFallback />
   }
 
-  // Not authenticated - redirect to login with return path
-  if (status === 'unauthenticated' || !user) {
+  // If hydration is complete but we're still idle, treat as unauthenticated
+  if (status === 'idle' || status === 'unauthenticated' || !user) {
     return (
       <Navigate
         to={redirectTo}

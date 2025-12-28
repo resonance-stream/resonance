@@ -103,7 +103,12 @@ impl AuthConfig {
     }
 }
 
+/// Maximum allowed token TTL (90 days in seconds)
+/// Prevents configuration errors from creating excessively long-lived tokens
+const MAX_TOKEN_TTL_SECS: i64 = 90 * 24 * 3600;
+
 /// Parse duration strings like "15m", "7d", "24h" to seconds
+/// Caps the result to MAX_TOKEN_TTL_SECS to prevent excessively long values
 fn parse_duration_string(s: &str) -> Option<i64> {
     let s = s.trim();
     if s.is_empty() {
@@ -119,14 +124,17 @@ fn parse_duration_string(s: &str) -> Option<i64> {
     }
 
     // Use checked_mul to prevent integer overflow
-    match unit {
+    let secs = match unit {
         "s" => Some(num),
         "m" => num.checked_mul(60),
         "h" => num.checked_mul(3600),
         "d" => num.checked_mul(24)?.checked_mul(3600),
         "w" => num.checked_mul(7)?.checked_mul(24)?.checked_mul(3600),
         _ => None,
-    }
+    };
+
+    // Cap to maximum allowed TTL
+    secs.map(|s| s.min(MAX_TOKEN_TTL_SECS))
 }
 
 /// Authentication service providing registration, login, and token management

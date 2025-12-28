@@ -72,5 +72,6 @@ export type AuthErrorCode =
   | 'TOKEN_EXPIRED'
   | 'TOKEN_INVALID'
   | 'SESSION_EXPIRED'
+  | 'RATE_LIMITED'
   | 'NETWORK_ERROR'
   | 'UNKNOWN_ERROR'
