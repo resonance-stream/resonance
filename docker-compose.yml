@@ -10,7 +10,7 @@ services:
     container_name: resonance-api
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      - "${API_PORT:-4441}:8080"
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-resonance}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resonance}
       - REDIS_URL=redis://redis:6379
@@ -152,6 +152,20 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
+
+  # Web frontend (port 4440 = A440 Hz, the standard musical tuning pitch)
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    container_name: resonance-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-4440}:80"
+    depends_on:
+      - resonance
+    networks:
+      - resonance-network
 
 # Named volumes for persistent data
 volumes:

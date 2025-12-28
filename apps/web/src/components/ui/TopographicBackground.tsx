@@ -18,15 +18,22 @@ export function TopographicBackground({ className = '' }: TopographicBackgroundP
 
     const noise3D = createNoise3D();
 
-    // Configuration
+    // Configuration - inspired by real topographic maps
     const config = {
-      scale: 0.003,          // Noise scale (smaller = larger features)
-      speed: 0.0002,         // Animation speed
-      contourLevels: 12,     // Number of contour lines
-      lineWidth: 1,          // Line thickness
-      primaryColor: [16, 185, 129],   // Mint RGB
-      accentColor: [37, 99, 235],     // Navy RGB
-      baseOpacity: 0.15,     // Base line opacity
+      scale: 0.002,          // Noise scale (smaller = larger features)
+      speed: 0.00015,        // Animation speed (slower for subtlety)
+      contourLevels: 20,     // More contour lines for detail
+      majorInterval: 5,      // Every 5th line is a major contour
+      baseOpacity: 0.12,     // Base line opacity
+      // Color palette - earth tones with accent colors
+      colors: [
+        { rgb: [139, 90, 43], name: 'sienna' },      // Brown - low elevation
+        { rgb: [160, 120, 60], name: 'tan' },        // Tan
+        { rgb: [16, 185, 129], name: 'mint' },       // Mint - mid elevation
+        { rgb: [34, 139, 134], name: 'teal' },       // Teal
+        { rgb: [37, 99, 235], name: 'navy' },        // Navy - high elevation
+        { rgb: [88, 80, 140], name: 'purple' },      // Purple accent
+      ],
     };
 
     let time = 0;
@@ -61,13 +68,33 @@ export function TopographicBackground({ className = '' }: TopographicBackgroundP
       for (let level = 0; level < config.contourLevels; level++) {
         const threshold = -1 + (2 * level) / (config.contourLevels - 1);
 
-        // Alternate between mint and navy, with mint more prominent
-        const usePrimary = level % 4 !== 0; // 3 mint, 1 navy
-        const color = usePrimary ? config.primaryColor : config.accentColor;
-        const opacity = config.baseOpacity * (usePrimary ? 1 : 0.8);
+        // Determine if this is a major contour line (every 5th)
+        const isMajor = level % config.majorInterval === 0;
 
-        ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${opacity})`;
-        ctx.lineWidth = config.lineWidth;
+        // Color selection based on elevation level with smooth transitions
+        const normalizedLevel = level / (config.contourLevels - 1);
+        const colorIndex = Math.floor(normalizedLevel * (config.colors.length - 1));
+        const nextColorIndex = Math.min(colorIndex + 1, config.colors.length - 1);
+        const colorBlend = (normalizedLevel * (config.colors.length - 1)) % 1;
+
+        // Interpolate between adjacent colors for smooth gradients
+        const color1 = config.colors[colorIndex]!.rgb;
+        const color2 = config.colors[nextColorIndex]!.rgb;
+        const blendedColor = [
+          Math.round(color1[0]! + (color2[0]! - color1[0]!) * colorBlend),
+          Math.round(color1[1]! + (color2[1]! - color1[1]!) * colorBlend),
+          Math.round(color1[2]! + (color2[2]! - color1[2]!) * colorBlend),
+        ];
+
+        // Vary opacity - major lines more visible, add slight randomness per level
+        const opacityVariation = 0.8 + (Math.sin(level * 1.7) * 0.2 + 0.2);
+        const opacity = config.baseOpacity * (isMajor ? 1.8 : opacityVariation);
+
+        // Line width - major contours are thicker
+        const lineWidth = isMajor ? 1.5 : 0.8;
+
+        ctx.strokeStyle = `rgba(${blendedColor[0]}, ${blendedColor[1]}, ${blendedColor[2]}, ${opacity})`;
+        ctx.lineWidth = lineWidth;
         ctx.beginPath();
 
         // Marching squares algorithm
