@@ -17,9 +17,9 @@ function getGreeting(): string {
 }
 
 export default function Home() {
-  const { data: recentAlbums, isLoading: loadingAlbums } = useRecentAlbums(6)
-  const { data: playlists, isLoading: loadingPlaylists } = useMyPlaylists({ limit: 6 })
-  const { data: topTracks, isLoading: loadingTopTracks } = useTopTracks(6)
+  const { data: recentAlbums, isLoading: loadingAlbums, error: albumsError } = useRecentAlbums(6)
+  const { data: playlists, isLoading: loadingPlaylists, error: playlistsError } = useMyPlaylists({ limit: 6 })
+  const { data: topTracks, isLoading: loadingTopTracks, error: tracksError } = useTopTracks(6)
 
   const setTrack = usePlayerStore((s) => s.setTrack)
   const setQueue = usePlayerStore((s) => s.setQueue)
@@ -60,6 +60,8 @@ export default function Home() {
             Array.from({ length: 6 }).map((_, i) => (
               <SkeletonCard key={i} />
             ))
+          ) : albumsError ? (
+            <p className="text-text-muted col-span-full">Failed to load albums</p>
           ) : recentAlbums?.length ? (
             recentAlbums.map((album) => (
               <MediaCard
@@ -87,6 +89,8 @@ export default function Home() {
             Array.from({ length: 6 }).map((_, i) => (
               <SkeletonCard key={i} />
             ))
+          ) : playlistsError ? (
+            <p className="text-text-muted col-span-full">Failed to load playlists</p>
           ) : playlists?.length ? (
             playlists.map((playlist: GqlPlaylist) => (
               <MediaCard
@@ -113,6 +117,8 @@ export default function Home() {
             Array.from({ length: 6 }).map((_, i) => (
               <SkeletonCard key={i} />
             ))
+          ) : tracksError ? (
+            <p className="text-text-muted col-span-full">Failed to load top tracks</p>
           ) : topTracks?.length ? (
             topTracks.map((track) => (
               <MediaCard
