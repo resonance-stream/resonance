@@ -82,8 +82,9 @@ export default function Register(): JSX.Element {
       return
     }
 
-    // Display name is required - use email prefix as fallback
-    const finalDisplayName = displayName.trim() || email.split('@')[0]
+    // Display name is required - use email prefix as fallback (handle empty prefix)
+    const emailPrefix = email.split('@')[0] ?? ''
+    const finalDisplayName = displayName.trim() || (emailPrefix.length > 0 ? emailPrefix : email) || 'user'
 
     try {
       await register({

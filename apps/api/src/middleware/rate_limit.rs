@@ -184,12 +184,15 @@ impl RateLimitConfig {
 struct RateLimitEntry {
     /// Timestamps of requests within the current window (relative to creation)
     timestamps: Vec<Instant>,
+    /// When this entry expires (for deterministic cleanup)
+    expires_at: Instant,
 }
 
 impl RateLimitEntry {
-    fn new() -> Self {
+    fn new(window: Duration) -> Self {
         Self {
             timestamps: Vec::new(),
+            expires_at: Instant::now() + window,
         }
     }
 
@@ -207,6 +210,8 @@ impl RateLimitEntry {
         if current_count < max_requests {
             // Add new request
             self.timestamps.push(now);
+            // Extend expiry to cover this new request
+            self.expires_at = now + window;
             Ok(max_requests - current_count - 1)
         } else {
             // Rate limited - calculate retry after based on oldest entry
@@ -220,11 +225,9 @@ impl RateLimitEntry {
         }
     }
 
-    /// Check if this entry is empty (all timestamps expired)
-    fn is_expired(&self, window: Duration) -> bool {
-        let now = Instant::now();
-        let window_start = now.checked_sub(window).unwrap_or(now);
-        self.timestamps.iter().all(|&ts| ts <= window_start)
+    /// Check if this entry has expired (can be safely cleaned up)
+    fn is_expired(&self) -> bool {
+        Instant::now() >= self.expires_at
     }
 }
 
@@ -237,8 +240,6 @@ impl RateLimitEntry {
 pub struct InMemoryRateLimiter {
     /// Map of (key_prefix, client_id) -> rate limit entries
     entries: RwLock<HashMap<String, RateLimitEntry>>,
-    /// Maximum window duration for cleanup purposes
-    max_window: Duration,
     /// Last cleanup time
     last_cleanup: RwLock<Instant>,
 }
@@ -254,7 +255,6 @@ impl InMemoryRateLimiter {
     pub fn new() -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
-            max_window: Duration::from_secs(3600), // Default to 1 hour for cleanup
             last_cleanup: RwLock::new(Instant::now()),
         }
     }
@@ -267,12 +267,12 @@ impl InMemoryRateLimiter {
         let window = Duration::from_secs(config.window_secs);
 
         // Periodically cleanup expired entries (every 60 seconds)
-        self.maybe_cleanup(window).await;
+        self.maybe_cleanup().await;
 
         let mut entries = self.entries.write().await;
         let entry = entries
             .entry(full_key.clone())
-            .or_insert_with(RateLimitEntry::new);
+            .or_insert_with(|| RateLimitEntry::new(window));
 
         let result = entry.check_and_record(config.max_requests, window);
 
@@ -289,7 +289,7 @@ impl InMemoryRateLimiter {
     }
 
     /// Cleanup expired entries to prevent unbounded memory growth
-    async fn maybe_cleanup(&self, window: Duration) {
+    async fn maybe_cleanup(&self) {
         let cleanup_interval = Duration::from_secs(60);
 
         {
@@ -313,9 +313,8 @@ impl InMemoryRateLimiter {
         let mut entries = self.entries.write().await;
         let initial_count = entries.len();
 
-        // Use the larger of the provided window or max_window for cleanup
-        let cleanup_window = window.max(self.max_window);
-        entries.retain(|_, entry| !entry.is_expired(cleanup_window));
+        // Each entry tracks its own expires_at, so cleanup is deterministic
+        entries.retain(|_, entry| !entry.is_expired());
 
         let removed = initial_count - entries.len();
         if removed > 0 {
@@ -384,10 +383,26 @@ impl RateLimiter {
             }
         };
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // Get current time from Redis server to prevent clock skew
+        // TIME command returns [seconds, microseconds] as strings
+        let now: u64 = match redis::cmd("TIME")
+            .query_async::<_, Vec<String>>(&mut conn)
+            .await
+        {
+            Ok(time) if !time.is_empty() => time[0].parse().unwrap_or_else(|_| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            }),
+            _ => {
+                // Fallback to system time if Redis TIME fails
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            }
+        };
 
         // Sliding window algorithm using Redis sorted sets
         // Each request is stored with its timestamp as the score
@@ -429,6 +444,8 @@ impl RateLimiter {
                 if #oldest >= 2 then
                     local oldest_time = tonumber(oldest[2])
                     local retry_after = oldest_time + window - now
+                    -- Clamp to minimum of 1 second to prevent zero-second retries
+                    if retry_after < 1 then retry_after = 1 end
                     return -retry_after
                 end
                 return -window
@@ -461,7 +478,8 @@ impl RateLimiter {
             debug!(key = %full_key, remaining = result, "Rate limit check passed");
             Ok(result as u32)
         } else {
-            let retry_after = (-result) as u64;
+            // Clamp retry_after to minimum of 1 second (defense in depth)
+            let retry_after = ((-result) as u64).max(1);
             debug!(key = %full_key, retry_after = retry_after, "Rate limit exceeded");
             Err(retry_after)
         }
@@ -743,6 +761,12 @@ pub async fn login_rate_limit(
             if let Ok(v) = axum::http::HeaderValue::from_str("0") {
                 response.headers_mut().insert("X-RateLimit-Remaining", v);
             }
+            // Add standard Retry-After header (RFC 6585)
+            if let Ok(v) = axum::http::HeaderValue::from_str(&retry_after.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
+            }
             let reset_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -819,6 +843,12 @@ pub async fn register_rate_limit(
             }
             if let Ok(v) = axum::http::HeaderValue::from_str("0") {
                 response.headers_mut().insert("X-RateLimit-Remaining", v);
+            }
+            // Add standard Retry-After header (RFC 6585)
+            if let Ok(v) = axum::http::HeaderValue::from_str(&retry_after.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
             }
             let reset_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1047,8 +1077,8 @@ mod tests {
 
     #[test]
     fn test_rate_limit_entry_check_and_record() {
-        let mut entry = RateLimitEntry::new();
         let window = Duration::from_secs(60);
+        let mut entry = RateLimitEntry::new(window);
 
         // First request should succeed
         let result = entry.check_and_record(3, window);
@@ -1069,21 +1099,15 @@ mod tests {
 
     #[test]
     fn test_rate_limit_entry_is_expired() {
-        let mut entry = RateLimitEntry::new();
         let window = Duration::from_secs(60);
 
-        // Empty entry is expired
-        assert!(entry.is_expired(window));
+        // New entry is not expired (expires_at is in the future)
+        let entry = RateLimitEntry::new(window);
+        assert!(!entry.is_expired());
 
-        // Add a timestamp
-        entry.timestamps.push(Instant::now());
-        assert!(!entry.is_expired(window));
-
-        // Entry with very old timestamp is expired
-        let mut old_entry = RateLimitEntry::new();
-        old_entry
-            .timestamps
-            .push(Instant::now() - Duration::from_secs(120));
-        assert!(old_entry.is_expired(window));
+        // Entry with expires_at in the past is expired
+        let mut old_entry = RateLimitEntry::new(window);
+        old_entry.expires_at = Instant::now() - Duration::from_secs(1);
+        assert!(old_entry.is_expired());
     }
 }

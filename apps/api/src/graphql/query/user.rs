@@ -55,7 +55,11 @@ impl UserQuery {
         .bind(claims.sub)
         .fetch_optional(pool)
         .await
-        .map_err(|e| async_graphql::Error::new(format!("database error: {}", e)))?
+        .map_err(|e| {
+            // Log the full error server-side but return a generic message
+            tracing::error!(error = %e, user_id = %claims.sub, "Failed to fetch user");
+            async_graphql::Error::new("An unexpected error occurred")
+        })?
         .ok_or_else(|| async_graphql::Error::new("user not found"))?;
 
         // Update last seen timestamp asynchronously (fire and forget)

@@ -173,8 +173,8 @@ const MAX_EXPIRY_BUFFER_MS = 90 * 24 * 60 * 60 * 1000
 
 /**
  * Parse DateTime string to timestamp with buffer for early refresh
- * Returns null if the date is invalid to prevent NaN propagation
- * Clamps the result to ensure it's within a reasonable range
+ * Returns null if the date is invalid or already expired to prevent invalid state
+ * Clamps the result to a maximum reasonable duration
  */
 function parseExpiresAt(expiresAt: string): number | null {
   // Parse ISO8601 DateTime and subtract 60 seconds as buffer
@@ -188,14 +188,16 @@ function parseExpiresAt(expiresAt: string): number | null {
   const bufferedExpiry = timestamp - 60 * 1000
   const now = Date.now()
 
-  // Clamp to ensure the expiry is in the future (at least 1 second from now)
-  // This prevents issues with tokens that are already expired or about to expire
-  const minExpiry = now + 1000
+  // Reject tokens that are already expired (buffered expiry in the past)
+  // This prevents accepting invalid tokens with clamped expiries
+  if (bufferedExpiry <= now) {
+    return null
+  }
 
-  // Also cap to a maximum reasonable duration (90 days from now)
+  // Cap to a maximum reasonable duration (90 days from now)
   const maxExpiry = now + MAX_EXPIRY_BUFFER_MS
 
-  return Math.max(minExpiry, Math.min(bufferedExpiry, maxExpiry))
+  return Math.min(bufferedExpiry, maxExpiry)
 }
 
 /**
@@ -270,7 +272,9 @@ function extractUserFromPayload(payload: AuthPayloadResponse): User | null {
   }
 
   // Use email prefix as username (backend doesn't return username yet)
-  const username = payload.email.split('@')[0] ?? payload.email
+  // Handle edge cases like emails starting with @ or empty emails
+  const emailPrefix = payload.email.split('@')[0]
+  const username = emailPrefix && emailPrefix.length > 0 ? emailPrefix : payload.email || 'user'
 
   return {
     id: payload.id,
@@ -358,7 +362,7 @@ export const useAuthStore = create<AuthState>()(
               input: {
                 email: credentials.email,
                 password: credentials.password,
-                display_name: credentials.displayName ?? credentials.email.split('@')[0],
+                display_name: credentials.displayName ?? (credentials.email.split('@')[0] || credentials.email || 'user'),
               },
             }
           )
@@ -526,7 +530,15 @@ export const useAuthStore = create<AuthState>()(
             user: response.me,
             status: 'authenticated',
           })
-        } catch {
+        } catch (error) {
+          // Check if this is a network error - don't attempt refresh on transient failures
+          const authError = parseAuthError(error)
+          if (authError.code === 'NETWORK_ERROR') {
+            // Keep the session intact so user can retry when connectivity returns
+            set({ status: 'authenticated', error: authError })
+            return
+          }
+
           // Token might be expired, try refresh
           const refreshed = await get().refreshAccessToken()
           if (refreshed) {
@@ -614,7 +626,19 @@ export const useAuthStore = create<AuthState>()(
         if (Date.now() >= expiresAt) {
           // Token expired, set loading state and try to refresh
           set({ status: 'loading' })
-          void refresh()
+
+          void refresh().then((ok) => {
+            if (ok) {
+              // Refresh succeeded, fetch user data
+              void fetchUser()
+            } else {
+              // Refresh failed - ensure we're not stuck in loading state
+              const { status } = get()
+              if (status === 'loading') {
+                set({ status: 'unauthenticated' })
+              }
+            }
+          })
         } else {
           // Token still valid, set auth header and fetch user if needed
           setAuthToken(accessToken)

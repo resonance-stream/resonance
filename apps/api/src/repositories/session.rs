@@ -233,15 +233,17 @@ impl SessionRepository {
     /// ```
     #[allow(dead_code)] // Used by background worker for session cleanup
     pub async fn delete_expired(&self, batch_size: i64) -> Result<u64, sqlx::Error> {
+        // Use CTE with DELETE...USING to properly handle FOR UPDATE SKIP LOCKED
+        // The subquery approach doesn't correctly propagate locks to the DELETE
         let result = sqlx::query(
             r#"
-            DELETE FROM sessions
-            WHERE id IN (
+            WITH to_delete AS (
                 SELECT id FROM sessions
                 WHERE expires_at < NOW()
                 LIMIT $1
                 FOR UPDATE SKIP LOCKED
             )
+            DELETE FROM sessions USING to_delete WHERE sessions.id = to_delete.id
             "#,
         )
         .bind(batch_size)
@@ -295,16 +297,18 @@ impl SessionRepository {
         older_than_days: i32,
         batch_size: i64,
     ) -> Result<u64, sqlx::Error> {
+        // Use CTE with DELETE...USING to properly handle FOR UPDATE SKIP LOCKED
+        // The subquery approach doesn't correctly propagate locks to the DELETE
         let result = sqlx::query(
             r#"
-            DELETE FROM sessions
-            WHERE id IN (
+            WITH to_delete AS (
                 SELECT id FROM sessions
                 WHERE is_active = false
                   AND last_active_at < NOW() - make_interval(days => $1)
                 LIMIT $2
                 FOR UPDATE SKIP LOCKED
             )
+            DELETE FROM sessions USING to_delete WHERE sessions.id = to_delete.id
             "#,
         )
         .bind(older_than_days)

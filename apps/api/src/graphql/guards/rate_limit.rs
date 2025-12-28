@@ -65,6 +65,15 @@ impl GraphQLRateLimiter {
     pub async fn check_refresh(&self, client_ip: &str) -> Result<u32, u64> {
         self.limiter.check(client_ip, &self.refresh_config).await
     }
+
+    /// Get the rate limit config for a specific limit type
+    pub fn config_for(&self, limit_type: RateLimitType) -> &RateLimitConfig {
+        match limit_type {
+            RateLimitType::Login => &self.login_config,
+            RateLimitType::Register => &self.register_config,
+            RateLimitType::RefreshToken => &self.refresh_config,
+        }
+    }
 }
 
 /// Type of rate limit to apply
@@ -168,11 +177,8 @@ impl Guard for RateLimitGuard {
                 );
 
                 // Get the config for this limit type to include in the error
-                let (limit, _window) = match self.limit_type {
-                    RateLimitType::Login => (5u32, 60u64),
-                    RateLimitType::Register => (3, 3600),
-                    RateLimitType::RefreshToken => (10, 60),
-                };
+                let config = rate_limiter.config_for(self.limit_type);
+                let limit = config.max_requests;
 
                 // Calculate reset timestamp
                 let reset_at = std::time::SystemTime::now()

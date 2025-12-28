@@ -191,12 +191,21 @@ impl IntoResponse for AuthRejection {
 }
 
 /// Extract the bearer token from the Authorization header
+///
+/// Per RFC 7235, the authorization scheme is case-insensitive,
+/// so we accept "Bearer", "bearer", "BEARER", etc.
 fn extract_bearer_token(parts: &Parts) -> Option<&str> {
-    parts
+    let value = parts
         .headers
         .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(|value| value.to_str().ok())?;
+
+    // Check for "Bearer " prefix case-insensitively
+    if value.len() > 7 && value[..7].eq_ignore_ascii_case("Bearer ") {
+        Some(&value[7..])
+    } else {
+        None
+    }
 }
 
 #[async_trait]

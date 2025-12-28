@@ -72,7 +72,15 @@ export function ProtectedRoute({
   const [hasHydrated, setHasHydrated] = useState(() => useAuthStore.persist.hasHydrated())
 
   useEffect(() => {
-    const unsub = useAuthStore.persist.onFinishHydration(() => setHasHydrated(true))
+    // Avoid race: hydration may finish between useState init and this effect
+    if (useAuthStore.persist.hasHydrated()) {
+      setHasHydrated(true)
+      return
+    }
+
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setHasHydrated(true)
+    })
     return unsub
   }, [])
 
