@@ -317,7 +317,7 @@ where
         match session_repo.is_active(claims.sid, claims.sub).await {
             Ok(true) => {} // Session is active, continue
             Ok(false) => {
-                tracing::debug!(session_id = %claims.sid, "Session no longer active in MaybeAuthUser");
+                tracing::debug!("Session no longer active in MaybeAuthUser");
                 return Ok(MaybeAuthUser {
                     user: None,
                     claims: None,

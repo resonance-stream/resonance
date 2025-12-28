@@ -305,7 +305,15 @@ export const useAuthStore = create<AuthState>()(
         const { accessToken } = get()
 
         if (!accessToken) {
-          set({ status: 'unauthenticated' })
+          // Fully clear state when no token
+          setAuthToken(null)
+          set({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            status: 'unauthenticated',
+          })
           return
         }
 
@@ -319,7 +327,7 @@ export const useAuthStore = create<AuthState>()(
             user: response.me,
             status: 'authenticated',
           })
-        } catch {
+        } catch (error) {
           // Token might be expired, try refresh
           const refreshed = await get().refreshAccessToken()
           if (refreshed) {
@@ -335,11 +343,26 @@ export const useAuthStore = create<AuthState>()(
                 })
                 return
               }
-            } catch {
-              // Retry also failed
+            } catch (retryError) {
+              const authError = parseAuthError(retryError)
+
+              // Don't log the user out on transient network errors
+              if (authError.code === 'NETWORK_ERROR') {
+                set({ status: 'authenticated', error: authError })
+                return
+              }
             }
           }
-          set({ status: 'unauthenticated' })
+
+          // Ensure we don't keep sending a stale Authorization header / stale tokens
+          setAuthToken(null)
+          set({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            status: 'unauthenticated',
+          })
         }
       },
 
@@ -376,6 +399,8 @@ export const useAuthStore = create<AuthState>()(
             set({ status: 'authenticated' })
           }
         } else {
+          // Ensure we don't keep a stale Authorization header
+          setAuthToken(null)
           set({ status: 'unauthenticated' })
         }
       },

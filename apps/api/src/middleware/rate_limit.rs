@@ -536,10 +536,8 @@ pub fn extract_client_ip_trusted(
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs, take the first (client IP)
-                if let Some(ip) = value.split(',').next() {
-                    let ip = ip.trim();
-                    // Validate it's a proper IP
+                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                for ip in value.split(',').map(|s| s.trim()) {
                     if ip.parse::<IpAddr>().is_ok() {
                         return ip.to_string();
                     }
@@ -596,10 +594,8 @@ pub fn extract_client_ip_trusted_option(
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs, take the first (client IP)
-                if let Some(ip) = value.split(',').next() {
-                    let ip = ip.trim();
-                    // Validate it's a proper IP
+                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                for ip in value.split(',').map(|s| s.trim()) {
                     if ip.parse::<IpAddr>().is_ok() {
                         return Some(ip.to_string());
                     }
@@ -669,33 +665,23 @@ pub async fn login_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Use option variant - skip rate limiting if IP cannot be determined
-    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
-        Some(ip) => ip,
-        None => {
-            // Cannot determine client IP - skip rate limiting rather than rate
-            // limiting all unknown IPs together (which could cause DoS)
-            warn!("Skipping login rate limiting: could not determine client IP");
-            return next.run(request).await;
-        }
-    };
+    // Fall back to direct peer IP if forwarded headers unavailable
+    let client_ip = extract_client_ip_option(&headers, Some(&ConnectInfo(addr)))
+        .unwrap_or_else(|| addr.ip().to_string());
 
     match state.limiter.check(&client_ip, &state.login_config).await {
         Ok(remaining) => {
             let mut response = next.run(request).await;
-            // Add rate limit headers to response
-            response.headers_mut().insert(
-                "X-RateLimit-Limit",
-                state.login_config.max_requests.to_string().parse().unwrap(),
-            );
-            response.headers_mut().insert(
-                "X-RateLimit-Remaining",
-                remaining.to_string().parse().unwrap(),
-            );
-            response.headers_mut().insert(
-                "X-RateLimit-Reset",
-                state.login_config.window_secs.to_string().parse().unwrap(),
-            );
+            // Add rate limit headers to response (handle potential invalid values gracefully)
+            if let Ok(v) = axum::http::HeaderValue::from_str(&state.login_config.max_requests.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Limit", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Remaining", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str(&state.login_config.window_secs.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Reset", v);
+            }
             response
         }
         Err(retry_after) => {
@@ -717,16 +703,9 @@ pub async fn register_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Use option variant - skip rate limiting if IP cannot be determined
-    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
-        Some(ip) => ip,
-        None => {
-            // Cannot determine client IP - skip rate limiting rather than rate
-            // limiting all unknown IPs together (which could cause DoS)
-            warn!("Skipping registration rate limiting: could not determine client IP");
-            return next.run(request).await;
-        }
-    };
+    // Fall back to direct peer IP if forwarded headers unavailable
+    let client_ip = extract_client_ip_option(&headers, Some(&ConnectInfo(addr)))
+        .unwrap_or_else(|| addr.ip().to_string());
 
     match state
         .limiter
@@ -735,29 +714,16 @@ pub async fn register_rate_limit(
     {
         Ok(remaining) => {
             let mut response = next.run(request).await;
-            // Add rate limit headers to response
-            response.headers_mut().insert(
-                "X-RateLimit-Limit",
-                state
-                    .register_config
-                    .max_requests
-                    .to_string()
-                    .parse()
-                    .unwrap(),
-            );
-            response.headers_mut().insert(
-                "X-RateLimit-Remaining",
-                remaining.to_string().parse().unwrap(),
-            );
-            response.headers_mut().insert(
-                "X-RateLimit-Reset",
-                state
-                    .register_config
-                    .window_secs
-                    .to_string()
-                    .parse()
-                    .unwrap(),
-            );
+            // Add rate limit headers to response (handle potential invalid values gracefully)
+            if let Ok(v) = axum::http::HeaderValue::from_str(&state.register_config.max_requests.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Limit", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Remaining", v);
+            }
+            if let Ok(v) = axum::http::HeaderValue::from_str(&state.register_config.window_secs.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Reset", v);
+            }
             response
         }
         Err(retry_after) => {

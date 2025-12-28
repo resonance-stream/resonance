@@ -102,12 +102,22 @@ fn build_cors_layer(config: &config::Config) -> CorsLayer {
     }
 }
 
-/// Extract bearer token from Authorization header
+/// Extract bearer token from Authorization header (case-insensitive)
 fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
+    let value = headers
         .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(|v| v.to_str().ok())?;
+
+    // Split on whitespace and validate scheme case-insensitively
+    let mut parts = value.split_whitespace();
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+
+    if scheme.eq_ignore_ascii_case("bearer") {
+        Some(token)
+    } else {
+        None
+    }
 }
 
 /// Extract user agent from headers
@@ -130,6 +140,7 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 async fn graphql_handler(
     Extension(schema): Extension<ResonanceSchema>,
     Extension(auth_service): Extension<AuthService>,
+    Extension(session_repo): Extension<SessionRepository>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     req: GraphQLRequest,
@@ -148,9 +159,23 @@ async fn graphql_handler(
     if let Some(token) = extract_bearer_token(&headers) {
         match auth_service.verify_access_token(token) {
             Ok(claims) => {
-                // Inject Claims into the GraphQL context
-                request = request.data(claims);
-                tracing::debug!("GraphQL request authenticated");
+                // Verify the session is still active in the database
+                match session_repo.is_active(claims.sid, claims.sub).await {
+                    Ok(true) => {
+                        // Session is active, inject claims into context
+                        request = request.data(claims);
+                        tracing::debug!("GraphQL request authenticated");
+                    }
+                    Ok(false) => {
+                        tracing::debug!(
+                            user_id = %claims.sub,
+                            "GraphQL session no longer active"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "GraphQL session check failed");
+                    }
+                }
             }
             Err(e) => {
                 // Log the error but don't fail the request - unauthenticated

@@ -145,12 +145,19 @@ pub struct UserResponse {
 
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
+        let role = match user.role {
+            crate::models::user::UserRole::Admin => "admin",
+            crate::models::user::UserRole::User => "user",
+            crate::models::user::UserRole::Guest => "guest",
+        }
+        .to_string();
+
         Self {
             id: user.id,
             email: user.email,
             display_name: user.display_name,
             avatar_url: user.avatar_url,
-            role: format!("{:?}", user.role).to_lowercase(),
+            role,
             email_verified: user.email_verified,
         }
     }
