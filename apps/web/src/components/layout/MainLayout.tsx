@@ -1,6 +1,7 @@
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { TopographicBackground } from '../ui/TopographicBackground';
+import { PlayerBar } from '../player';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -18,6 +19,9 @@ export function MainLayout({ children }: MainLayoutProps): JSX.Element {
           {children}
         </main>
       </div>
+
+      {/* Fixed player bar at bottom */}
+      <PlayerBar />
     </div>
   );
 }

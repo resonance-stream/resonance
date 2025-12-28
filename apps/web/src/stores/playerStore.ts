@@ -55,6 +55,10 @@ interface PlayerState {
   volume: number
   isMuted: boolean
 
+  // Loading states
+  isLoading: boolean
+  isBuffering: boolean
+
   // Queue
   queue: Track[]
   queueIndex: number
@@ -77,6 +81,8 @@ interface PlayerState {
   previousTrack: () => void
   toggleShuffle: () => void
   cycleRepeat: () => void
+  setLoading: (loading: boolean) => void
+  setBuffering: (buffering: boolean) => void
 }
 
 export const usePlayerStore = create<PlayerState>()(
@@ -88,13 +94,15 @@ export const usePlayerStore = create<PlayerState>()(
       currentTime: 0,
       volume: 0.75,
       isMuted: false,
+      isLoading: false,
+      isBuffering: false,
       queue: [],
       queueIndex: 0,
       shuffle: false,
       repeat: 'off',
 
       // Actions
-      setTrack: (track) => set({ currentTrack: track, isPlaying: true, currentTime: 0 }),
+      setTrack: (track) => set({ currentTrack: track, isPlaying: true, currentTime: 0, isLoading: true }),
 
       play: () => set({ isPlaying: true }),
 
@@ -114,6 +122,7 @@ export const usePlayerStore = create<PlayerState>()(
         currentTrack: tracks[startIndex] ?? null,
         isPlaying: true,
         currentTime: 0,
+        isLoading: true,
       }),
 
       addToQueue: (track) => set((state) => ({
@@ -143,6 +152,7 @@ export const usePlayerStore = create<PlayerState>()(
           queueIndex: nextIndex,
           currentTrack: queue[nextIndex] ?? null,
           currentTime: 0,
+          isLoading: true,
         })
       },
 
@@ -173,6 +183,7 @@ export const usePlayerStore = create<PlayerState>()(
           queueIndex: prevIndex,
           currentTrack: queue[prevIndex] ?? null,
           currentTime: 0,
+          isLoading: true,
         })
       },
 
@@ -181,6 +192,10 @@ export const usePlayerStore = create<PlayerState>()(
       cycleRepeat: () => set((state) => ({
         repeat: state.repeat === 'off' ? 'queue' : state.repeat === 'queue' ? 'track' : 'off',
       })),
+
+      setLoading: (loading) => set({ isLoading: loading }),
+
+      setBuffering: (buffering) => set({ isBuffering: buffering }),
     }),
     {
       name: 'resonance-player',
