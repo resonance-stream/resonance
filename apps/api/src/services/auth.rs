@@ -185,8 +185,11 @@ impl AuthService {
         password: &str,
         display_name: &str,
     ) -> ApiResult<User> {
+        // Normalize email for consistent storage and lookup
+        let email = normalize_email(email);
+
         // Validate email format
-        if !is_valid_email(email) {
+        if !is_valid_email(&email) {
             return Err(ApiError::ValidationError(
                 "invalid email format".to_string(),
             ));
@@ -208,12 +211,12 @@ impl AuthService {
         }
 
         // Check if email already exists using repository
-        let existing = self.user_repo.email_exists(email).await?;
+        let existing = self.user_repo.email_exists(&email).await?;
 
         if existing {
             return Err(ApiError::Conflict {
                 resource_type: "user",
-                id: email.to_string(),
+                id: email.clone(),
             });
         }
 
@@ -226,7 +229,7 @@ impl AuthService {
         let user = self
             .user_repo
             .create(
-                email,
+                &email,
                 &password_hash,
                 display_name,
                 UserRole::User,
@@ -237,7 +240,7 @@ impl AuthService {
                 sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
                     ApiError::Conflict {
                         resource_type: "user",
-                        id: email.to_string(),
+                        id: email.clone(),
                     }
                 }
                 _ => ApiError::Database(e),
@@ -322,8 +325,11 @@ impl AuthService {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> ApiResult<(User, AuthTokens)> {
+        // Normalize email for consistent lookup
+        let email = normalize_email(email);
+
         // Find user by email using repository
-        let user = self.user_repo.find_by_email(email).await?;
+        let user = self.user_repo.find_by_email(&email).await?;
 
         // SECURITY: Timing attack prevention for user enumeration
         // We must verify a password hash regardless of whether the user exists.
@@ -639,6 +645,7 @@ fn hash_token(token: &str) -> String {
 pub struct PasswordValidation {
     pub is_valid: bool,
     pub has_min_length: bool,
+    pub has_max_length: bool,
     pub has_uppercase: bool,
     pub has_lowercase: bool,
     pub has_number: bool,
@@ -650,6 +657,7 @@ impl PasswordValidation {
         Self {
             is_valid: false,
             has_min_length: false,
+            has_max_length: true, // Assume valid until proven otherwise
             has_uppercase: false,
             has_lowercase: false,
             has_number: false,
@@ -684,7 +692,8 @@ pub fn validate_password_complexity(password: &str) -> PasswordValidation {
     }
 
     // Check maximum length (prevent DoS via extremely long passwords)
-    if password.len() > MAX_PASSWORD_LENGTH {
+    result.has_max_length = password.len() <= MAX_PASSWORD_LENGTH;
+    if !result.has_max_length {
         result.errors.push(format!(
             "Password must be at most {} characters",
             MAX_PASSWORD_LENGTH
@@ -716,8 +725,11 @@ pub fn validate_password_complexity(password: &str) -> PasswordValidation {
     }
 
     // Password is valid if all requirements are met
-    result.is_valid =
-        result.has_min_length && result.has_uppercase && result.has_lowercase && result.has_number;
+    result.is_valid = result.has_min_length
+        && result.has_max_length
+        && result.has_uppercase
+        && result.has_lowercase
+        && result.has_number;
 
     result
 }
@@ -765,6 +777,21 @@ fn is_valid_email(email: &str) -> bool {
 
     // Domain parts must not be empty
     domain.split('.').all(|part| !part.is_empty())
+}
+
+/// Normalize email address for consistent storage and lookup
+///
+/// Normalization includes:
+/// - Trimming leading/trailing whitespace
+/// - Converting to lowercase (email addresses are case-insensitive per RFC 5321)
+///
+/// # Arguments
+/// * `email` - The email address to normalize
+///
+/// # Returns
+/// The normalized email address
+fn normalize_email(email: &str) -> String {
+    email.trim().to_lowercase()
 }
 
 #[cfg(test)]

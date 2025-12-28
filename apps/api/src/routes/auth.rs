@@ -7,19 +7,22 @@
 //! - `DELETE /auth/logout` - Invalidate current session
 
 use axum::{
-    extract::State,
-    http::{header, HeaderMap, StatusCode},
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{delete, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::error::ApiResult;
-use crate::middleware::{login_rate_limit, register_rate_limit, AuthRateLimitState, AuthUser};
+use crate::middleware::{
+    extract_client_ip, login_rate_limit, register_rate_limit, AuthRateLimitState, AuthUser,
+};
 use crate::models::user::{AuthTokens, DeviceInfo, User};
 use crate::services::AuthService;
 
@@ -200,18 +203,15 @@ pub struct LogoutResponse {
 /// password verification operation since we just hashed the password.
 async fn register(
     State(state): State<AuthState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Json(request): Json<RegisterRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Extract client info from headers (same as login)
-    let ip_address = headers
-        .get("x-forwarded-for")
-        .or_else(|| headers.get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim());
+    // Extract client IP using shared helper (respects trusted proxies)
+    let ip_address = Some(extract_client_ip(&headers, connect_info.as_ref()));
 
     let user_agent = headers
-        .get(header::USER_AGENT)
+        .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok());
 
     let (user, tokens) = state
@@ -221,7 +221,7 @@ async fn register(
             &request.password,
             &request.display_name,
             request.device_info,
-            ip_address,
+            ip_address.as_deref(),
             user_agent,
         )
         .await?;
@@ -247,18 +247,15 @@ async fn register(
 /// - 401 Unauthorized: Invalid credentials
 async fn login(
     State(state): State<AuthState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Extract client info from headers
-    let ip_address = headers
-        .get("x-forwarded-for")
-        .or_else(|| headers.get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim());
+    // Extract client IP using shared helper (respects trusted proxies)
+    let ip_address = Some(extract_client_ip(&headers, connect_info.as_ref()));
 
     let user_agent = headers
-        .get(header::USER_AGENT)
+        .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok());
 
     let (user, tokens) = state
@@ -267,7 +264,7 @@ async fn login(
             &request.email,
             &request.password,
             request.device_info,
-            ip_address,
+            ip_address.as_deref(),
             user_agent,
         )
         .await?;

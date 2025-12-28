@@ -112,7 +112,7 @@ impl SessionRepository {
             r#"
             SELECT id, user_id, expires_at
             FROM sessions
-            WHERE id = $1 AND refresh_token_hash = $2 AND is_active = true
+            WHERE id = $1 AND refresh_token_hash = $2 AND is_active = true AND expires_at > NOW()
             "#,
         )
         .bind(session_id)

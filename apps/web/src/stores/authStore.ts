@@ -322,9 +322,24 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // Token might be expired, try refresh
           const refreshed = await get().refreshAccessToken()
-          if (!refreshed) {
-            set({ status: 'unauthenticated' })
+          if (refreshed) {
+            // Retry user fetch with new access token
+            try {
+              const { accessToken: newToken } = get()
+              if (newToken) {
+                setAuthToken(newToken)
+                const response = await graphqlClient.request<{ me: User }>(ME_QUERY)
+                set({
+                  user: response.me,
+                  status: 'authenticated',
+                })
+                return
+              }
+            } catch {
+              // Retry also failed
+            }
           }
+          set({ status: 'unauthenticated' })
         }
       },
 

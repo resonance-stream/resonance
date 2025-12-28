@@ -300,6 +300,40 @@ where
             }
         };
 
+        // Get SessionRepository from extensions - if missing, return None
+        let session_repo = match parts.extensions.get::<SessionRepository>() {
+            Some(r) => r,
+            None => {
+                tracing::warn!("SessionRepository not in extensions for MaybeAuthUser");
+                return Ok(MaybeAuthUser {
+                    user: None,
+                    claims: None,
+                    session_id: None,
+                });
+            }
+        };
+
+        // Verify that the session is still active (prevents token reuse after logout)
+        match session_repo.is_active(claims.sid, claims.sub).await {
+            Ok(true) => {} // Session is active, continue
+            Ok(false) => {
+                tracing::debug!(session_id = %claims.sid, "Session no longer active in MaybeAuthUser");
+                return Ok(MaybeAuthUser {
+                    user: None,
+                    claims: None,
+                    session_id: None,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Database error checking session in MaybeAuthUser");
+                return Ok(MaybeAuthUser {
+                    user: None,
+                    claims: None,
+                    session_id: None,
+                });
+            }
+        }
+
         // Get UserRepository from extensions - if missing, return None
         let user_repo = match parts.extensions.get::<UserRepository>() {
             Some(r) => r,

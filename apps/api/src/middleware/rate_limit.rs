@@ -478,7 +478,20 @@ pub fn extract_client_ip(
     connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
 ) -> String {
     // Default: trust private IPs (typical Docker Compose setup)
-    extract_client_ip_trusted(headers, connect_info, &TrustedProxies::trust_private())
+    // Returns "unknown" if no IP can be determined (for backwards compatibility)
+    extract_client_ip_option(headers, connect_info).unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Extract client IP, returning None if it cannot be determined
+///
+/// Use this function when you need to distinguish between a known IP and
+/// no IP being available (e.g., for conditional rate limiting).
+pub fn extract_client_ip_option(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
+) -> Option<String> {
+    // Default: trust private IPs (typical Docker Compose setup)
+    extract_client_ip_trusted_option(headers, connect_info, &TrustedProxies::trust_private())
 }
 
 /// Extract client IP with explicit trusted proxy configuration
@@ -561,6 +574,60 @@ pub fn extract_client_ip_trusted(
     "unknown".to_string()
 }
 
+/// Extract client IP with explicit trusted proxy configuration, returning None if unknown
+///
+/// This variant returns None instead of "unknown" when the client IP cannot be
+/// determined, allowing callers to decide how to handle this case (e.g., skip
+/// rate limiting rather than rate limiting all unknown IPs together).
+pub fn extract_client_ip_trusted_option(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
+    trusted_proxies: &TrustedProxies,
+) -> Option<String> {
+    // Get the direct peer IP first
+    let direct_ip = connect_info.map(|ci| ci.0.ip());
+
+    // Only trust forwarding headers if the direct connection is from a trusted proxy
+    let should_trust_headers = direct_ip
+        .map(|ip| trusted_proxies.is_trusted(&ip))
+        .unwrap_or(false);
+
+    if should_trust_headers {
+        // Try X-Forwarded-For first (for proxied requests)
+        if let Some(forwarded) = headers.get("x-forwarded-for") {
+            if let Ok(value) = forwarded.to_str() {
+                // X-Forwarded-For can contain multiple IPs, take the first (client IP)
+                if let Some(ip) = value.split(',').next() {
+                    let ip = ip.trim();
+                    // Validate it's a proper IP
+                    if ip.parse::<IpAddr>().is_ok() {
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+        }
+
+        // Try X-Real-IP (common with nginx)
+        if let Some(real_ip) = headers.get("x-real-ip") {
+            if let Ok(value) = real_ip.to_str() {
+                let ip = value.trim();
+                if ip.parse::<IpAddr>().is_ok() {
+                    return Some(ip.to_string());
+                }
+            }
+        }
+    } else if headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip") {
+        // Log when we're ignoring forwarding headers from untrusted source
+        debug!(
+            direct_ip = ?direct_ip,
+            "Ignoring X-Forwarded-For/X-Real-IP from untrusted proxy"
+        );
+    }
+
+    // Fall back to connection info
+    direct_ip.map(|ip| ip.to_string())
+}
+
 /// Rate limiting state for auth endpoints
 #[derive(Clone)]
 pub struct AuthRateLimitState {
@@ -602,7 +669,16 @@ pub async fn login_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers, Some(&ConnectInfo(addr)));
+    // Use option variant - skip rate limiting if IP cannot be determined
+    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
+        Some(ip) => ip,
+        None => {
+            // Cannot determine client IP - skip rate limiting rather than rate
+            // limiting all unknown IPs together (which could cause DoS)
+            warn!("Skipping login rate limiting: could not determine client IP");
+            return next.run(request).await;
+        }
+    };
 
     match state.limiter.check(&client_ip, &state.login_config).await {
         Ok(remaining) => {
@@ -641,7 +717,16 @@ pub async fn register_rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers, Some(&ConnectInfo(addr)));
+    // Use option variant - skip rate limiting if IP cannot be determined
+    let client_ip = match extract_client_ip_option(&headers, Some(&ConnectInfo(addr))) {
+        Some(ip) => ip,
+        None => {
+            // Cannot determine client IP - skip rate limiting rather than rate
+            // limiting all unknown IPs together (which could cause DoS)
+            warn!("Skipping registration rate limiting: could not determine client IP");
+            return next.run(request).await;
+        }
+    };
 
     match state
         .limiter
@@ -770,6 +855,27 @@ mod tests {
         // Without connect_info, headers are not trusted
         let ip = extract_client_ip(&headers, None);
         assert_eq!(ip, "unknown");
+    }
+
+    #[test]
+    fn test_extract_client_ip_option_returns_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+
+        // Without connect_info, returns None instead of "unknown"
+        let ip = extract_client_ip_option(&headers, None);
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_extract_client_ip_option_returns_some() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+
+        // With trusted proxy, returns Some(IP)
+        let connect_info = localhost_connect_info();
+        let ip = extract_client_ip_option(&headers, Some(&connect_info));
+        assert_eq!(ip, Some("203.0.113.1".to_string()));
     }
 
     #[test]
