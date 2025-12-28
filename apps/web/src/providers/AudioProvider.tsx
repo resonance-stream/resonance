@@ -33,10 +33,20 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
 
   // Seek function exposed via context
   const seek = useCallback((time: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Validate input
+    if (!Number.isFinite(time)) return;
+
+    // Clamp to valid range
+    const duration = Number.isFinite(audio.duration) ? audio.duration : undefined;
+    const clamped = duration !== undefined
+      ? Math.min(Math.max(0, time), duration)
+      : Math.max(0, time);
+
+    audio.currentTime = clamped;
+    setCurrentTime(clamped);
   }, [setCurrentTime]);
 
   // Handle track changes - only update source when track actually changes
@@ -62,26 +72,33 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
   }, [currentTrack]);
 
   // Handle play/pause state changes (separate from track loading)
+  // Include currentTrack?.id to ensure play is triggered when track changes
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
 
     if (isPlaying) {
       audio.play().catch((error) => {
+        // AbortError is expected during rapid track changes - don't pause
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
         console.warn('Play prevented:', error);
         pause();
       });
     } else {
       audio.pause();
     }
-  }, [isPlaying, pause]);
+  }, [isPlaying, currentTrack?.id, pause]);
 
   // Handle volume and mute changes
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    audio.volume = volume;
+    // Clamp volume to valid range [0, 1] with fallback
+    const safeVolume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
+    audio.volume = safeVolume;
     audio.muted = isMuted;
   }, [volume, isMuted]);
 

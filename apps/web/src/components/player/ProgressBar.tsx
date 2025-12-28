@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useAudio } from '../../hooks/useAudio';
@@ -20,10 +21,27 @@ export function ProgressBar(): JSX.Element {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const { seek } = useAudio();
 
+  // Track drag state for visual feedback during seek
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragProgress, setDragProgress] = useState<number | null>(null);
+
   const duration = currentTrack?.duration ?? 0;
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  const handleSeek = (value: number[]): void => {
+  // Use drag position while dragging, otherwise use actual progress
+  const displayProgress = isDragging && dragProgress !== null ? dragProgress : progress;
+  const displayTime = isDragging && dragProgress !== null
+    ? (dragProgress / 100) * duration
+    : currentTime;
+
+  const handleValueChange = (value: number[]): void => {
+    setIsDragging(true);
+    setDragProgress(value[0] ?? 0);
+  };
+
+  const handleValueCommit = (value: number[]): void => {
+    setIsDragging(false);
+    setDragProgress(null);
     const percent = value[0] ?? 0;
     const newTime = (percent / 100) * duration;
     seek(newTime);
@@ -31,16 +49,17 @@ export function ProgressBar(): JSX.Element {
 
   return (
     <div className="flex items-center gap-2 w-full">
-      {/* Current Time */}
+      {/* Current Time - shows preview during drag */}
       <span className="text-xs text-text-muted tabular-nums min-w-[40px] text-right">
-        {formatTime(currentTime)}
+        {formatTime(displayTime)}
       </span>
 
       {/* Seekable Slider */}
       <Slider.Root
         className="relative flex items-center select-none touch-none w-full h-5 group"
-        value={[progress]}
-        onValueChange={handleSeek}
+        value={[displayProgress]}
+        onValueChange={handleValueChange}
+        onValueCommit={handleValueCommit}
         max={100}
         step={0.1}
         aria-label="Seek"
