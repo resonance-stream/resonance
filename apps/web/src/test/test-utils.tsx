@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * Test Utilities
  *
@@ -65,7 +66,6 @@ export { AllProviders }
  * Helper to wait for loading states to resolve
  */
 export async function waitForLoadingToFinish(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { waitFor, screen } = await import('@testing-library/react')
 
   await waitFor(

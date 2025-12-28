@@ -10,11 +10,11 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
-        name: 'Resonance',
-        short_name: 'Resonance',
+        name: 'resonance',
+        short_name: 'resonance',
         description: 'Self-hosted music streaming platform',
-        theme_color: '#1a1a2e',
-        background_color: '#0f0f1a',
+        theme_color: '#0B0E14',
+        background_color: '#0B0E14',
         display: 'standalone',
         orientation: 'any',
         icons: [

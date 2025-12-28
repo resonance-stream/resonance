@@ -1,42 +1,75 @@
+import { MediaCard } from '../components/media'
+
 export default function Home() {
   return (
-    <div className="flex flex-1 flex-col p-6">
-      <h1 className="text-3xl font-bold">Welcome to Resonance</h1>
-      <p className="mt-2 text-text-secondary">
-        Your self-hosted music streaming platform
-      </p>
+    <div className="flex flex-1 flex-col p-6 animate-fade-in">
+      {/* Hero Section */}
+      <div className="mb-8">
+        <h1 className="font-display text-display text-text-primary">
+          Good evening
+        </h1>
+        <p className="mt-2 text-text-secondary">
+          Welcome back to Resonance
+        </p>
+      </div>
 
-      <section className="mt-8">
-        <h2 className="text-xl font-semibold">Recently Played</h2>
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {/* Placeholder cards */}
+      {/* Recently Played Section */}
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold text-text-primary mb-4">
+          Recently Played
+        </h2>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div
+            <MediaCard
               key={i}
-              className="card group cursor-pointer transition-all hover:bg-background-tertiary"
-            >
-              <div className="aspect-square rounded-lg bg-background-tertiary" />
-              <h3 className="mt-2 truncate font-medium">Album Title</h3>
-              <p className="truncate text-sm text-text-secondary">Artist Name</p>
-            </div>
+              title={`Album ${i + 1}`}
+              subtitle="Artist Name"
+              href={`/album/${i + 1}`}
+              onPlay={() => console.log(`Play album ${i + 1}`)}
+            />
           ))}
         </div>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-xl font-semibold">Made For You</h2>
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
+      {/* Made For You Section */}
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold text-text-primary mb-4">
+          Made For You
+        </h2>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {[
+            { title: 'Discover Weekly', subtitle: 'Your personal mixtape' },
+            { title: 'Release Radar', subtitle: 'New music from artists you follow' },
+            { title: 'Daily Mix 1', subtitle: 'Based on your recent listening' },
+            { title: 'Daily Mix 2', subtitle: 'A mix of your favorites' },
+            { title: 'Chill Vibes', subtitle: 'Relaxing tunes for any mood' },
+            { title: 'Focus Flow', subtitle: 'Concentration enhancement' },
+          ].map((playlist, i) => (
+            <MediaCard
               key={i}
-              className="card group cursor-pointer transition-all hover:bg-background-tertiary"
-            >
-              <div className="aspect-square rounded-lg bg-gradient-to-br from-primary to-accent" />
-              <h3 className="mt-2 truncate font-medium">Discover Weekly</h3>
-              <p className="truncate text-sm text-text-secondary">
-                Based on your listening
-              </p>
-            </div>
+              title={playlist.title}
+              subtitle={playlist.subtitle}
+              href={`/playlist/${i + 1}`}
+              onPlay={() => console.log(`Play playlist ${i + 1}`)}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* New Releases Section */}
+      <section>
+        <h2 className="text-xl font-semibold text-text-primary mb-4">
+          New Releases
+        </h2>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <MediaCard
+              key={i}
+              title={`New Album ${i + 1}`}
+              subtitle="Various Artists"
+              href={`/album/new-${i + 1}`}
+              onPlay={() => console.log(`Play new album ${i + 1}`)}
+            />
           ))}
         </div>
       </section>
