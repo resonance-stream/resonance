@@ -2,12 +2,18 @@
 //!
 //! This module provides the schema construction for the async-graphql API.
 
+use async_graphql::dataloader::DataLoader;
 use async_graphql::{EmptySubscription, Schema};
 use sqlx::PgPool;
 
+use crate::repositories::{AlbumRepository, ArtistRepository, PlaylistRepository, TrackRepository};
 use crate::services::auth::AuthService;
 
 use super::guards::GraphQLRateLimiter;
+use super::loaders::{
+    AlbumLoader, AlbumsByArtistLoader, ArtistLoader, TrackLoader, TracksByAlbumLoader,
+    TracksByArtistLoader,
+};
 use super::mutation::Mutation;
 use super::query::Query;
 
@@ -19,6 +25,10 @@ pub struct SchemaBuilder {
     pool: Option<PgPool>,
     auth_service: Option<AuthService>,
     rate_limiter: Option<GraphQLRateLimiter>,
+    artist_repository: Option<ArtistRepository>,
+    album_repository: Option<AlbumRepository>,
+    track_repository: Option<TrackRepository>,
+    playlist_repository: Option<PlaylistRepository>,
 }
 
 impl SchemaBuilder {
@@ -28,6 +38,10 @@ impl SchemaBuilder {
             pool: None,
             auth_service: None,
             rate_limiter: None,
+            artist_repository: None,
+            album_repository: None,
+            track_repository: None,
+            playlist_repository: None,
         }
     }
 
@@ -51,6 +65,34 @@ impl SchemaBuilder {
         self
     }
 
+    /// Set the artist repository
+    #[allow(dead_code)]
+    pub fn artist_repository(mut self, repo: ArtistRepository) -> Self {
+        self.artist_repository = Some(repo);
+        self
+    }
+
+    /// Set the album repository
+    #[allow(dead_code)]
+    pub fn album_repository(mut self, repo: AlbumRepository) -> Self {
+        self.album_repository = Some(repo);
+        self
+    }
+
+    /// Set the track repository
+    #[allow(dead_code)]
+    pub fn track_repository(mut self, repo: TrackRepository) -> Self {
+        self.track_repository = Some(repo);
+        self
+    }
+
+    /// Set the playlist repository
+    #[allow(dead_code)]
+    pub fn playlist_repository(mut self, repo: PlaylistRepository) -> Self {
+        self.playlist_repository = Some(repo);
+        self
+    }
+
     /// Build the schema with all configured services
     ///
     /// # Panics
@@ -59,9 +101,50 @@ impl SchemaBuilder {
         let pool = self.pool.expect("database pool is required");
         let auth_service = self.auth_service.expect("auth service is required");
 
+        // Create repositories from pool if not explicitly provided
+        let artist_repo = self
+            .artist_repository
+            .unwrap_or_else(|| ArtistRepository::new(pool.clone()));
+        let album_repo = self
+            .album_repository
+            .unwrap_or_else(|| AlbumRepository::new(pool.clone()));
+        let track_repo = self
+            .track_repository
+            .unwrap_or_else(|| TrackRepository::new(pool.clone()));
+        let playlist_repo = self
+            .playlist_repository
+            .unwrap_or_else(|| PlaylistRepository::new(pool.clone()));
+
+        // Create DataLoaders for batched fetching
+        // Single-entity loaders (return one entity by ID)
+        let artist_loader = DataLoader::new(ArtistLoader::new(pool.clone()), tokio::spawn);
+        let album_loader = DataLoader::new(AlbumLoader::new(pool.clone()), tokio::spawn);
+        let track_loader = DataLoader::new(TrackLoader::new(pool.clone()), tokio::spawn);
+
+        // Collection loaders (return Vec of related entities by parent ID)
+        let albums_by_artist_loader =
+            DataLoader::new(AlbumsByArtistLoader::new(pool.clone()), tokio::spawn);
+        let tracks_by_album_loader =
+            DataLoader::new(TracksByAlbumLoader::new(pool.clone()), tokio::spawn);
+        let tracks_by_artist_loader =
+            DataLoader::new(TracksByArtistLoader::new(pool.clone()), tokio::spawn);
+
         let mut builder = Schema::build(Query::default(), Mutation::default(), EmptySubscription)
+            // Query complexity and depth limits to prevent DoS attacks
+            .limit_complexity(500) // Max query complexity score
+            .limit_depth(10) // Max nesting depth
             .data(pool)
-            .data(auth_service);
+            .data(auth_service)
+            .data(artist_repo)
+            .data(album_repo)
+            .data(track_repo)
+            .data(playlist_repo)
+            .data(artist_loader)
+            .data(album_loader)
+            .data(track_loader)
+            .data(albums_by_artist_loader)
+            .data(tracks_by_album_loader)
+            .data(tracks_by_artist_loader);
 
         // Add rate limiter if configured
         if let Some(rate_limiter) = self.rate_limiter {
@@ -119,5 +202,9 @@ mod tests {
         assert!(builder.pool.is_none());
         assert!(builder.auth_service.is_none());
         assert!(builder.rate_limiter.is_none());
+        assert!(builder.artist_repository.is_none());
+        assert!(builder.album_repository.is_none());
+        assert!(builder.track_repository.is_none());
+        assert!(builder.playlist_repository.is_none());
     }
 }
