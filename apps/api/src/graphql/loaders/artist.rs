@@ -29,6 +29,11 @@ impl Loader<Uuid> for ArtistLoader {
     type Error = Arc<sqlx::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
+        // Guard against empty keys to avoid unnecessary database query
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
         let sql = format!("SELECT {} FROM artists WHERE id = ANY($1)", ARTIST_COLUMNS);
         let artists: Vec<Artist> = sqlx::query_as(&sql)
             .bind(keys)

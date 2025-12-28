@@ -30,6 +30,11 @@ impl Loader<Uuid> for AlbumsByArtistLoader {
     type Error = Arc<sqlx::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
+        // Guard against empty keys to avoid unnecessary database query
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
         let sql = format!(
             "SELECT {} FROM albums WHERE artist_id = ANY($1) ORDER BY artist_id, release_date DESC NULLS LAST",
             ALBUM_COLUMNS

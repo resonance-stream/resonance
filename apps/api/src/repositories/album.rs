@@ -105,7 +105,6 @@ impl AlbumRepository {
     }
 
     /// Get album count for an artist
-    #[allow(dead_code)]
     pub async fn count_by_artist(&self, artist_id: Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COUNT(*) FROM albums WHERE artist_id = $1")
             .bind(artist_id)

@@ -25,17 +25,40 @@ impl TracksByAlbumLoader {
     }
 }
 
+/// Maximum tracks to return per album (prevents loading unbounded data)
+const MAX_TRACKS_PER_ALBUM: i32 = 200;
+
 impl Loader<Uuid> for TracksByAlbumLoader {
     type Value = Vec<Track>;
     type Error = Arc<sqlx::Error>;
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
+        // Guard against empty keys
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Uses ROW_NUMBER() window function to limit tracks per album at the database level
         let sql = format!(
-            "SELECT {} FROM tracks WHERE album_id = ANY($1) ORDER BY album_id, disc_number ASC NULLS LAST, track_number ASC NULLS LAST",
-            TRACK_COLUMNS
+            r#"
+            SELECT {cols} FROM (
+                SELECT
+                    {cols},
+                    ROW_NUMBER() OVER (
+                        PARTITION BY album_id
+                        ORDER BY disc_number ASC NULLS LAST, track_number ASC NULLS LAST
+                    ) AS rn
+                FROM tracks
+                WHERE album_id = ANY($1)
+            ) t
+            WHERE t.rn <= $2
+            ORDER BY album_id, disc_number ASC NULLS LAST, track_number ASC NULLS LAST
+            "#,
+            cols = TRACK_COLUMNS
         );
         let tracks: Vec<Track> = sqlx::query_as(&sql)
             .bind(keys)
+            .bind(MAX_TRACKS_PER_ALBUM)
             .fetch_all(&self.pool)
             .await
             .map_err(Arc::new)?;
