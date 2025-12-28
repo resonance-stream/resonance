@@ -125,15 +125,17 @@ impl Playlist {
         let track_ids: Vec<Uuid> = playlist_tracks.iter().map(|pt| pt.track_id).collect();
         let tracks = track_loader.load_many(track_ids).await?;
 
-        // Build entries, preserving playlist order; error if any referenced track is missing
+        // Build entries, preserving playlist order; skip missing tracks with warning
         let mut entries = Vec::with_capacity(playlist_tracks.len());
         for pt in playlist_tracks {
-            let track = tracks.get(&pt.track_id).ok_or_else(|| {
-                async_graphql::Error::new(format!(
-                    "Playlist references missing track {}",
-                    pt.track_id
-                ))
-            })?;
+            let Some(track) = tracks.get(&pt.track_id) else {
+                tracing::warn!(
+                    playlist_id = %self.inner.id,
+                    track_id = %pt.track_id,
+                    "Playlist references missing track, skipping"
+                );
+                continue;
+            };
 
             entries.push(PlaylistTrackEntry {
                 playlist_track: pt,
