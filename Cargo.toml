@@ -60,6 +60,9 @@ sha2 = "0.10"
 # URL parsing
 url = "2"
 
+# HTTP utilities
+httpdate = "1"
+
 # Internal crates
 resonance-shared-config = { path = "packages/shared-config" }
 

@@ -357,9 +357,7 @@ fn generate_etag(file_size: u64, modified: SystemTime) -> String {
 ///
 /// Format: RFC 7231 (e.g., "Sun, 06 Nov 1994 08:49:37 GMT")
 fn format_http_date(time: SystemTime) -> String {
-    use chrono::{DateTime, Utc};
-    let datetime: DateTime<Utc> = time.into();
-    datetime.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+    httpdate::fmt_http_date(time)
 }
 
 /// Check if the client's cached version is still valid
@@ -368,26 +366,26 @@ fn is_cache_valid(headers: &HeaderMap, etag: &str, modified: SystemTime) -> bool
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(value) = if_none_match.to_str() {
             // Handle both single value and comma-separated list
-            return value
-                .split(',')
-                .any(|v| v.trim() == etag || v.trim() == "*");
+            return value.split(',').any(|v| {
+                let v = v.trim();
+                // RFC 7232: Weak comparison - strip "W/" prefix if present
+                let v_trimmed = v.strip_prefix("W/").unwrap_or(v);
+                let etag_trimmed = etag.strip_prefix("W/").unwrap_or(etag);
+                v_trimmed == etag_trimmed || v == "*"
+            });
         }
     }
 
     // Check If-Modified-Since
     if let Some(if_modified_since) = headers.get(header::IF_MODIFIED_SINCE) {
         if let Ok(value) = if_modified_since.to_str() {
-            // Parse the HTTP date and compare
-            if let Ok(parsed) = chrono::DateTime::parse_from_rfc2822(value) {
-                let if_modified_since_time: SystemTime = parsed.into();
-                // File hasn't been modified since the cached version
-                if let Ok(modified_duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
-                    if let Ok(cached_duration) =
-                        if_modified_since_time.duration_since(SystemTime::UNIX_EPOCH)
-                    {
-                        // Compare at second precision (HTTP dates don't have sub-second precision)
-                        return modified_duration.as_secs() <= cached_duration.as_secs();
-                    }
+            // Parse HTTP date (supports RFC 1123, RFC 850, and asctime formats)
+            if let Ok(if_modified_since_time) = httpdate::parse_http_date(value) {
+                // HTTP dates have second precision, so we truncate the file's modification time
+                if let Ok(modified_secs) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                    let modified_truncated = SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(modified_secs.as_secs());
+                    return modified_truncated <= if_modified_since_time;
                 }
             }
         }
@@ -403,10 +401,11 @@ fn is_cache_valid(headers: &HeaderMap, etag: &str, modified: SystemTime) -> bool
 /// 2. Verifying the canonical path starts with the library path
 fn validate_file_path(file_path: &str, music_library_path: &StdPath) -> ApiResult<PathBuf> {
     // Construct the full path - handle both absolute and relative paths
-    let full_path = if file_path.starts_with('/') {
-        PathBuf::from(file_path)
+    let input_path = StdPath::new(file_path);
+    let full_path = if input_path.is_absolute() {
+        input_path.to_path_buf()
     } else {
-        music_library_path.join(file_path)
+        music_library_path.join(input_path)
     };
 
     // Canonicalize to resolve any .., symlinks, etc.
@@ -591,6 +590,59 @@ mod tests {
         headers.insert(header::IF_NONE_MATCH, "*".parse().unwrap());
 
         assert!(is_cache_valid(&headers, "\"any-etag\"", modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_weak_etag_client() {
+        // Client sends weak ETag (W/"..."), server has strong ETag
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let server_etag = "\"12345-1000\"";
+        headers.insert(header::IF_NONE_MATCH, "W/\"12345-1000\"".parse().unwrap());
+
+        // Should match after stripping W/ prefix
+        assert!(is_cache_valid(&headers, server_etag, modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_weak_etag_server() {
+        // Server has weak ETag, client sends strong ETag
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let server_etag = "W/\"12345-1000\"";
+        headers.insert(header::IF_NONE_MATCH, "\"12345-1000\"".parse().unwrap());
+
+        // Should match after stripping W/ prefix from server
+        assert!(is_cache_valid(&headers, server_etag, modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_weak_etag_both() {
+        // Both client and server have weak ETags
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let server_etag = "W/\"12345-1000\"";
+        headers.insert(header::IF_NONE_MATCH, "W/\"12345-1000\"".parse().unwrap());
+
+        // Should match
+        assert!(is_cache_valid(&headers, server_etag, modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_weak_etag_in_list() {
+        // Client sends comma-separated list with weak ETag
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let server_etag = "\"12345-1000\"";
+        headers.insert(
+            header::IF_NONE_MATCH,
+            "\"wrong-etag\", W/\"12345-1000\", \"other\""
+                .parse()
+                .unwrap(),
+        );
+
+        // Should find match in the list
+        assert!(is_cache_valid(&headers, server_etag, modified));
     }
 
     #[test]

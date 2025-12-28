@@ -54,6 +54,9 @@ sha2 = { workspace = true }
 # Internal crates
 resonance-shared-config = { workspace = true }
 
+# HTTP utilities
+httpdate = { workspace = true }
+
 [lib]
 name = "resonance_api"
 path = "src/lib.rs"

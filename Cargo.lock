@@ -2487,6 +2487,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "fake",
+ "httpdate",
  "jsonwebtoken",
  "meilisearch-sdk",
  "once_cell",
