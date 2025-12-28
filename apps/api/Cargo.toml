@@ -9,6 +9,7 @@ description = "Resonance music streaming API server"
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 # Web framework
 axum = { workspace = true }

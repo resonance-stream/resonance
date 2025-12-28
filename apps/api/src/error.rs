@@ -114,9 +114,13 @@ pub enum ApiError {
     #[error("unsupported audio format: {0}")]
     UnsupportedFormat(String),
 
-    /// Range request invalid
+    /// Range request invalid (400 Bad Request)
     #[error("invalid range request: {0}")]
     InvalidRange(String),
+
+    /// Range not satisfiable (416 Range Not Satisfiable)
+    #[error("range not satisfiable")]
+    RangeNotSatisfiable { file_size: u64 },
 
     // ========== Rate Limiting ==========
     /// Rate limit exceeded
@@ -170,6 +174,9 @@ impl ApiError {
             | Self::InvalidRange(_)
             | Self::UnsupportedFormat(_) => StatusCode::BAD_REQUEST,
 
+            // 416 Range Not Satisfiable
+            Self::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
+
             // 422 Unprocessable Entity
             Self::Serialization(_) => StatusCode::UNPROCESSABLE_ENTITY,
 
@@ -218,6 +225,7 @@ impl ApiError {
             Self::AudioProcessing(_) => "AUDIO_PROCESSING_ERROR",
             Self::UnsupportedFormat(_) => "UNSUPPORTED_FORMAT",
             Self::InvalidRange(_) => "INVALID_RANGE",
+            Self::RangeNotSatisfiable { .. } => "RANGE_NOT_SATISFIABLE",
             Self::RateLimited { .. } => "RATE_LIMITED",
             Self::Configuration(_) => "CONFIGURATION_ERROR",
             Self::Internal(_) => "INTERNAL_ERROR",
@@ -288,6 +296,16 @@ impl IntoResponse for ApiError {
             return (
                 status,
                 [("Retry-After", retry_after.to_string())],
+                Json(error_response),
+            )
+                .into_response();
+        }
+
+        // For range not satisfiable, add Content-Range header per RFC 7233
+        if let Self::RangeNotSatisfiable { file_size } = &self {
+            return (
+                status,
+                [("Content-Range", format!("bytes */{}", file_size))],
                 Json(error_response),
             )
                 .into_response();

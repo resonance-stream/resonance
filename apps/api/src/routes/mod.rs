@@ -8,10 +8,11 @@
 
 pub mod auth;
 pub mod health;
+pub mod streaming;
 
 pub use auth::{auth_router, auth_router_with_rate_limiting, AuthState};
 pub use health::{health_router, HealthState};
+pub use streaming::{streaming_router, StreamingState};
 
 // Future modules:
-// pub mod streaming;
 // pub mod webhooks;

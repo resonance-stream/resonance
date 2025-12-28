@@ -25,8 +25,11 @@ pub use error::{ApiError, ApiResult, ErrorResponse};
 use graphql::{build_schema, build_schema_with_rate_limiting, GraphQLRateLimiter, ResonanceSchema};
 use middleware::{extract_client_ip, AuthRateLimitState};
 use models::user::RequestMetadata;
-use repositories::{SessionRepository, UserRepository};
-use routes::{auth_router, auth_router_with_rate_limiting, health_router, AuthState, HealthState};
+use repositories::{SessionRepository, TrackRepository, UserRepository};
+use routes::{
+    auth_router, auth_router_with_rate_limiting, health_router, streaming_router, AuthState,
+    HealthState, StreamingState,
+};
 use services::auth::{AuthConfig, AuthService};
 
 /// Build the CORS layer based on configuration.
@@ -246,6 +249,14 @@ async fn main() -> anyhow::Result<()> {
     let session_repo = SessionRepository::new(pool.clone());
     tracing::info!("SessionRepository initialized");
 
+    // Create TrackRepository for streaming endpoint
+    let track_repo = TrackRepository::new(pool.clone());
+    tracing::info!("TrackRepository initialized");
+
+    // Create StreamingState for audio streaming
+    let streaming_state = StreamingState::new(track_repo, config.common.music_library_path.clone());
+    tracing::info!("StreamingState initialized");
+
     // Create AuthService
     let auth_config = AuthConfig::with_expiry_strings(
         config.jwt_secret.clone(),
@@ -345,6 +356,8 @@ async fn main() -> anyhow::Result<()> {
         .nest("/health", health_router(health_state))
         // Auth REST routes: /auth/register, /auth/login, /auth/refresh, /auth/logout
         .nest("/auth", auth_routes)
+        // Streaming routes: /stream/:track_id
+        .nest("/stream", streaming_router(streaming_state))
         // Add services as extensions for middleware extractors
         .layer(Extension(schema))
         .layer(Extension(pool.clone()))
