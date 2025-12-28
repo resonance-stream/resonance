@@ -135,7 +135,14 @@ export function TopographicBackground({ className = '' }: TopographicBackgroundP
     };
 
     resize();
-    animate();
+
+    // Respect user preference for reduced motion
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      drawContours(window.innerWidth, window.innerHeight); // Draw one static frame
+    } else {
+      animate();
+    }
 
     window.addEventListener('resize', resize);
 

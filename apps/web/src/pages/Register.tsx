@@ -90,8 +90,8 @@ export default function Register(): JSX.Element {
       return
     }
 
-    const emailPrefix = email.split('@')[0] ?? ''
-    const finalDisplayName = displayName.trim() || (emailPrefix.length > 0 ? emailPrefix : email) || 'user'
+    const emailPrefix = email.split('@')[0] ?? '';
+    const finalDisplayName = displayName.trim() || emailPrefix || 'user';
 
     try {
       await register({ email, password, displayName: finalDisplayName })

@@ -53,18 +53,18 @@ export interface QualityBadgeProps {
   className?: string;
 }
 
+const QUALITY_BADGE_LABELS: Record<QualityBadgeProps['format'], string> = {
+  flac: 'FLAC',
+  hires: 'HI-RES',
+  lossless: 'LOSSLESS',
+  mp3: 'MP3',
+  aac: 'AAC',
+};
+
 export function QualityBadge({
   format,
   className,
 }: QualityBadgeProps): JSX.Element {
-  const labels: Record<QualityBadgeProps['format'], string> = {
-    flac: 'FLAC',
-    hires: 'HI-RES',
-    lossless: 'LOSSLESS',
-    mp3: 'MP3',
-    aac: 'AAC',
-  };
-
   const isHires = format === 'hires';
 
   return (
@@ -73,7 +73,7 @@ export function QualityBadge({
       size="sm"
       className={className}
     >
-      {labels[format]}
+      {QUALITY_BADGE_LABELS[format]}
     </Badge>
   );
 }

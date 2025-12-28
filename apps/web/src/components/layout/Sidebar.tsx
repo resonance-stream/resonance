@@ -13,6 +13,7 @@ function NavItem({ to, icon, label }: NavItemProps): JSX.Element {
   return (
     <NavLink
       to={to}
+      end={to !== '/'}
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 px-4 py-3 mx-2 rounded-lg',

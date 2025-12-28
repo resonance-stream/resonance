@@ -9,19 +9,19 @@ import { render, screen } from '@/test/test-utils'
 import Home from './Home'
 
 describe('Home', () => {
-  it('renders the welcome heading', () => {
+  it('renders the greeting heading', () => {
     render(<Home />)
 
     expect(
-      screen.getByRole('heading', { name: /welcome to resonance/i })
+      screen.getByRole('heading', { name: /good evening/i })
     ).toBeInTheDocument()
   })
 
-  it('renders the tagline', () => {
+  it('renders the welcome message', () => {
     render(<Home />)
 
     expect(
-      screen.getByText(/your self-hosted music streaming platform/i)
+      screen.getByText(/welcome back to resonance/i)
     ).toBeInTheDocument()
   })
 
@@ -44,7 +44,7 @@ describe('Home', () => {
   it('renders placeholder cards in Recently Played', () => {
     render(<Home />)
 
-    const albumTitles = screen.getAllByText('Album Title')
+    const albumTitles = screen.getAllByText(/^Album \d+$/)
     expect(albumTitles.length).toBeGreaterThan(0)
   })
 
