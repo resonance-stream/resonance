@@ -15,6 +15,7 @@ repository = "https://github.com/resonance-stream/resonance"
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
 # Web framework
 axum = "0.7"
@@ -58,6 +59,9 @@ sha2 = "0.10"
 
 # URL parsing
 url = "2"
+
+# HTTP utilities
+httpdate = "1"
 
 # Internal crates
 resonance-shared-config = { path = "packages/shared-config" }
