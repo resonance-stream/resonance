@@ -76,12 +76,13 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
     }
   }, [isPlaying, pause]);
 
-  // Handle volume changes
+  // Handle volume and mute changes
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    audio.volume = isMuted ? 0 : volume;
+    audio.volume = volume;
+    audio.muted = isMuted;
   }, [volume, isMuted]);
 
   // Set up audio event listeners (stable - no recreation on state changes)

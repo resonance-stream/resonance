@@ -59,12 +59,12 @@ export function useKeyboardShortcuts(): void {
 
         case 'ArrowUp':
           event.preventDefault();
-          setVolume(Math.min(1, volume + 0.1));
+          setVolume(Math.min(1, Math.round((volume + 0.1) * 100) / 100));
           break;
 
         case 'ArrowDown':
           event.preventDefault();
-          setVolume(Math.max(0, volume - 0.1));
+          setVolume(Math.max(0, Math.round((volume - 0.1) * 100) / 100));
           break;
 
         case 'KeyM':

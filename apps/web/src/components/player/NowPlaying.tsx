@@ -12,13 +12,16 @@ export function NowPlaying(): JSX.Element | null {
   const [announcement, setAnnouncement] = useState<string | null>(null);
 
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     if (currentTrack && currentTrack.id !== previousTrackIdRef.current) {
       previousTrackIdRef.current = currentTrack.id;
       setAnnouncement(`Now playing: ${currentTrack.title} by ${currentTrack.artist}`);
       // Clear announcement after screen reader has time to read it
-      const timer = setTimeout(() => setAnnouncement(null), 3000);
-      return () => clearTimeout(timer);
+      timer = setTimeout(() => setAnnouncement(null), 3000);
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [currentTrack]);
 
   if (!currentTrack) {

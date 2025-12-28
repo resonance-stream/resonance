@@ -24,6 +24,7 @@ export function VolumeControl(): JSX.Element {
 
   const handleVolumeChange = (value: number[]): void => {
     const percent = value[0] ?? 0;
+    // setVolume already sets isMuted: false in the store, so no explicit unmute needed
     setVolume(percent / 100);
   };
 
