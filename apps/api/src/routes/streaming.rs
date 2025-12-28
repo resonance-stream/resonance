@@ -94,7 +94,7 @@ async fn stream_track(
         .ok_or_else(|| ApiError::not_found("track", track_id.to_string()))?;
 
     // 2. Validate and resolve file path
-    let file_path = validate_file_path(&track.file_path, &state.music_library_path)?;
+    let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
     // 3. Open file and get metadata
     let file = File::open(&file_path).await.map_err(|e| {
@@ -196,15 +196,19 @@ async fn stream_track(
 /// - Path: /stream/:track_id
 /// - Headers:
 ///   - Authorization: Bearer <token> (required)
+///   - If-None-Match: <etag> (optional, for caching)
+///   - If-Modified-Since: <date> (optional, for caching)
 ///
 /// # Response
 /// - 200 OK: Headers with file metadata
+/// - 304 Not Modified: Cache is still valid
 /// - 401 Unauthorized: Missing or invalid token
 /// - 404 Not Found: Track or audio file not found
 async fn head_track(
     State(state): State<StreamingState>,
     _auth: AuthUser, // Validates authentication
     Path(track_id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
     // 1. Look up track in database
     let track = state
@@ -214,7 +218,7 @@ async fn head_track(
         .ok_or_else(|| ApiError::not_found("track", track_id.to_string()))?;
 
     // 2. Validate and resolve file path
-    let file_path = validate_file_path(&track.file_path, &state.music_library_path)?;
+    let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
     // 3. Get file metadata without opening the file for streaming
     let metadata = tokio::fs::metadata(&file_path).await.map_err(|e| {
@@ -230,7 +234,21 @@ async fn head_track(
     let etag = generate_etag(file_size, modified);
     let last_modified = format_http_date(modified);
 
-    // 5. Return headers only (no body for HEAD)
+    // 5. Check for conditional request (304 Not Modified)
+    if is_cache_valid(&headers, &etag, modified) {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, &etag)
+            .header(header::LAST_MODIFIED, &last_modified)
+            .header(
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            )
+            .body(Body::empty())
+            .expect("Failed to build response"));
+    }
+
+    // 6. Return headers only (no body for HEAD)
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
@@ -381,6 +399,12 @@ fn is_cache_valid(headers: &HeaderMap, etag: &str, modified: SystemTime) -> bool
         if let Ok(value) = if_modified_since.to_str() {
             // Parse HTTP date (supports RFC 1123, RFC 850, and asctime formats)
             if let Ok(if_modified_since_time) = httpdate::parse_http_date(value) {
+                // Ignore dates in the future to avoid incorrect 304 responses
+                let now = SystemTime::now();
+                if if_modified_since_time > now {
+                    return false;
+                }
+
                 // HTTP dates have second precision, so we truncate the file's modification time
                 if let Ok(modified_secs) = modified.duration_since(SystemTime::UNIX_EPOCH) {
                     let modified_truncated = SystemTime::UNIX_EPOCH
@@ -399,39 +423,48 @@ fn is_cache_valid(headers: &HeaderMap, etag: &str, modified: SystemTime) -> bool
 /// This prevents path traversal attacks by:
 /// 1. Canonicalizing the file path to resolve any `..` components
 /// 2. Verifying the canonical path starts with the library path
-fn validate_file_path(file_path: &str, music_library_path: &StdPath) -> ApiResult<PathBuf> {
-    // Construct the full path - handle both absolute and relative paths
-    let input_path = StdPath::new(file_path);
-    let full_path = if input_path.is_absolute() {
-        input_path.to_path_buf()
-    } else {
-        music_library_path.join(input_path)
-    };
+///
+/// Uses spawn_blocking to avoid blocking the async runtime during filesystem operations.
+async fn validate_file_path(file_path: &str, music_library_path: &StdPath) -> ApiResult<PathBuf> {
+    let file_path = file_path.to_string();
+    let library = music_library_path.to_path_buf();
 
-    // Canonicalize to resolve any .., symlinks, etc.
-    let canonical = full_path.canonicalize().map_err(|_| {
-        tracing::warn!(file_path = %file_path, "Audio file not found or inaccessible");
-        ApiError::AudioFileNotFound(file_path.to_string())
-    })?;
+    tokio::task::spawn_blocking(move || {
+        // Construct the full path - handle both absolute and relative paths
+        let input_path = StdPath::new(&file_path);
+        let full_path = if input_path.is_absolute() {
+            input_path.to_path_buf()
+        } else {
+            library.join(input_path)
+        };
 
-    // Canonicalize the library path as well
-    let canonical_library = music_library_path.canonicalize().map_err(|e| {
-        tracing::error!(error = %e, path = %music_library_path.display(), "Invalid music library path");
-        ApiError::AudioProcessing(format!("Invalid music library path: {}", e))
-    })?;
+        // Canonicalize to resolve any .., symlinks, etc.
+        let canonical = full_path.canonicalize().map_err(|_| {
+            tracing::warn!(file_path = %file_path, "Audio file not found or inaccessible");
+            ApiError::AudioFileNotFound(file_path.to_string())
+        })?;
 
-    // Verify the canonical path starts with the library path
-    if !canonical.starts_with(&canonical_library) {
-        tracing::warn!(
-            file_path = %file_path,
-            canonical = %canonical.display(),
-            library = %canonical_library.display(),
-            "Path traversal attempt blocked"
-        );
-        return Err(ApiError::Forbidden("Access denied".to_string()));
-    }
+        // Canonicalize the library path as well
+        let canonical_library = library.canonicalize().map_err(|e| {
+            tracing::error!(error = %e, path = %library.display(), "Invalid music library path");
+            ApiError::AudioProcessing(format!("Invalid music library path: {}", e))
+        })?;
 
-    Ok(canonical)
+        // Verify the canonical path starts with the library path
+        if !canonical.starts_with(&canonical_library) {
+            tracing::warn!(
+                file_path = %file_path,
+                canonical = %canonical.display(),
+                library = %canonical_library.display(),
+                "Path traversal attempt blocked"
+            );
+            return Err(ApiError::Forbidden("Access denied".to_string()));
+        }
+
+        Ok(canonical)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("Path validation task failed: {}", e)))?
 }
 
 #[cfg(test)]
@@ -653,10 +686,26 @@ mod tests {
         assert!(!is_cache_valid(&headers, "\"12345-1000\"", modified));
     }
 
+    #[test]
+    fn test_is_cache_valid_future_date_rejected() {
+        // If-Modified-Since date in the future should be rejected
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+
+        // Use a date far in the future (year 2100)
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            "Sun, 01 Jan 2100 00:00:00 GMT".parse().unwrap(),
+        );
+
+        // Should return false because the date is in the future
+        assert!(!is_cache_valid(&headers, "\"12345-1000\"", modified));
+    }
+
     // ========== validate_file_path Tests ==========
 
-    #[test]
-    fn test_validate_file_path_relative_path_valid() {
+    #[tokio::test]
+    async fn test_validate_file_path_relative_path_valid() {
         // Use a real temporary directory for testing
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("test_audio_file.flac");
@@ -664,23 +713,23 @@ mod tests {
         // Create a test file
         std::fs::write(&test_file, b"test content").unwrap();
 
-        let result = validate_file_path("test_audio_file.flac", &temp_dir);
+        let result = validate_file_path("test_audio_file.flac", &temp_dir).await;
         assert!(result.is_ok());
 
         // Cleanup
         std::fs::remove_file(&test_file).ok();
     }
 
-    #[test]
-    fn test_validate_file_path_nonexistent_file() {
+    #[tokio::test]
+    async fn test_validate_file_path_nonexistent_file() {
         let temp_dir = std::env::temp_dir();
-        let result = validate_file_path("nonexistent_file.flac", &temp_dir);
+        let result = validate_file_path("nonexistent_file.flac", &temp_dir).await;
 
         assert!(matches!(result, Err(ApiError::AudioFileNotFound(_))));
     }
 
-    #[test]
-    fn test_validate_file_path_traversal_blocked() {
+    #[tokio::test]
+    async fn test_validate_file_path_traversal_blocked() {
         // Create a file outside the library path and try to access it via traversal
         let temp_dir = std::env::temp_dir();
         let library_subdir = temp_dir.join("music_library_test");
@@ -691,7 +740,7 @@ mod tests {
         std::fs::write(&outside_file, b"secret content").unwrap();
 
         // Try to access it via path traversal
-        let result = validate_file_path("../outside_library.txt", &library_subdir);
+        let result = validate_file_path("../outside_library.txt", &library_subdir).await;
 
         // Should be blocked as Forbidden
         assert!(matches!(result, Err(ApiError::Forbidden(_))));
@@ -701,22 +750,22 @@ mod tests {
         std::fs::remove_dir(&library_subdir).ok();
     }
 
-    #[test]
-    fn test_validate_file_path_absolute_path_inside_library() {
+    #[tokio::test]
+    async fn test_validate_file_path_absolute_path_inside_library() {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("absolute_test_file.flac");
         std::fs::write(&test_file, b"test content").unwrap();
 
         // Use absolute path
-        let result = validate_file_path(test_file.to_str().unwrap(), &temp_dir);
+        let result = validate_file_path(test_file.to_str().unwrap(), &temp_dir).await;
         assert!(result.is_ok());
 
         // Cleanup
         std::fs::remove_file(&test_file).ok();
     }
 
-    #[test]
-    fn test_validate_file_path_absolute_path_outside_library() {
+    #[tokio::test]
+    async fn test_validate_file_path_absolute_path_outside_library() {
         let temp_dir = std::env::temp_dir();
         let library_subdir = temp_dir.join("music_library_test_2");
         std::fs::create_dir_all(&library_subdir).unwrap();
@@ -726,7 +775,7 @@ mod tests {
         std::fs::write(&outside_file, b"secret content").unwrap();
 
         // Try to access it via absolute path
-        let result = validate_file_path(outside_file.to_str().unwrap(), &library_subdir);
+        let result = validate_file_path(outside_file.to_str().unwrap(), &library_subdir).await;
 
         // Should be blocked as Forbidden
         assert!(matches!(result, Err(ApiError::Forbidden(_))));
