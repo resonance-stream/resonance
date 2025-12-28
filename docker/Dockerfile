@@ -8,7 +8,7 @@
 # ----------------------------------------------------------------------------
 # Stage 1: Builder
 # ----------------------------------------------------------------------------
-FROM rust:1.75-slim AS builder
+FROM rust:1-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,22 +25,26 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY apps/api/Cargo.toml ./apps/api/
 COPY apps/worker/Cargo.toml ./apps/worker/
+COPY packages/shared-config/Cargo.toml ./packages/shared-config/
 
 # Create dummy source files for dependency compilation
-RUN mkdir -p apps/api/src apps/worker/src \
+RUN mkdir -p apps/api/src apps/worker/src packages/shared-config/src \
     && echo 'fn main() {}' > apps/api/src/main.rs \
-    && echo 'fn main() {}' > apps/worker/src/main.rs
+    && echo 'pub fn dummy() {}' > apps/api/src/lib.rs \
+    && echo 'fn main() {}' > apps/worker/src/main.rs \
+    && echo 'pub fn dummy() {}' > packages/shared-config/src/lib.rs
 
 # Build dependencies only (this layer will be cached)
 RUN cargo build --release -p resonance-api \
-    && rm -rf apps/api/src apps/worker/src
+    && rm -rf apps/api/src apps/worker/src packages/shared-config/src
 
 # Copy actual source code
 COPY apps/api/src ./apps/api/src/
 COPY apps/api/migrations ./apps/api/migrations/
+COPY packages/shared-config/src ./packages/shared-config/src/
 
-# Touch main.rs to ensure rebuild with actual source
-RUN touch apps/api/src/main.rs
+# Touch source files to ensure rebuild with actual source
+RUN touch apps/api/src/main.rs apps/api/src/lib.rs packages/shared-config/src/lib.rs
 
 # Build the release binary
 RUN cargo build --release -p resonance-api

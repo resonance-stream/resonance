@@ -1,9 +1,38 @@
 import { GraphQLClient } from 'graphql-request'
 
-const API_URL = import.meta.env.VITE_API_URL || '/graphql'
+// Lazy-initialized GraphQL client to ensure window.location is available
+let _graphqlClient: GraphQLClient | null = null
 
-export const graphqlClient = new GraphQLClient(API_URL, {
-  credentials: 'include',
+const getApiUrl = (): string => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  // In browser, construct full URL from current origin
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/graphql`
+  }
+  return 'http://localhost:4440/graphql'
+}
+
+const getClient = (): GraphQLClient => {
+  if (!_graphqlClient) {
+    _graphqlClient = new GraphQLClient(getApiUrl(), {
+      credentials: 'include',
+    })
+  }
+  return _graphqlClient
+}
+
+// Export a proxy that lazily initializes the client
+export const graphqlClient = new Proxy({} as GraphQLClient, {
+  get(_target, prop: string | symbol) {
+    const client = getClient()
+    const value = client[prop as keyof GraphQLClient]
+    if (typeof value === 'function') {
+      return value.bind(client)
+    }
+    return value
+  },
 })
 
 export function setAuthToken(token: string | null): void {
