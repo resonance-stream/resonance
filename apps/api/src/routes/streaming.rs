@@ -432,6 +432,18 @@ async fn validate_file_path(file_path: &str, music_library_path: &StdPath) -> Ap
     tokio::task::spawn_blocking(move || {
         // Construct the full path - handle both absolute and relative paths
         let input_path = StdPath::new(&file_path);
+
+        // Reject any parent-dir components in relative paths early to avoid
+        // existence probing via different error messages (file-not-found vs forbidden)
+        if !input_path.is_absolute()
+            && input_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            tracing::warn!(file_path = %file_path, "Path traversal attempt blocked (contains ..)");
+            return Err(ApiError::Forbidden("Access denied".to_string()));
+        }
+
         let full_path = if input_path.is_absolute() {
             input_path.to_path_buf()
         } else {
@@ -782,6 +794,27 @@ mod tests {
 
         // Cleanup
         std::fs::remove_file(&outside_file).ok();
+        std::fs::remove_dir(&library_subdir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_validate_file_path_traversal_nonexistent_returns_forbidden() {
+        // Test that non-existent files with traversal components return Forbidden
+        // (not NotFound), to prevent existence probing attacks
+        let temp_dir = std::env::temp_dir();
+        let library_subdir = temp_dir.join("music_library_probe_test");
+        std::fs::create_dir_all(&library_subdir).unwrap();
+
+        // Try to access a non-existent file with traversal components
+        // Should return Forbidden, not NotFound, to prevent existence probing
+        let result = validate_file_path("../nonexistent_file.txt", &library_subdir).await;
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+
+        // Also test nested traversal
+        let result2 = validate_file_path("subdir/../../../secret.txt", &library_subdir).await;
+        assert!(matches!(result2, Err(ApiError::Forbidden(_))));
+
+        // Cleanup
         std::fs::remove_dir(&library_subdir).ok();
     }
 }
