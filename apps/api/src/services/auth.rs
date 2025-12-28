@@ -113,12 +113,18 @@ fn parse_duration_string(s: &str) -> Option<i64> {
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: i64 = num_str.parse().ok()?;
 
+    // Reject non-positive values
+    if num <= 0 {
+        return None;
+    }
+
+    // Use checked_mul to prevent integer overflow
     match unit {
         "s" => Some(num),
-        "m" => Some(num * 60),
-        "h" => Some(num * 3600),
-        "d" => Some(num * 24 * 3600),
-        "w" => Some(num * 7 * 24 * 3600),
+        "m" => num.checked_mul(60),
+        "h" => num.checked_mul(3600),
+        "d" => num.checked_mul(24)?.checked_mul(3600),
+        "w" => num.checked_mul(7)?.checked_mul(24)?.checked_mul(3600),
         _ => None,
     }
 }
@@ -623,8 +629,14 @@ impl AuthService {
 
     /// Verify a password against an Argon2id hash
     fn verify_password(&self, password: &str, hash: &str) -> ApiResult<bool> {
-        let parsed_hash = PasswordHash::new(hash)
-            .map_err(|e| ApiError::Internal(format!("Invalid password hash format: {}", e)))?;
+        // Parse hash, returning false on invalid format to prevent information disclosure
+        let parsed_hash = match PasswordHash::new(hash) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(error = %e, "Stored password hash is invalid");
+                return Ok(false);
+            }
+        };
 
         Ok(self
             .argon2

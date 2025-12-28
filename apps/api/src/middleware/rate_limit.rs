@@ -519,6 +519,7 @@ pub fn extract_client_ip_option(
 /// let proxies = TrustedProxies::none();
 /// let ip = extract_client_ip_trusted(&headers, connect_info.as_ref(), &proxies);
 /// ```
+#[allow(dead_code)] // Available for future use with trusted proxy configuration
 pub fn extract_client_ip_trusted(
     headers: &HeaderMap,
     connect_info: Option<&ConnectInfo<std::net::SocketAddr>>,
@@ -536,10 +537,13 @@ pub fn extract_client_ip_trusted(
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                // X-Forwarded-For can contain multiple IPs; pick the first *public* valid one
+                // to prevent IP spoofing with private addresses
                 for ip in value.split(',').map(|s| s.trim()) {
-                    if ip.parse::<IpAddr>().is_ok() {
-                        return ip.to_string();
+                    if let Ok(parsed) = ip.parse::<IpAddr>() {
+                        if !is_private_or_localhost(&parsed) {
+                            return ip.to_string();
+                        }
                     }
                 }
             }
@@ -549,8 +553,10 @@ pub fn extract_client_ip_trusted(
         if let Some(real_ip) = headers.get("x-real-ip") {
             if let Ok(value) = real_ip.to_str() {
                 let ip = value.trim();
-                if ip.parse::<IpAddr>().is_ok() {
-                    return ip.to_string();
+                if let Ok(parsed) = ip.parse::<IpAddr>() {
+                    if !is_private_or_localhost(&parsed) {
+                        return ip.to_string();
+                    }
                 }
             }
         }
@@ -594,10 +600,13 @@ pub fn extract_client_ip_trusted_option(
         // Try X-Forwarded-For first (for proxied requests)
         if let Some(forwarded) = headers.get("x-forwarded-for") {
             if let Ok(value) = forwarded.to_str() {
-                // X-Forwarded-For can contain multiple IPs; pick the first valid one
+                // X-Forwarded-For can contain multiple IPs; pick the first *public* valid one
+                // to prevent IP spoofing with private addresses
                 for ip in value.split(',').map(|s| s.trim()) {
-                    if ip.parse::<IpAddr>().is_ok() {
-                        return Some(ip.to_string());
+                    if let Ok(parsed) = ip.parse::<IpAddr>() {
+                        if !is_private_or_localhost(&parsed) {
+                            return Some(ip.to_string());
+                        }
                     }
                 }
             }
@@ -607,8 +616,10 @@ pub fn extract_client_ip_trusted_option(
         if let Some(real_ip) = headers.get("x-real-ip") {
             if let Ok(value) = real_ip.to_str() {
                 let ip = value.trim();
-                if ip.parse::<IpAddr>().is_ok() {
-                    return Some(ip.to_string());
+                if let Ok(parsed) = ip.parse::<IpAddr>() {
+                    if !is_private_or_localhost(&parsed) {
+                        return Some(ip.to_string());
+                    }
                 }
             }
         }
@@ -679,7 +690,13 @@ pub async fn login_rate_limit(
             if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
                 response.headers_mut().insert("X-RateLimit-Remaining", v);
             }
-            if let Ok(v) = axum::http::HeaderValue::from_str(&state.login_config.window_secs.to_string()) {
+            // Use Unix timestamp for reset time (seconds since epoch)
+            let reset_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_add(state.login_config.window_secs);
+            if let Ok(v) = axum::http::HeaderValue::from_str(&reset_at.to_string()) {
                 response.headers_mut().insert("X-RateLimit-Reset", v);
             }
             response
@@ -721,7 +738,13 @@ pub async fn register_rate_limit(
             if let Ok(v) = axum::http::HeaderValue::from_str(&remaining.to_string()) {
                 response.headers_mut().insert("X-RateLimit-Remaining", v);
             }
-            if let Ok(v) = axum::http::HeaderValue::from_str(&state.register_config.window_secs.to_string()) {
+            // Use Unix timestamp for reset time (seconds since epoch)
+            let reset_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_add(state.register_config.window_secs);
+            if let Ok(v) = axum::http::HeaderValue::from_str(&reset_at.to_string()) {
                 response.headers_mut().insert("X-RateLimit-Reset", v);
             }
             response

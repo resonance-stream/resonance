@@ -78,10 +78,18 @@ function parseAuthError(error: unknown): AuthError {
 
 /**
  * Parse DateTime string to timestamp with buffer for early refresh
+ * Returns null if the date is invalid to prevent NaN propagation
  */
-function parseExpiresAt(expiresAt: string): number {
+function parseExpiresAt(expiresAt: string): number | null {
   // Parse ISO8601 DateTime and subtract 60 seconds as buffer
-  return new Date(expiresAt).getTime() - 60 * 1000
+  const timestamp = new Date(expiresAt).getTime()
+
+  // Check for invalid date (NaN)
+  if (Number.isNaN(timestamp)) {
+    return null
+  }
+
+  return timestamp - 60 * 1000
 }
 
 /**
@@ -104,11 +112,37 @@ interface AuthPayloadResponse {
 }
 
 /**
- * Extract user object from flattened auth payload response
+ * Valid user roles
  */
-function extractUserFromPayload(payload: AuthPayloadResponse): User {
-  // Convert role to lowercase to match UserRole type
-  const role = payload.role.toLowerCase() as UserRole
+const VALID_ROLES: UserRole[] = ['admin', 'user', 'guest']
+
+/**
+ * Validate that a string is a valid ISO8601 timestamp
+ */
+function isValidTimestamp(value: string): boolean {
+  const timestamp = new Date(value).getTime()
+  return !Number.isNaN(timestamp)
+}
+
+/**
+ * Extract user object from flattened auth payload response
+ * Validates role and timestamps to prevent invalid state
+ */
+function extractUserFromPayload(payload: AuthPayloadResponse): User | null {
+  // Convert role to lowercase and validate
+  const roleLower = payload.role.toLowerCase()
+  if (!VALID_ROLES.includes(roleLower as UserRole)) {
+    console.error('Invalid role in auth payload:', payload.role)
+    return null
+  }
+  const role = roleLower as UserRole
+
+  // Validate timestamps
+  if (!isValidTimestamp(payload.createdAt) || !isValidTimestamp(payload.updatedAt)) {
+    console.error('Invalid timestamps in auth payload')
+    return null
+  }
+
   // Use email prefix as username (backend doesn't return username yet)
   const username = payload.email.split('@')[0] ?? payload.email
 
@@ -155,6 +189,17 @@ export const useAuthStore = create<AuthState>()(
 
           const payload = response.login
           const user = extractUserFromPayload(payload)
+          const expiresAt = parseExpiresAt(payload.expiresAt)
+
+          // Validate payload before accepting
+          if (!user || expiresAt === null) {
+            const authError: AuthError = {
+              code: 'UNKNOWN_ERROR',
+              message: 'Invalid response from server',
+            }
+            set({ status: 'unauthenticated', error: authError })
+            throw authError
+          }
 
           // Set auth header for subsequent requests
           setAuthToken(payload.accessToken)
@@ -163,7 +208,7 @@ export const useAuthStore = create<AuthState>()(
             user,
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
-            expiresAt: parseExpiresAt(payload.expiresAt),
+            expiresAt,
             status: 'authenticated',
             error: null,
           })
@@ -194,6 +239,17 @@ export const useAuthStore = create<AuthState>()(
 
           const payload = response.register
           const user = extractUserFromPayload(payload)
+          const expiresAt = parseExpiresAt(payload.expiresAt)
+
+          // Validate payload before accepting
+          if (!user || expiresAt === null) {
+            const authError: AuthError = {
+              code: 'UNKNOWN_ERROR',
+              message: 'Invalid response from server',
+            }
+            set({ status: 'unauthenticated', error: authError })
+            throw authError
+          }
 
           // Set auth header for subsequent requests
           setAuthToken(payload.accessToken)
@@ -202,7 +258,7 @@ export const useAuthStore = create<AuthState>()(
             user,
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
-            expiresAt: parseExpiresAt(payload.expiresAt),
+            expiresAt,
             status: 'authenticated',
             error: null,
           })
@@ -270,6 +326,12 @@ export const useAuthStore = create<AuthState>()(
           )
 
           const { accessToken, refreshToken: newRefreshToken, expiresAt } = response.refreshToken
+          const parsedExpiresAt = parseExpiresAt(expiresAt)
+
+          // Validate expiresAt before accepting
+          if (parsedExpiresAt === null) {
+            throw new Error('Invalid expiry time in refresh response')
+          }
 
           // Set new auth header
           setAuthToken(accessToken)
@@ -277,7 +339,7 @@ export const useAuthStore = create<AuthState>()(
           set({
             accessToken,
             refreshToken: newRefreshToken,
-            expiresAt: parseExpiresAt(expiresAt),
+            expiresAt: parsedExpiresAt,
             status: 'authenticated',
             error: null,
           })
@@ -327,7 +389,7 @@ export const useAuthStore = create<AuthState>()(
             user: response.me,
             status: 'authenticated',
           })
-        } catch (error) {
+        } catch {
           // Token might be expired, try refresh
           const refreshed = await get().refreshAccessToken()
           if (refreshed) {
@@ -383,25 +445,42 @@ export const useAuthStore = create<AuthState>()(
       /**
        * Hydrate auth state after loading from storage
        * Called on app initialization to restore auth header
+       * Fully clears invalid persisted sessions to prevent bad state
        */
       hydrate: () => {
-        const { accessToken, expiresAt, refreshAccessToken: refresh } = get()
+        const { accessToken, expiresAt, refreshToken, user, refreshAccessToken: refresh } = get()
 
-        if (accessToken && expiresAt) {
-          // Check if token is expired
-          if (Date.now() >= expiresAt) {
-            // Token expired, set loading state and try to refresh
-            set({ status: 'loading' })
-            void refresh()
-          } else {
-            // Token still valid, set auth header
-            setAuthToken(accessToken)
-            set({ status: 'authenticated' })
-          }
-        } else {
-          // Ensure we don't keep a stale Authorization header
+        // Validate that all required fields exist and are valid
+        const isValidSession =
+          accessToken &&
+          refreshToken &&
+          typeof expiresAt === 'number' &&
+          !Number.isNaN(expiresAt) &&
+          user !== null
+
+        if (!isValidSession) {
+          // Fully clear invalid persisted session
           setAuthToken(null)
-          set({ status: 'unauthenticated' })
+          set({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            status: 'unauthenticated',
+            error: null,
+          })
+          return
+        }
+
+        // Check if token is expired
+        if (Date.now() >= expiresAt) {
+          // Token expired, set loading state and try to refresh
+          set({ status: 'loading' })
+          void refresh()
+        } else {
+          // Token still valid, set auth header
+          setAuthToken(accessToken)
+          set({ status: 'authenticated' })
         }
       },
     }),

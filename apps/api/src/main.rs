@@ -113,7 +113,12 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
     let scheme = parts.next()?;
     let token = parts.next()?;
 
-    if scheme.eq_ignore_ascii_case("bearer") {
+    // Reject malformed values like "Bearer <token> <extra>"
+    if parts.next().is_some() {
+        return None;
+    }
+
+    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
         Some(token)
     } else {
         None

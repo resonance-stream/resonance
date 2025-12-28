@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
+use std::net::IpAddr;
 use uuid::Uuid;
 
 /// Session row returned from database queries
@@ -67,6 +68,10 @@ impl SessionRepository {
         user_agent: Option<&str>,
         expires_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
+        // Validate IP address before storing to prevent database errors on malformed input
+        let validated_ip: Option<IpAddr> = ip_address.and_then(|s| s.parse().ok());
+        let ip_string = validated_ip.map(|ip| ip.to_string());
+
         sqlx::query(
             r#"
             INSERT INTO sessions (
@@ -84,7 +89,7 @@ impl SessionRepository {
         .bind(device_name)
         .bind(device_type)
         .bind(device_id)
-        .bind(ip_address)
+        .bind(ip_string.as_deref())
         .bind(user_agent)
         .bind(expires_at)
         .execute(&self.pool)

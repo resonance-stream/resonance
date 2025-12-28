@@ -142,20 +142,26 @@ impl IntoResponse for AuthRejection {
             }
             AuthRejection::InvalidToken(reason) => {
                 tracing::debug!(reason = %reason, "Authentication rejected: invalid token");
-                (StatusCode::UNAUTHORIZED, ApiError::InvalidToken(reason))
+                // Return generic message to prevent information disclosure
+                (
+                    StatusCode::UNAUTHORIZED,
+                    ApiError::InvalidToken("invalid token".to_string()),
+                )
             }
             AuthRejection::DatabaseError(e) => {
                 tracing::error!(error = %e, "Authentication rejected: database error");
+                // Return generic message to prevent information disclosure
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    ApiError::Internal(format!("Failed to fetch user: {}", e)),
+                    ApiError::Internal("Authentication failed".to_string()),
                 )
             }
             AuthRejection::UserNotFound => {
                 tracing::warn!("Authentication rejected: user not found");
+                // Return same message as invalid token to prevent user enumeration
                 (
                     StatusCode::UNAUTHORIZED,
-                    ApiError::InvalidToken("user not found".to_string()),
+                    ApiError::InvalidToken("invalid token".to_string()),
                 )
             }
             AuthRejection::InsufficientPermissions => {
