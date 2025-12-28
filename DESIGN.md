@@ -86,9 +86,9 @@ The Resonance logo features **layered audio waveforms** with subtle 3D depth, re
 The wordmark displays "resonance" in a **bold, rounded geometric sans-serif** in dark navy blue.
 
 - **Location:** `/docs/assets/wordmark.png`
-- **Color:** Navy blue (#1B2838)
+- **Base Color:** Navy blue (#1B2838)
 - **Typography:** Rounded geometric sans-serif, bold weight
-- **Casing:** All lowercase
+- **Casing:** Always lowercase — never capitalize "Resonance" in the wordmark or text
 
 ### Usage Guidelines
 
@@ -96,11 +96,98 @@ The wordmark displays "resonance" in a **bold, rounded geometric sans-serif** in
 ✓ Logo alone (icon contexts)
 ✓ Wordmark alone (header contexts)
 ✓ Logo + Wordmark horizontal lockup
-✗ Don't alter colors
-✗ Don't add effects (shadows, glows)
+✓ Wordmark color inversion for dark backgrounds (CSS filter)
+✓ Logo glow effects for emphasis
+✗ Don't change logo colors (glow only)
 ✗ Don't stretch or distort
 ✗ Don't use on busy backgrounds without contrast
 ```
+
+### CRITICAL: Always Use Official Assets
+
+> **IMPORTANT:** The UI must ALWAYS use the official logo (`/logo.png`) and wordmark (`/wordmark.png`) images. Never substitute with placeholder icons, text-only representations, or recreated versions.
+
+**Wordmark Contrast Adaptation:**
+The wordmark source is dark navy blue. On dark backgrounds, use CSS filters to invert for visibility:
+
+```tsx
+// Dark background (default app theme) - invert wordmark to white
+<img
+  src="/wordmark.png"
+  alt="resonance"
+  className="h-6 brightness-0 invert opacity-90"
+/>
+
+// Light background - use wordmark as-is (no filter needed)
+<img src="/wordmark.png" alt="resonance" className="h-6" />
+```
+
+**Logo Glow Effects:**
+The logo may receive glow effects for visual emphasis. Never alter the logo's actual colors.
+
+```tsx
+// Sidebar logo with hover glow
+<img
+  src="/logo.png"
+  alt="resonance logo"
+  className="h-10 w-10 rounded-xl hover:shadow-[0_0_20px_rgba(90,106,125,0.4)] transition-shadow"
+/>
+
+// Auth pages - static glow
+<img
+  src="/logo.png"
+  alt="resonance logo"
+  className="h-16 w-16 rounded-xl shadow-[0_0_30px_rgba(90,106,125,0.3)]"
+/>
+```
+
+**Sizing Guidelines:**
+- Sidebar: Logo 40px, Wordmark height 20px
+- Auth pages: Logo 64px, Wordmark height 28px
+- Favicon: 32px (logo only)
+- Ensure wordmark fits the container — scale down if needed
+
+**Required Implementation Patterns:**
+```tsx
+// Sidebar/Navigation - horizontal lockup
+<div className="flex items-center gap-3 px-4 py-5">
+  <img
+    src="/logo.png"
+    alt="resonance logo"
+    className="h-10 w-10 rounded-xl hover:shadow-[0_0_20px_rgba(90,106,125,0.4)] transition-shadow"
+  />
+  <img
+    src="/wordmark.png"
+    alt="resonance"
+    className="h-5 brightness-0 invert opacity-90"
+  />
+</div>
+
+// Auth pages - vertical stacked lockup
+<div className="flex flex-col items-center gap-4">
+  <img
+    src="/logo.png"
+    alt="resonance logo"
+    className="h-16 w-16 rounded-xl shadow-[0_0_30px_rgba(90,106,125,0.3)]"
+  />
+  <img
+    src="/wordmark.png"
+    alt="resonance"
+    className="h-7 brightness-0 invert opacity-90"
+  />
+</div>
+```
+
+**Asset Locations (copy to `/apps/web/public/`):**
+- Logo: `/docs/assets/logo.png` → `/public/logo.png`
+- Wordmark: `/docs/assets/wordmark.png` → `/public/wordmark.png`
+
+**Never Do:**
+- Use a Music icon or generic icon as logo placeholder
+- Render "resonance" as styled text instead of the wordmark image
+- Recreate the logo with CSS gradients or SVG approximations
+- Change the logo's colors (glow effects only)
+- Capitalize "resonance" — always lowercase
 
 ---
 
@@ -108,7 +195,7 @@ The wordmark displays "resonance" in a **bold, rounded geometric sans-serif** in
 
 ### Philosophy
 
-Colors are **derived from the logo's waveform tones**—a sophisticated palette of deep charcoals, slate grays, and cool blues. The accent palette replaces generic pink/purple with tones that feel native to the brand.
+Colors are **derived from the logo's waveform tones**—a sophisticated palette of deep charcoals, slate grays, and cool blues. The waveform accent palette provides subtle, sophisticated tones, while **navy blue** serves as the energetic accent color for interactive elements like play buttons and highlights.
 
 ### Core Palette
 
@@ -134,6 +221,39 @@ Colors are **derived from the logo's waveform tones**—a sophisticated palette 
 --primary-hover: #8494A8;   /* Hover state */
 --primary-active: #5A6A7D;  /* Active/pressed state */
 ```
+
+#### Navy Accent (Primary - Energy & Playback)
+```css
+--navy: #2563EB;            /* Primary navy - play buttons, CTAs */
+--navy-hover: #3B82F6;      /* Lighter on hover */
+--navy-active: #1D4ED8;     /* Darker when pressed */
+--navy-muted: #1E40AF;      /* Subtle/disabled navy */
+--navy-glow: rgba(37, 99, 235, 0.4);   /* Glow effects */
+--navy-soft: rgba(37, 99, 235, 0.15);  /* Subtle backgrounds */
+```
+
+**Navy Usage (Primary Accent):**
+- Play buttons (main call-to-action)
+- Track list hover play icons
+- Album/playlist card hover glow effects
+- Info badges and indicators
+
+#### Mint Accent (Secondary - Success & Liked)
+```css
+--mint: #10B981;            /* Secondary mint - liked, success */
+--mint-hover: #34D399;      /* Lighter on hover */
+--mint-active: #059669;     /* Darker when pressed */
+--mint-muted: #047857;      /* Subtle/disabled mint */
+--mint-glow: rgba(16, 185, 129, 0.4);   /* Glow effects */
+--mint-soft: rgba(16, 185, 129, 0.15);  /* Subtle backgrounds */
+```
+
+**Mint Usage (Secondary Accent - Use Sparingly):**
+- Liked/favorite heart icons (on hover and active)
+- Hi-res quality badges
+- Success states and confirmations
+- "Now playing" indicator
+- NOT for primary actions (those use navy)
 
 #### Text Hierarchy
 ```css
@@ -186,6 +306,24 @@ module.exports = {
           DEFAULT: '#6B7B8F',
           hover: '#8494A8',
           active: '#5A6A7D',
+        },
+        // Navy accent - primary accent for playback
+        navy: {
+          DEFAULT: '#2563EB',
+          hover: '#3B82F6',
+          active: '#1D4ED8',
+          muted: '#1E40AF',
+          glow: 'rgba(37, 99, 235, 0.4)',
+          soft: 'rgba(37, 99, 235, 0.15)',
+        },
+        // Mint accent - secondary accent for liked/success
+        mint: {
+          DEFAULT: '#10B981',
+          hover: '#34D399',
+          active: '#059669',
+          muted: '#047857',
+          glow: 'rgba(16, 185, 129, 0.4)',
+          soft: 'rgba(16, 185, 129, 0.15)',
         },
         text: {
           primary: '#FFFFFF',
@@ -488,6 +626,18 @@ import { Play, Pause, SkipForward, Heart, Search } from 'lucide-react';
          hover:bg-primary-hover
          active:bg-primary-active
          focus:outline-none focus:ring-2 focus:ring-accent-glow
+         transition-all duration-150;
+}
+
+/* Accent Button (navy - for play actions) */
+.btn-accent {
+  @apply px-4 py-2 rounded-lg font-medium
+         bg-navy text-white
+         hover:bg-navy-hover
+         active:bg-navy-active
+         shadow-[0_0_20px_rgba(37,99,235,0.3)]
+         hover:shadow-[0_0_25px_rgba(37,99,235,0.4)]
+         focus:outline-none focus:ring-2 focus:ring-navy-glow
          transition-all duration-150;
 }
 
