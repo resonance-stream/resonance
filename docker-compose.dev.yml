@@ -25,6 +25,12 @@ services:
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   meilisearch:
     image: getmeili/meilisearch:v1.6
@@ -35,6 +41,9 @@ services:
       - MEILI_MASTER_KEY=devmeilisearchkey123456789012
       - MEILI_ENV=development
       - MEILI_NO_ANALYTICS=true
+    volumes:
+      - meilisearch-dev-data:/data.ms
 
 volumes:
   postgres-dev-data:
+  meilisearch-dev-data:
