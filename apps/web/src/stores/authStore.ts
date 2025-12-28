@@ -362,7 +362,7 @@ export const useAuthStore = create<AuthState>()(
               input: {
                 email: credentials.email,
                 password: credentials.password,
-                display_name: credentials.displayName ?? (credentials.email.split('@')[0] || credentials.email || 'user'),
+                displayName: credentials.displayName ?? (credentials.email.split('@')[0] || credentials.email || 'user'),
               },
             }
           )

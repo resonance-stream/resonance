@@ -297,7 +297,7 @@ describe('authStore', () => {
           input: {
             email: 'newuser@example.com',
             password: 'password123',
-            display_name: 'newuser',
+            displayName: 'newuser',
           },
         }
       )
@@ -320,7 +320,7 @@ describe('authStore', () => {
           input: {
             email: 'newuser@example.com',
             password: 'password123',
-            display_name: 'My Custom Name',
+            displayName: 'My Custom Name',
           },
         }
       )

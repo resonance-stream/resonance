@@ -1,0 +1,49 @@
+# Development services only (no API - run that locally)
+# Usage: docker compose -f docker-compose.dev.yml up -d
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: resonance-postgres-dev
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=resonance
+      - POSTGRES_PASSWORD=devpassword
+      - POSTGRES_DB=resonance
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resonance -d resonance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: resonance-redis-dev
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: resonance-meilisearch-dev
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=devmeilisearchkey123456789012
+      - MEILI_ENV=development
+      - MEILI_NO_ANALYTICS=true
+    volumes:
+      - meilisearch-dev-data:/data.ms
+
+volumes:
+  postgres-dev-data:
+  meilisearch-dev-data:
