@@ -25,7 +25,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
 
 # GraphQL
-async-graphql = { version = "7", features = ["uuid", "chrono"] }
+async-graphql = { version = "7", features = ["uuid", "chrono", "dataloader"] }
 async-graphql-axum = "7"
 
 # Serialization

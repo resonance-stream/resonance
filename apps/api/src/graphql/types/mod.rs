@@ -3,10 +3,19 @@
 //! This module contains the GraphQL object types that are exposed
 //! through the API, including user and authentication types.
 
+// Re-exports for public API - some types not yet consumed externally
+#![allow(unused_imports)]
+
+mod album;
+mod artist;
+mod library;
+mod playlist;
+mod track;
 mod user;
 
-pub use user::{AuthPayload, RefreshPayload, User};
-
-// UserRole is available for future use when admin features are needed
-#[allow(unused_imports)]
-pub use user::UserRole;
+pub use album::{Album, CoverArtColors};
+pub use artist::Artist;
+pub use library::{AlbumType, AudioFormat, PlaylistType};
+pub use playlist::{Playlist, PlaylistTrackEntry};
+pub use track::{AudioFeatures, Track};
+pub use user::{AuthPayload, RefreshPayload, User, UserRole};

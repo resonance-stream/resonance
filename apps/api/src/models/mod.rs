@@ -6,18 +6,24 @@
 //! - Playlists and user library
 //! - Recommendations and AI features
 
+// Re-exports for public API - some types not yet consumed externally
+#![allow(unused_imports)]
+
+pub mod album;
+pub mod artist;
+pub mod playlist;
+pub mod track;
 pub mod user;
 
 // Re-export commonly used types for external consumers
-#[allow(unused_imports)]
-pub use user::{
-    AuthTokens, Claims, DeviceInfo, DeviceType, PublicUser, RefreshClaims, Session, User,
-    UserPreferences, UserRole,
+pub use album::{Album, AlbumType, CoverArtColors, CreateAlbum};
+pub use artist::{Artist, CreateArtist};
+pub use playlist::{
+    CreatePlaylist, Playlist, PlaylistCollaborator, PlaylistTrack, PlaylistType,
+    SmartPlaylistRules, UpdatePlaylist,
 };
-
-// Future modules:
-// pub mod artist;
-// pub mod album;
-// pub mod track;
-// pub mod playlist;
-// pub mod listening_history;
+pub use track::{AudioFeatures, AudioFormat, CreateTrack, SyncedLyricLine, Track};
+pub use user::{
+    AuthTokens, Claims, DeviceInfo, DeviceType, PublicUser, RefreshClaims, RequestMetadata,
+    Session, User, UserPreferences, UserRole,
+};
