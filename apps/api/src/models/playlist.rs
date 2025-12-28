@@ -127,6 +127,7 @@ pub struct PlaylistTrack {
 }
 
 /// Playlist collaborator from playlist_collaborators table
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct PlaylistCollaborator {
     /// Playlist being collaborated on

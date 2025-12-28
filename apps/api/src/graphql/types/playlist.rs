@@ -170,6 +170,7 @@ impl PlaylistTrackEntry {
 }
 
 /// Statistics about a playlist
+#[allow(dead_code)]
 #[derive(Debug, Clone, SimpleObject)]
 pub struct PlaylistStats {
     /// Number of tracks
