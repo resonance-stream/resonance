@@ -10,7 +10,6 @@ use uuid::Uuid;
 use crate::graphql::loaders::{AlbumsByArtistLoader, TracksByArtistLoader};
 use crate::graphql::pagination::{clamp_limit, clamp_offset, MAX_NESTED_LIMIT};
 use crate::models::Artist as DbArtist;
-use crate::repositories::AlbumRepository;
 
 use super::album::Album;
 use super::track::Track;
@@ -108,11 +107,11 @@ impl Artist {
             .collect())
     }
 
-    /// Total number of albums
+    /// Total number of albums (uses DataLoader for batched fetching)
     async fn album_count(&self, ctx: &Context<'_>) -> Result<i32> {
-        let repo = ctx.data::<AlbumRepository>()?;
-        let count = repo.count_by_artist(self.inner.id).await?;
-        Ok(count as i32)
+        let loader = ctx.data::<DataLoader<AlbumsByArtistLoader>>()?;
+        let albums = loader.load_one(self.inner.id).await?;
+        Ok(albums.map(|a| a.len()).unwrap_or(0) as i32)
     }
 
     /// Top tracks by this artist (by play count, uses DataLoader for batched fetching)

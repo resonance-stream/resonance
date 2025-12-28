@@ -32,7 +32,7 @@ impl Loader<Uuid> for TracksByArtistLoader {
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
         // Fetch top tracks by play count for all requested artists
         let sql = format!(
-            "SELECT {} FROM tracks WHERE artist_id = ANY($1) ORDER BY play_count DESC NULLS LAST, title ASC",
+            "SELECT {} FROM tracks WHERE artist_id = ANY($1) ORDER BY artist_id, play_count DESC NULLS LAST, title ASC",
             TRACK_COLUMNS
         );
         let tracks: Vec<Track> = sqlx::query_as(&sql)

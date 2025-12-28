@@ -31,7 +31,7 @@ impl Loader<Uuid> for TracksByAlbumLoader {
 
     async fn load(&self, keys: &[Uuid]) -> Result<HashMap<Uuid, Self::Value>, Self::Error> {
         let sql = format!(
-            "SELECT {} FROM tracks WHERE album_id = ANY($1) ORDER BY disc_number ASC NULLS LAST, track_number ASC NULLS LAST",
+            "SELECT {} FROM tracks WHERE album_id = ANY($1) ORDER BY album_id, disc_number ASC NULLS LAST, track_number ASC NULLS LAST",
             TRACK_COLUMNS
         );
         let tracks: Vec<Track> = sqlx::query_as(&sql)

@@ -116,6 +116,8 @@ impl SchemaBuilder {
             .unwrap_or_else(|| PlaylistRepository::new(pool.clone()));
 
         // Create DataLoaders for batched fetching
+        // Note: DataLoaders already batch requests within a single query execution.
+        // Per-request caching is handled by async-graphql's request context.
         // Single-entity loaders (return one entity by ID)
         let artist_loader = DataLoader::new(ArtistLoader::new(pool.clone()), tokio::spawn);
         let album_loader = DataLoader::new(AlbumLoader::new(pool.clone()), tokio::spawn);
