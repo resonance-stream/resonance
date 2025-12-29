@@ -313,6 +313,11 @@ export class WebSocketClient {
           }
           break;
 
+        case 'ActiveDeviceChanged':
+          // Update active device tracking when server broadcasts a change
+          this._activeDeviceId = message.payload.new_device_id;
+          break;
+
         case 'DeviceConnected':
         case 'DeviceDisconnected':
         case 'DeviceList':
@@ -413,7 +418,8 @@ export class WebSocketClient {
     }
 
     // Limit messages per flush cycle to prevent tight loops
-    const maxBatch = this.config.rateLimit;
+    // Use Math.max(1, ...) to ensure at least 1 message per batch, preventing infinite loop if rateLimit is 0
+    const maxBatch = Math.max(1, this.config.rateLimit);
     let messagesSent = 0;
 
     while (this.messageQueue.length > 0 && this._state === 'connected' && messagesSent < maxBatch) {

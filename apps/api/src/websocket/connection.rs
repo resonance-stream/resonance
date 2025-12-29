@@ -359,12 +359,16 @@ impl ConnectionManager {
     }
 
     /// Update last activity timestamp for a device (call when receiving messages)
-    pub fn touch_device(&self, user_id: Uuid, device_id: &str) {
+    ///
+    /// Returns true if the device was found and updated, false otherwise.
+    pub fn touch_device(&self, user_id: Uuid, device_id: &str) -> bool {
         if let Some(user_state) = self.users.get(&user_id) {
             if let Some(handle) = user_state.connections.get(device_id) {
                 handle.touch();
+                return true;
             }
         }
+        false
     }
 
     /// Send a message to all devices for a user

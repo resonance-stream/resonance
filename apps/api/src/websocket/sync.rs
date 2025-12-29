@@ -40,8 +40,15 @@ impl SyncHandler {
     /// Handle an incoming client message
     pub async fn handle_message(&self, message: ClientMessage) -> Result<(), SyncError> {
         // Update last activity timestamp for this device
-        self.connection_manager
-            .touch_device(self.user_id, &self.device_id);
+        // If the device is not found, the connection is stale - reject the message
+        if !self
+            .connection_manager
+            .touch_device(self.user_id, &self.device_id)
+        {
+            return Err(SyncError::Internal(
+                "device not found for connection".to_string(),
+            ));
+        }
 
         match message {
             ClientMessage::PlaybackStateUpdate(state) => self.handle_playback_update(state).await,
@@ -238,14 +245,18 @@ impl SyncHandler {
     }
 
     /// Handle a device disconnection event
-    pub async fn handle_device_disconnected(&self) {
+    ///
+    /// The `was_active` parameter indicates whether this device was the active device
+    /// at the time of disconnection. This must be determined BEFORE the connection
+    /// is removed from the connection manager to avoid race conditions.
+    pub async fn handle_device_disconnected(&self, was_active: bool) {
         let event = SyncEvent::DeviceDisconnected {
             device_id: self.device_id.clone(),
         };
         self.pubsub.publish(self.user_id, event).await;
 
         // If this was the active device, clear active status and notify others
-        if self.is_active_device() {
+        if was_active {
             self.connection_manager.clear_active_device(self.user_id);
 
             // Broadcast that there's no longer an active device

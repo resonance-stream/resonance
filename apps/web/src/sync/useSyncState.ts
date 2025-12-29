@@ -101,34 +101,36 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
 
     const local = fromSyncPlaybackState(syncState);
 
+    // Get current state from store to avoid stale closure values
+    const current = usePlayerStore.getState();
+
     // Apply playback state
-    if (local.isPlaying && !isPlaying) {
+    if (local.isPlaying && !current.isPlaying) {
       play();
-    } else if (!local.isPlaying && isPlaying) {
+    } else if (!local.isPlaying && current.isPlaying) {
       pause();
     }
 
     // Apply volume if significantly different
-    if (Math.abs(local.volume - volume) > 0.01) {
+    if (Math.abs(local.volume - current.volume) > 0.01) {
       setVolume(local.volume);
     }
 
     // Apply mute state - check current state to ensure idempotency
     // (toggleMute is not a setter, so we verify state before calling)
-    const currentMuted = usePlayerStore.getState().isMuted;
-    if (local.isMuted !== currentMuted) {
+    if (local.isMuted !== current.isMuted) {
       toggleMute();
     }
 
     // Apply position with clock drift adjustment
     const adjustedPosition = adjustPositionForClockDrift(syncState);
-    const localPositionMs = currentTime * 1000;
+    const localPositionMs = current.currentTime * 1000;
     if (Math.abs(adjustedPosition - localPositionMs) > SEEK_THRESHOLD_MS) {
       setCurrentTime(adjustedPosition / 1000);
     }
 
     // Handle track change (need external handler since we don't have track loading logic)
-    if (syncState.track_id !== currentTrack?.id && syncState.track_id) {
+    if (syncState.track_id !== current.currentTrack?.id && syncState.track_id) {
       onRemoteTrackChange?.(syncState.track_id);
     }
 
@@ -138,19 +140,19 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
         stateSourceRef.current = null;
       }
     });
-  }, [
-    isActiveDevice, isPlaying, volume, currentTime, currentTrack?.id,
-    play, pause, setVolume, toggleMute, setCurrentTime, onRemoteTrackChange
-  ]);
+  }, [isActiveDevice, play, pause, setVolume, toggleMute, setCurrentTime, onRemoteTrackChange]);
 
   // Handle incoming seek sync
   const handleSeekSync = useCallback((positionMs: number, timestamp: number) => {
     if (isActiveDevice) return;
 
+    // Get current state from store to avoid stale closure values
+    const current = usePlayerStore.getState();
+
     // Reuse clock drift adjustment logic from types.ts
     const seekState: PlaybackState = {
       track_id: null,
-      is_playing: isPlaying,
+      is_playing: current.isPlaying,
       position_ms: positionMs,
       timestamp,
       volume: 0,
@@ -161,7 +163,7 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
     const adjustedPosition = adjustPositionForClockDrift(seekState);
 
     // Skip seek if position difference is within threshold (avoid jitter)
-    const localPositionMs = currentTime * 1000;
+    const localPositionMs = current.currentTime * 1000;
     if (Math.abs(adjustedPosition - localPositionMs) <= SEEK_THRESHOLD_MS) {
       return;
     }
@@ -174,7 +176,7 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
         stateSourceRef.current = null;
       }
     });
-  }, [isActiveDevice, isPlaying, currentTime, setCurrentTime]);
+  }, [isActiveDevice, setCurrentTime]);
 
   // Handle incoming queue sync
   const handleQueueSync = useCallback((syncQueue: QueueState) => {
@@ -290,6 +292,24 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
 
     return () => clearInterval(interval);
   }, [isConnected, isActiveDevice, isPlaying]);
+
+  // Track last position to detect local seeks
+  const lastLocalPositionRef = useRef<number>(currentTime);
+
+  // Broadcast immediately on large local seeks to reduce sync lag
+  useEffect(() => {
+    if (!isConnected || !isActiveDevice) return;
+    if (stateSourceRef.current === 'remote') return;
+
+    const prev = lastLocalPositionRef.current;
+    lastLocalPositionRef.current = currentTime;
+
+    // Detect if this is a significant position jump (likely a seek)
+    const deltaMs = Math.abs(currentTime - prev) * 1000;
+    if (deltaMs >= SEEK_THRESHOLD_MS) {
+      broadcastPlaybackStateRef.current();
+    }
+  }, [isConnected, isActiveDevice, currentTime]);
 
   // Broadcast queue changes
   useEffect(() => {

@@ -129,7 +129,8 @@ impl RedisPubSub {
                     Ok(()) => {
                         // Normal disconnection - still try to reconnect
                         tracing::warn!("Redis pub/sub listener disconnected, reconnecting...");
-                        // Reset backoff on clean disconnect
+                        // Reset backoff and attempt counter on clean disconnect
+                        attempts = 0;
                         delay_secs = 1;
                     }
                     Err(e) => {

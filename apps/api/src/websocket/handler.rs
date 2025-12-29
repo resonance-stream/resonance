@@ -343,7 +343,10 @@ async fn handle_socket(
         }
     }
 
-    // Clean up: remove connection and notify others
+    // Check if this device was active BEFORE removing connection (to avoid race condition)
+    let was_active = connection_manager.get_active_device(user_id) == Some(device_id.clone());
+
+    // Clean up: remove connection
     connection_manager.remove_connection(user_id, &device_id);
 
     // Notify other devices about disconnection
@@ -353,7 +356,9 @@ async fn handle_socket(
         connection_manager.clone(),
         pubsub,
     );
-    disconnect_handler.handle_device_disconnected().await;
+    disconnect_handler
+        .handle_device_disconnected(was_active)
+        .await;
 
     tracing::info!(
         user_id = %user_id,

@@ -215,14 +215,26 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceName, deviceType]); // Only recreate client when device info changes
 
+  // Track previous token for detecting token rotation
+  const prevTokenRef = useRef<string | null>(null);
+
   // Handle token changes (reconnect with new token)
   useEffect(() => {
     const client = clientRef.current;
     if (!client) return;
 
+    const prevToken = prevTokenRef.current;
+    prevTokenRef.current = accessToken;
+
     if (accessToken && autoConnect) {
-      // Connect with new token (will disconnect existing connection first)
-      if (connectionState === 'disconnected' || connectionState === 'reconnecting') {
+      // If token changed (rotation/refresh) and we're connected, disconnect first then reconnect
+      // This is necessary because WebSocketClient.connect() returns early if already connected
+      if (prevToken !== null && prevToken !== accessToken && connectionState === 'connected') {
+        client.disconnect();
+        // Use setTimeout to allow disconnect to complete before reconnecting
+        setTimeout(() => client.connect(accessToken), 0);
+      } else if (connectionState === 'disconnected' || connectionState === 'reconnecting') {
+        // Initial connect or reconnect after disconnect
         client.connect(accessToken);
       }
     } else if (!accessToken) {
