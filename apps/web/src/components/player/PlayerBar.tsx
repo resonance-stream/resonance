@@ -8,11 +8,13 @@ import { QueuePanel } from '../queue';
 import { useEqualizerStore } from '../../stores/equalizerStore';
 import { cn } from '../../lib/utils';
 
+// Panel that can be shown (only one at a time)
+type ActivePanel = 'equalizer' | 'queue' | null;
+
 export function PlayerBar(): JSX.Element | null {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const queueLength = usePlayerStore((s) => s.queue.length);
-  const [showEqualizer, setShowEqualizer] = useState(false);
-  const [showQueue, setShowQueue] = useState(false);
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const eqEnabled = useEqualizerStore((s) => s.settings.enabled);
 
   // Don't render if no track is loaded
@@ -20,30 +22,28 @@ export function PlayerBar(): JSX.Element | null {
     return null;
   }
 
-  // Close other panel when opening one
+  // Toggle panel visibility (only one panel can be open at a time)
   const handleShowEqualizer = (): void => {
-    setShowQueue(false);
-    setShowEqualizer(!showEqualizer);
+    setActivePanel((prev) => (prev === 'equalizer' ? null : 'equalizer'));
   };
 
   const handleShowQueue = (): void => {
-    setShowEqualizer(false);
-    setShowQueue(!showQueue);
+    setActivePanel((prev) => (prev === 'queue' ? null : 'queue'));
   };
 
   return (
     <>
       {/* EQ Panel Overlay */}
-      {showEqualizer && (
+      {activePanel === 'equalizer' && (
         <div className="fixed bottom-24 right-4 z-50 animate-fade-in">
-          <EqualizerPanel onClose={() => setShowEqualizer(false)} />
+          <EqualizerPanel onClose={() => setActivePanel(null)} />
         </div>
       )}
 
       {/* Queue Panel Overlay */}
-      {showQueue && (
+      {activePanel === 'queue' && (
         <div className="fixed bottom-24 right-4 z-50 animate-fade-in">
-          <QueuePanel onClose={() => setShowQueue(false)} />
+          <QueuePanel onClose={() => setActivePanel(null)} />
         </div>
       )}
 
@@ -75,11 +75,11 @@ export function PlayerBar(): JSX.Element | null {
               className={cn(
                 'p-2 rounded-full transition-colors',
                 'hover:bg-white/10',
-                showQueue && 'bg-white/10',
+                activePanel === 'queue' && 'bg-white/10',
                 queueLength > 0 && 'text-accent'
               )}
-              aria-label={showQueue ? 'Hide queue' : 'Show queue'}
-              aria-pressed={showQueue}
+              aria-label={activePanel === 'queue' ? 'Hide queue' : 'Show queue'}
+              aria-pressed={activePanel === 'queue'}
             >
               <svg
                 className="w-5 h-5"
@@ -102,11 +102,11 @@ export function PlayerBar(): JSX.Element | null {
               className={cn(
                 'p-2 rounded-full transition-colors',
                 'hover:bg-white/10',
-                showEqualizer && 'bg-white/10',
+                activePanel === 'equalizer' && 'bg-white/10',
                 eqEnabled && 'text-accent'
               )}
-              aria-label={showEqualizer ? 'Hide equalizer' : 'Show equalizer'}
-              aria-pressed={showEqualizer}
+              aria-label={activePanel === 'equalizer' ? 'Hide equalizer' : 'Show equalizer'}
+              aria-pressed={activePanel === 'equalizer'}
             >
               <svg
                 className="w-5 h-5"

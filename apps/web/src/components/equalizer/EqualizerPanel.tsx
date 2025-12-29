@@ -3,7 +3,7 @@ import { Switch } from '../ui/Switch';
 import { Button } from '../ui/Button';
 import { EqualizerSlider } from './EqualizerSlider';
 import { PresetSelector } from './PresetSelector';
-import { useEqualizerStore } from '../../stores/equalizerStore';
+import { useEqualizerStore, builtInPresets } from '../../stores/equalizerStore';
 import { EQ_FREQUENCY_LABELS } from '../../audio/constants';
 import type { EqBandFrequency } from '../../audio/types';
 import { cn } from '../../lib/utils';
@@ -36,13 +36,11 @@ export function EqualizerPanel({ className, onClose }: EqualizerPanelProps): JSX
     customPresets,
   } = useEqualizerStore();
 
-  // Get all presets (built-in + custom)
-  // This is already memoized in the store's getAllPresets, we just need to call it when customPresets changes
-  const presets = useMemo(() => {
-    // Built-in presets are constant, only custom presets change
-    return [...useEqualizerStore.getState().getAllPresets()];
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- customPresets triggers recalculation
-  }, [customPresets]);
+  // Combine built-in and custom presets (built-in are constant, only recalculate when customPresets changes)
+  const presets = useMemo(
+    () => [...builtInPresets, ...customPresets],
+    [customPresets]
+  );
 
   // Memoize handlers to prevent unnecessary re-renders
   const handlePreampChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

@@ -41,8 +41,8 @@ interface EqualizerState {
   getSettings: () => EqSettings;
 }
 
-// Convert built-in presets to EqualizerPreset format
-const builtInPresets: EqualizerPreset[] = Object.entries(EQ_PRESETS).map(
+// Convert built-in presets to EqualizerPreset format (exported for direct use)
+export const builtInPresets: EqualizerPreset[] = Object.entries(EQ_PRESETS).map(
   ([id, preset]) => ({
     id,
     name: preset.name,

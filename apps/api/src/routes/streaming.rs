@@ -117,7 +117,14 @@ async fn stream_track(
     // 2. Validate and resolve file path
     let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
-    // 3. Check if transcoding is requested
+    // 3. Validate transcoding parameters
+    if transcode_query.bitrate.is_some() && transcode_query.format.is_none() {
+        return Err(ApiError::ValidationError(
+            "`bitrate` requires `format` parameter".to_string(),
+        ));
+    }
+
+    // 4. Check if transcoding is requested
     if let Some(format_str) = &transcode_query.format {
         // Parse the target format
         let target_format = TranscodeFormat::parse(format_str).ok_or_else(|| {

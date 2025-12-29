@@ -281,9 +281,10 @@ impl TranscoderService {
 
         let mut cmd = Command::new("ffmpeg");
 
-        // Input file
+        // Input file - use file: protocol to prevent argument injection
+        // (prevents paths starting with special characters like - or http: from being misinterpreted)
         cmd.arg("-i")
-            .arg(input_path)
+            .arg(format!("file:{}", input_path.display()))
             // Suppress banner and stats
             .arg("-hide_banner")
             .arg("-loglevel")
