@@ -248,6 +248,11 @@ async fn upsert_artist(
     genres: &[String],
     mbid: Option<Uuid>,
 ) -> WorkerResult<bool> {
+    // Safely convert i64 to i32 to prevent silent truncation
+    let lidarr_id_i32 = i32::try_from(lidarr_id).map_err(|_| {
+        WorkerError::InvalidJobData(format!("Lidarr artist ID out of i32 range: {}", lidarr_id))
+    })?;
+
     // Use ON CONFLICT to handle race conditions atomically
     // xmax = 0 indicates a fresh insert (no previous version existed)
     let row = sqlx::query(
@@ -270,7 +275,7 @@ async fn upsert_artist(
     .bind(biography)
     .bind(image_url)
     .bind(genres)
-    .bind(lidarr_id as i32)
+    .bind(lidarr_id_i32)
     .bind(mbid)
     .fetch_one(db)
     .await?;

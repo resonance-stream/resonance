@@ -133,8 +133,9 @@ pub async fn execute(state: &AppState, job: &LibraryScanJob) -> WorkerResult<()>
     let mut error_count = 0;
 
     // Walk the directory tree
+    // Note: follow_links(false) prevents DoS from cyclic symlinks
     for entry in WalkDir::new(&scan_path)
-        .follow_links(true)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {
@@ -283,9 +284,21 @@ async fn process_audio_file(
 
 /// Compute SHA-256 hash of a file
 fn compute_file_hash(path: &Path) -> WorkerResult<String> {
+    use std::io::Read;
+
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
+
+    // Read in chunks and update hasher (Sha256 doesn't implement std::io::Write)
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+
     let hash = hasher.finalize();
     Ok(format!("{:x}", hash))
 }

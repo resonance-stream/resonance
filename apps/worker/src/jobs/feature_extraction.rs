@@ -177,40 +177,44 @@ pub async fn execute(state: &AppState, job: &FeatureExtractionJob) -> WorkerResu
 
     // Run CPU-intensive extraction in blocking thread pool
     let path_for_extraction = canonical_track.clone();
-    let features =
-        match tokio::task::spawn_blocking(move || extract_features(&path_for_extraction)).await {
-            Ok(Ok(f)) => f,
-            Ok(Err(e)) => {
-                tracing::warn!("Failed to extract features for track {}: {}", track_id, e);
-                // Return default features rather than failing the job
-                AudioFeatures::default()
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Feature extraction task panicked for track {}: {}",
-                    track_id,
-                    e
-                );
-                AudioFeatures::default()
-            }
-        };
+    let extraction_result =
+        tokio::task::spawn_blocking(move || extract_features(&path_for_extraction)).await;
 
-    // Store features in database
-    let features_json = serde_json::to_value(&features)
-        .map_err(|e| WorkerError::InvalidJobData(format!("Failed to serialize features: {}", e)))?;
+    // Only update database if extraction succeeded (don't overwrite existing data with defaults)
+    let features = match extraction_result {
+        Ok(Ok(f)) => Some(f),
+        Ok(Err(e)) => {
+            tracing::warn!("Failed to extract features for track {}: {}", track_id, e);
+            None
+        }
+        Err(e) => {
+            tracing::error!(
+                "Feature extraction task panicked for track {}: {}",
+                track_id,
+                e
+            );
+            None
+        }
+    };
 
-    sqlx::query("UPDATE tracks SET audio_features = $1, updated_at = NOW() WHERE id = $2")
-        .bind(&features_json)
-        .bind(track_id)
-        .execute(&state.db)
-        .await?;
+    if let Some(features) = features {
+        let features_json = serde_json::to_value(&features).map_err(|e| {
+            WorkerError::InvalidJobData(format!("Failed to serialize features: {}", e))
+        })?;
 
-    tracing::info!(
-        "Feature extraction completed for track {}: loudness={:?}dB, energy={:?}",
-        track_id,
-        features.loudness,
-        features.energy
-    );
+        sqlx::query("UPDATE tracks SET audio_features = $1, updated_at = NOW() WHERE id = $2")
+            .bind(&features_json)
+            .bind(track_id)
+            .execute(&state.db)
+            .await?;
+
+        tracing::info!(
+            "Feature extraction completed for track {}: loudness={:?}dB, energy={:?}",
+            track_id,
+            features.loudness,
+            features.energy
+        );
+    }
 
     Ok(())
 }
