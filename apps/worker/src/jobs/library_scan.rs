@@ -134,11 +134,15 @@ pub async fn execute(state: &AppState, job: &LibraryScanJob) -> WorkerResult<()>
 
     // Walk the directory tree
     // Note: follow_links(false) prevents DoS from cyclic symlinks
-    for entry in WalkDir::new(&scan_path)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&scan_path).follow_links(false).into_iter() {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("WalkDir error while scanning {:?}: {}", scan_path, e);
+                error_count += 1;
+                continue;
+            }
+        };
         let path = entry.path();
 
         // Skip directories and non-audio files
@@ -313,7 +317,7 @@ fn extract_metadata(path: &Path, file_hash: &str) -> WorkerResult<AudioMetadata>
         .map_err(|e| WorkerError::AudioProcessing(format!("Failed to read audio file: {}", e)))?;
 
     let properties = tagged_file.properties();
-    let duration_ms = properties.duration().as_millis() as i32;
+    let duration_ms = i32::try_from(properties.duration().as_millis()).unwrap_or(i32::MAX);
     let bit_rate = properties.audio_bitrate().map(|b| b as i32);
     let sample_rate = properties.sample_rate().map(|s| s as i32);
     let channels = properties.channels().map(|c| c as i16);

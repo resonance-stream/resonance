@@ -338,10 +338,41 @@ async fn check_new_releases(
         scan_paths.len()
     );
 
-    // Queue library scans for each artist directory
+    // Validate and queue library scans for each artist directory
+    let canonical_library = state
+        .config
+        .music_library_path()
+        .canonicalize()
+        .map_err(|e| {
+            WorkerError::Configuration(format!("Failed to canonicalize library path: {}", e))
+        })?;
+
     for path in scan_paths {
+        // Validate path is within music library before queueing
+        let candidate = PathBuf::from(&path);
+        let canonical_candidate = match candidate.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    "Skipping Lidarr scan path (cannot canonicalize) {}: {}",
+                    path,
+                    e
+                );
+                continue;
+            }
+        };
+
+        if !canonical_candidate.starts_with(&canonical_library) {
+            tracing::warn!(
+                "Skipping Lidarr scan path outside library: {} (library: {:?})",
+                path,
+                canonical_library
+            );
+            continue;
+        }
+
         let scan_job = Job::LibraryScan(LibraryScanJob {
-            path: Some(PathBuf::from(&path)),
+            path: Some(canonical_candidate),
             force_rescan: false,
         });
 

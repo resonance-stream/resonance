@@ -188,12 +188,25 @@ pub async fn execute(state: &AppState, job: &FeatureExtractionJob) -> WorkerResu
             None
         }
         Err(e) => {
-            tracing::error!(
-                "Feature extraction task panicked for track {}: {}",
-                track_id,
-                e
-            );
-            None
+            // Differentiate panics from cancellations for better diagnostics
+            if e.is_panic() {
+                tracing::error!(
+                    "Feature extraction task panicked for track {}: {}",
+                    track_id,
+                    e
+                );
+            } else {
+                tracing::warn!(
+                    "Feature extraction task cancelled for track {}: {}",
+                    track_id,
+                    e
+                );
+            }
+            // Return error to enable job retries
+            return Err(WorkerError::AudioProcessing(format!(
+                "Feature extraction join error for {}: {}",
+                track_id, e
+            )));
         }
     };
 
@@ -248,6 +261,7 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
     let track = format
         .default_track()
         .ok_or_else(|| WorkerError::AudioProcessing("No audio track found".to_string()))?;
+    let selected_track_id = track.id;
 
     // Create a decoder
     let decoder_opts = DecoderOptions::default();
@@ -284,6 +298,11 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
                 break;
             }
         };
+
+        // Only process packets from the selected track (skip other streams)
+        if packet.track_id() != selected_track_id {
+            continue;
+        }
 
         // Check sample limit to prevent unbounded processing
         if stats.sample_count >= MAX_SAMPLES {
