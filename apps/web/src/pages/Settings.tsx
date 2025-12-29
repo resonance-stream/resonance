@@ -1,7 +1,31 @@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
+import { Switch } from '../components/ui/Switch'
+import { Slider } from '../components/ui/Slider'
+import { useSettingsStore } from '../stores/settingsStore'
+
+// Note: Crossfade settings are synced to AudioEngine in AudioProvider.tsx
+// This component only updates the store; AudioProvider handles the sync.
 
 export default function Settings() {
+  const {
+    playback,
+    audioQuality,
+    setCrossfadeEnabled,
+    setCrossfadeDuration,
+    setGaplessEnabled,
+    setNormalizeVolume,
+    setAudioQuality,
+  } = useSettingsStore()
+
+  const formatDuration = (seconds: number): string => {
+    return `${seconds}s`
+  }
+
+  const handleCrossfadeDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCrossfadeDuration(Number(e.target.value))
+  }
+
   return (
     <div className="flex flex-1 flex-col p-6 animate-fade-in">
       {/* Header */}
@@ -25,12 +49,15 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="mt-4">
-            <div className="flex flex-wrap gap-2">
-              {['Auto', 'Low', 'Normal', 'High', 'Lossless'].map((quality) => (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Audio quality selection">
+              {(['auto', 'low', 'normal', 'high', 'lossless'] as const).map((quality) => (
                 <Button
                   key={quality}
-                  variant={quality === 'High' ? 'secondary' : 'ghost'}
+                  variant={audioQuality.quality === quality ? 'secondary' : 'ghost'}
                   size="sm"
+                  onClick={() => setAudioQuality(quality)}
+                  className="capitalize"
+                  aria-pressed={audioQuality.quality === quality}
                 >
                   {quality}
                 </Button>
@@ -47,27 +74,62 @@ export default function Settings() {
               Customize your listening experience
             </CardDescription>
           </CardHeader>
-          <CardContent className="mt-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-text-primary">Crossfade</p>
-                <p className="text-sm text-text-muted">Smoothly transition between tracks</p>
+          <CardContent className="mt-4 space-y-6">
+            {/* Crossfade */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-text-primary">Crossfade</p>
+                  <p className="text-sm text-text-muted">Smoothly transition between tracks</p>
+                </div>
+                <Switch
+                  id="crossfade-toggle"
+                  checked={playback.crossfadeEnabled}
+                  onCheckedChange={setCrossfadeEnabled}
+                  aria-label="Enable crossfade"
+                />
               </div>
-              <Button variant="ghost" size="sm">Off</Button>
+              {playback.crossfadeEnabled && (
+                <div className="pl-4 border-l-2 border-background-tertiary">
+                  <Slider
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={playback.crossfadeDuration}
+                    onChange={handleCrossfadeDurationChange}
+                    valueFormatter={formatDuration}
+                    aria-label="Crossfade duration"
+                  />
+                </div>
+              )}
             </div>
+
+            {/* Gapless Playback */}
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Gapless Playback</p>
                 <p className="text-sm text-text-muted">Play albums without gaps</p>
               </div>
-              <Button variant="secondary" size="sm">On</Button>
+              <Switch
+                id="gapless-toggle"
+                checked={playback.gaplessEnabled}
+                onCheckedChange={setGaplessEnabled}
+                aria-label="Enable gapless playback"
+              />
             </div>
+
+            {/* Volume Normalization */}
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Normalize Volume</p>
                 <p className="text-sm text-text-muted">Set the same volume for all tracks</p>
               </div>
-              <Button variant="secondary" size="sm">On</Button>
+              <Switch
+                id="normalize-volume-toggle"
+                checked={playback.normalizeVolume}
+                onCheckedChange={setNormalizeVolume}
+                aria-label="Enable volume normalization"
+              />
             </div>
           </CardContent>
         </Card>

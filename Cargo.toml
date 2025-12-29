@@ -16,6 +16,8 @@ repository = "https://github.com/resonance-stream/resonance"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
+bytes = "1"
+futures-core = "0.3"
 
 # Web framework
 axum = "0.7"

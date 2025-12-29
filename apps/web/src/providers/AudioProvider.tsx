@@ -1,14 +1,26 @@
-import { useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { usePlayerStore } from '../stores/playerStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useEqualizerStore } from '../stores/equalizerStore';
 import { KeyboardShortcuts } from '../components/player/KeyboardShortcuts';
 import { AudioContext, type AudioContextValue } from '../contexts/AudioContext';
+import { AudioEngine } from '../audio';
+import type { EqSettings, CrossfadeSettings, PlaybackState } from '../audio/types';
 
 interface AudioProviderProps {
   children: ReactNode;
 }
 
 export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
+  // Keep legacy audio ref for backward compatibility
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Audio engine state
+  const [engine] = useState<AudioEngine>(() => new AudioEngine());
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [engineState, setEngineState] = useState<PlaybackState>('stopped');
+
+  // Track refs to prevent duplicate loads
   const lastTrackIdRef = useRef<string | null>(null);
   const lastTimeUpdateRef = useRef<number>(0);
 
@@ -17,9 +29,19 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const volume = usePlayerStore((s) => s.volume);
   const isMuted = usePlayerStore((s) => s.isMuted);
+  const queue = usePlayerStore((s) => s.queue);
+  const queueIndex = usePlayerStore((s) => s.queueIndex);
 
   // Use refs for values accessed in event handlers to avoid recreating listeners
   const repeatRef = useRef(usePlayerStore.getState().repeat);
+  const queueRef = useRef(queue);
+  const queueIndexRef = useRef(queueIndex);
+
+  useEffect(() => {
+    queueRef.current = queue;
+    queueIndexRef.current = queueIndex;
+  }, [queue, queueIndex]);
+
   useEffect(() => {
     return usePlayerStore.subscribe((state) => {
       repeatRef.current = state.repeat;
@@ -34,245 +56,267 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
   const setLoading = usePlayerStore((s) => s.setLoading);
   const setBuffering = usePlayerStore((s) => s.setBuffering);
 
-  // Track whether audio is ready to play (canplay received)
-  const isReadyRef = useRef(false);
   // Track whether we initiated the play/pause to avoid sync loops
-  const actionSourceRef = useRef<'store' | 'audio' | null>(null);
-  // Track pending play intent - canplay handler will trigger play when ready
-  const playPendingRef = useRef(false);
+  const actionSourceRef = useRef<'store' | 'engine' | null>(null);
 
-  // Seek function exposed via context
-  const seek = useCallback((time: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    // Validate input
-    if (!Number.isFinite(time)) return;
-
-    // Clamp to valid range
-    const duration = Number.isFinite(audio.duration) ? audio.duration : undefined;
-    const clamped = duration !== undefined
-      ? Math.min(Math.max(0, time), duration)
-      : Math.max(0, time);
+  // Initialize audio engine
+  const initializeEngine = useCallback(async () => {
+    if (isInitialized) return;
 
     try {
-      audio.currentTime = clamped;
-      setCurrentTime(clamped);
-    } catch {
-      // Ignore failed seeks (e.g., metadata not loaded yet)
+      await engine.initialize();
+      setIsInitialized(true);
+    } catch (error) {
+      console.error('Failed to initialize audio engine:', error);
     }
-  }, [setCurrentTime]);
+  }, [engine, isInitialized]);
 
-  // Handle track changes - only update source when track actually changes
+  // Set up engine event listeners
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const handleStateChange = (state: PlaybackState) => {
+      setEngineState(state);
 
+      if (state === 'playing' && actionSourceRef.current !== 'store') {
+        actionSourceRef.current = 'engine';
+        play();
+      } else if (state === 'paused' && actionSourceRef.current !== 'store') {
+        actionSourceRef.current = 'engine';
+        pause();
+      }
+    };
+
+    const handleTimeUpdate = (time: number) => {
+      const now = Date.now();
+      if (now - lastTimeUpdateRef.current >= 250) {
+        lastTimeUpdateRef.current = now;
+        setCurrentTime(time);
+      }
+    };
+
+    const handleEnded = () => {
+      if (repeatRef.current === 'track') {
+        engine.seek(0);
+        engine.play();
+      } else {
+        nextTrack();
+      }
+    };
+
+    const handleError = (error: Error) => {
+      console.error('Audio engine error:', error);
+      setLoading(false);
+      setBuffering(false);
+      actionSourceRef.current = 'engine';
+      pause();
+    };
+
+    const handleBuffering = (isBuffering: boolean) => {
+      setBuffering(isBuffering);
+    };
+
+    const handleLoaded = () => {
+      setLoading(false);
+    };
+
+    const handlePrefetchNeeded = () => {
+      // Use refs to get current queue state without recreating listener
+      const currentQueue = queueRef.current;
+      const currentQueueIndex = queueIndexRef.current;
+
+      // Check if there's a next track and we haven't already prefetched it
+      if (currentQueueIndex < currentQueue.length - 1 && !engine.hasPrefetchedTrack) {
+        const nextTrackData = currentQueue[currentQueueIndex + 1];
+        if (nextTrackData) {
+          const streamUrl = `/api/stream/${encodeURIComponent(nextTrackData.id)}`;
+          engine.prefetchTrack({
+            id: nextTrackData.id,
+            url: streamUrl,
+            duration: nextTrackData.duration,
+          });
+        }
+      }
+    };
+
+    engine.on('stateChange', handleStateChange);
+    engine.on('timeUpdate', handleTimeUpdate);
+    engine.on('ended', handleEnded);
+    engine.on('error', handleError);
+    engine.on('buffering', handleBuffering);
+    engine.on('loaded', handleLoaded);
+    engine.on('prefetchNeeded', handlePrefetchNeeded);
+
+    return () => {
+      engine.off('stateChange', handleStateChange);
+      engine.off('timeUpdate', handleTimeUpdate);
+      engine.off('ended', handleEnded);
+      engine.off('error', handleError);
+      engine.off('buffering', handleBuffering);
+      engine.off('loaded', handleLoaded);
+      engine.off('prefetchNeeded', handlePrefetchNeeded);
+    };
+  }, [engine, setCurrentTime, nextTrack, pause, play, setLoading, setBuffering]);
+
+  // Handle track changes
+  useEffect(() => {
     const trackId = currentTrack?.id ?? null;
 
-    // Only update source if track actually changed
     if (trackId !== lastTrackIdRef.current) {
       lastTrackIdRef.current = trackId;
-      isReadyRef.current = false; // Reset ready state for new track
 
       if (currentTrack) {
         const streamUrl = `/api/stream/${encodeURIComponent(currentTrack.id)}`;
-        audio.src = streamUrl;
-        audio.load();
+        setLoading(true);
+
+        // Initialize engine on first track load (user gesture)
+        const loadTrack = async () => {
+          try {
+            await initializeEngine();
+            await engine.loadTrack({
+              id: currentTrack.id,
+              url: streamUrl,
+              duration: currentTrack.duration,
+            });
+
+            // Auto-play if isPlaying is true
+            if (usePlayerStore.getState().isPlaying) {
+              engine.play();
+            }
+          } catch (error) {
+            console.error('Failed to load track:', error);
+            setLoading(false);
+          }
+        };
+
+        loadTrack();
       } else {
-        audio.src = '';
-        audio.load();
-        setLoading(false); // No track, not loading
+        engine.stop();
+        setLoading(false);
       }
     }
-  }, [currentTrack, setLoading]);
+  }, [currentTrack, engine, initializeEngine, setLoading]);
 
   // Handle play/pause state changes from store
-  // Only attempt to play if audio is ready (canplay received)
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !audio.src) return;
+    if (!isInitialized) return;
 
-    // Skip if this change was triggered by audio element events (avoid loops)
-    if (actionSourceRef.current === 'audio') {
+    // Skip if this change was triggered by engine events
+    if (actionSourceRef.current === 'engine') {
       actionSourceRef.current = null;
       return;
     }
 
     actionSourceRef.current = 'store';
 
-    if (isPlaying) {
-      if (isReadyRef.current) {
-        // Audio is ready, play immediately
-        playPendingRef.current = false;
-        audio.play().catch((error) => {
-          // AbortError is expected during rapid track changes - don't pause
-          if (error instanceof Error && error.name === 'AbortError') {
-            return;
-          }
-          console.warn('Play prevented:', error);
-          actionSourceRef.current = 'audio';
-          pause();
-        });
-      } else {
-        // Audio not ready, signal intent - canplay handler will trigger play
-        playPendingRef.current = true;
-      }
-    } else {
-      playPendingRef.current = false;
-      audio.pause();
+    if (isPlaying && engineState !== 'playing') {
+      engine.play();
+    } else if (!isPlaying && engineState === 'playing') {
+      engine.pause();
     }
-  }, [isPlaying, pause]);
 
-  // Handle volume and mute changes
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    // Clamp volume to valid range [0, 1] with fallback
-    const safeVolume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
-    audio.volume = safeVolume;
-    audio.muted = isMuted;
-  }, [volume, isMuted]);
-
-  // Set up audio event listeners (stable - no recreation on state changes)
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    // Throttle timeupdate to ~4 updates per second for performance
-    const handleTimeUpdate = (): void => {
-      const now = Date.now();
-      if (now - lastTimeUpdateRef.current >= 250) {
-        lastTimeUpdateRef.current = now;
-        setCurrentTime(audio.currentTime);
-      }
-    };
-
-    const handleEnded = (): void => {
-      if (repeatRef.current === 'track') {
-        // Repeat the current track
-        audio.currentTime = 0;
-        audio.play().catch(console.warn);
-      } else {
-        // Move to next track (or stop if at end)
-        nextTrack();
-      }
-    };
-
-    const handleError = (e: Event): void => {
-      console.error('Audio error:', e);
-      setLoading(false);
-      setBuffering(false);
-      actionSourceRef.current = 'audio';
-      pause();
-    };
-
-    // Loading state events
-    const handleLoadStart = (): void => {
-      isReadyRef.current = false;
-      setLoading(true);
-      setBuffering(false);
-    };
-
-    const handleCanPlay = (): void => {
-      isReadyRef.current = true;
-      setLoading(false);
-
-      // If play was requested before audio was ready, trigger it now
-      if (playPendingRef.current && audio.paused) {
-        playPendingRef.current = false;
-        audio.play().catch((error) => {
-          if (error instanceof Error && error.name === 'AbortError') {
-            return;
-          }
-          console.warn('Play prevented after canplay:', error);
-          actionSourceRef.current = 'audio';
-          pause();
-        });
-      }
-    };
-
-    // Buffering state events
-    const handleWaiting = (): void => {
-      setBuffering(true);
-    };
-
-    const handlePlaying = (): void => {
-      setBuffering(false);
-      // Sync store if audio started playing (e.g., from autoplay or external control)
-      const { isPlaying: storeIsPlaying } = usePlayerStore.getState();
-      if (!storeIsPlaying && actionSourceRef.current !== 'store') {
-        // Audio started playing externally - sync store
-        actionSourceRef.current = 'audio';
-        play();
-        // Don't clear actionSourceRef here - let the effect clear it
-      } else if (actionSourceRef.current === 'store') {
-        // Store-initiated play completed - clear the guard
+    // Clear action source using microtask for more predictable timing
+    queueMicrotask(() => {
+      if (actionSourceRef.current === 'store') {
         actionSourceRef.current = null;
       }
-    };
+    });
+  }, [isPlaying, engineState, engine, isInitialized]);
 
-    const handlePause = (): void => {
-      // Sync store if audio was paused externally (not from store action)
-      const { isPlaying: storeIsPlaying } = usePlayerStore.getState();
-      if (storeIsPlaying && actionSourceRef.current !== 'store') {
-        // Audio paused externally - sync store
-        actionSourceRef.current = 'audio';
-        pause();
-        // Don't clear actionSourceRef here - let the effect clear it
-      } else if (actionSourceRef.current === 'store') {
-        // Store-initiated pause completed - clear the guard
-        actionSourceRef.current = null;
-      }
-    };
-
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('ended', handleEnded);
-    audio.addEventListener('error', handleError);
-    audio.addEventListener('loadstart', handleLoadStart);
-    audio.addEventListener('canplay', handleCanPlay);
-    audio.addEventListener('waiting', handleWaiting);
-    audio.addEventListener('playing', handlePlaying);
-    audio.addEventListener('pause', handlePause);
-
-    return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('ended', handleEnded);
-      audio.removeEventListener('error', handleError);
-      audio.removeEventListener('loadstart', handleLoadStart);
-      audio.removeEventListener('canplay', handleCanPlay);
-      audio.removeEventListener('waiting', handleWaiting);
-      audio.removeEventListener('playing', handlePlaying);
-      audio.removeEventListener('pause', handlePause);
-    };
-  }, [setCurrentTime, nextTrack, pause, play, setLoading, setBuffering]);
-
-  // Cleanup audio element on unmount to prevent orphaned playback
+  // Handle volume changes
   useEffect(() => {
-    const audio = audioRef.current;
-    return () => {
-      // Reset sync guards
-      actionSourceRef.current = null;
-      playPendingRef.current = false;
-      isReadyRef.current = false;
-      if (audio) {
-        audio.pause();
-        audio.src = '';
-        audio.load();
-      }
-    };
-  }, []);
+    engine.setVolume(volume);
+    engine.setMuted(isMuted);
+  }, [engine, volume, isMuted]);
 
-  // Memoize context value to prevent unnecessary re-renders in consumers
+  // Sync crossfade settings from settings store
+  const crossfadeEnabled = useSettingsStore((s) => s.playback.crossfadeEnabled);
+  const crossfadeDuration = useSettingsStore((s) => s.playback.crossfadeDuration);
+
+  useEffect(() => {
+    engine.setCrossfade({
+      enabled: crossfadeEnabled,
+      duration: crossfadeDuration,
+    });
+  }, [engine, crossfadeEnabled, crossfadeDuration]);
+
+  // Sync EQ settings from equalizer store
+  // This ensures EQ is applied on app start, not just when EqualizerPanel is mounted
+  const eqSettings = useEqualizerStore((s) => s.settings);
+
+  useEffect(() => {
+    engine.applyEqSettings(eqSettings);
+  }, [engine, eqSettings]);
+
+  // Seek function exposed via context
+  const seek = useCallback((time: number) => {
+    if (!isInitialized) return;
+    engine.seek(time);
+    setCurrentTime(time);
+  }, [engine, isInitialized, setCurrentTime]);
+
+  // Prefetch next track
+  const prefetchNextTrack = useCallback(async (trackId: string, url: string) => {
+    if (!isInitialized) return;
+    await engine.prefetchTrack({ id: trackId, url });
+  }, [engine, isInitialized]);
+
+  // EQ settings
+  const getEqSettings = useCallback((): EqSettings => {
+    return engine.getEqSettings();
+  }, [engine]);
+
+  const applyEqSettings = useCallback((settings: EqSettings) => {
+    engine.applyEqSettings(settings);
+  }, [engine]);
+
+  // Crossfade settings
+  const getCrossfadeSettings = useCallback((): CrossfadeSettings => {
+    return engine.getCrossfadeSettings();
+  }, [engine]);
+
+  const setCrossfadeSettings = useCallback((settings: CrossfadeSettings) => {
+    engine.setCrossfade(settings);
+  }, [engine]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      engine.destroy();
+    };
+  }, [engine]);
+
+  // Memoize context value
   const contextValue = useMemo<AudioContextValue>(
-    () => ({ seek, audioRef }),
-    [seek]
+    () => ({
+      seek,
+      audioRef,
+      engine,
+      engineState,
+      isInitialized,
+      initializeEngine,
+      prefetchNextTrack,
+      getEqSettings,
+      applyEqSettings,
+      getCrossfadeSettings,
+      setCrossfadeSettings,
+    }),
+    [
+      seek,
+      engine,
+      engineState,
+      isInitialized,
+      initializeEngine,
+      prefetchNextTrack,
+      getEqSettings,
+      applyEqSettings,
+      getCrossfadeSettings,
+      setCrossfadeSettings,
+    ]
   );
 
   return (
     <AudioContext.Provider value={contextValue}>
-      <audio ref={audioRef} preload="auto" />
+      {/* Keep hidden audio element for legacy compatibility */}
+      <audio ref={audioRef} style={{ display: 'none' }} />
       <KeyboardShortcuts />
       {children}
     </AudioContext.Provider>

@@ -13,12 +13,13 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
     routing::get,
     Router,
 };
+use serde::Deserialize;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -31,6 +32,19 @@ use crate::error::{ApiError, ApiResult};
 use crate::middleware::AuthUser;
 use crate::models::AudioFormat;
 use crate::repositories::TrackRepository;
+use crate::services::transcoder::TranscodeError;
+use crate::services::{TranscodeFormat, TranscodeOptions, TranscoderService};
+
+/// Query parameters for transcoding options
+#[derive(Debug, Deserialize, Default)]
+pub struct TranscodeQuery {
+    /// Target audio format (mp3, aac, opus, flac)
+    /// If not specified, streams the original file without transcoding
+    pub format: Option<String>,
+    /// Target bitrate in kbps (64, 96, 128, 192, 256, 320)
+    /// If not specified, uses the format's default bitrate
+    pub bitrate: Option<u32>,
+}
 
 /// Shared application state for streaming handlers
 #[derive(Clone)]
@@ -39,6 +53,8 @@ pub struct StreamingState {
     pub track_repo: Arc<TrackRepository>,
     /// Base path to the music library
     pub music_library_path: PathBuf,
+    /// Transcoder service for on-the-fly format conversion
+    pub transcoder: TranscoderService,
 }
 
 impl StreamingState {
@@ -47,6 +63,7 @@ impl StreamingState {
         Self {
             track_repo: Arc::new(track_repo),
             music_library_path,
+            transcoder: TranscoderService::new(),
         }
     }
 }
@@ -67,15 +84,18 @@ pub fn streaming_router(state: StreamingState) -> Router {
 /// # Request
 /// - Method: GET
 /// - Path: /stream/:track_id
+/// - Query Parameters:
+///   - format: Target format (mp3, aac, opus, flac) - optional, for transcoding
+///   - bitrate: Target bitrate in kbps (64, 96, 128, 192, 256, 320) - optional
 /// - Headers:
 ///   - Authorization: Bearer <token> (required)
-///   - Range: bytes=START-END (optional, for seeking)
+///   - Range: bytes=START-END (optional, for seeking - not supported with transcoding)
 ///   - If-None-Match: <etag> (optional, for caching)
 ///   - If-Modified-Since: <date> (optional, for caching)
 ///
 /// # Response
-/// - 200 OK: Full audio file stream
-/// - 206 Partial Content: Partial file for range requests
+/// - 200 OK: Full audio file stream (or transcoded stream)
+/// - 206 Partial Content: Partial file for range requests (passthrough only)
 /// - 304 Not Modified: Cache is still valid
 /// - 401 Unauthorized: Missing or invalid token
 /// - 404 Not Found: Track or audio file not found
@@ -84,6 +104,7 @@ async fn stream_track(
     State(state): State<StreamingState>,
     _auth: AuthUser, // Validates authentication
     Path(track_id): Path<Uuid>,
+    Query(transcode_query): Query<TranscodeQuery>,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
     // 1. Look up track in database
@@ -96,7 +117,61 @@ async fn stream_track(
     // 2. Validate and resolve file path
     let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
-    // 3. Open file and get metadata
+    // 3. Check if transcoding is requested
+    if let Some(format_str) = &transcode_query.format {
+        // Parse the target format
+        let target_format = TranscodeFormat::parse(format_str).ok_or_else(|| {
+            ApiError::ValidationError(format!("Unsupported format: {}", format_str))
+        })?;
+
+        // Build transcode options
+        let options = match transcode_query.bitrate {
+            Some(bitrate) => TranscodeOptions::with_bitrate(target_format, bitrate)
+                .map_err(|e| ApiError::ValidationError(e.to_string()))?,
+            None => TranscodeOptions::new(target_format),
+        };
+
+        // Start transcoding
+        let transcode_stream = state
+            .transcoder
+            .transcode(&file_path, &options)
+            .await
+            .map_err(|e| {
+                match &e {
+                    TranscodeError::ResourceExhausted => {
+                        // Return 503 Service Unavailable when at capacity
+                        tracing::warn!(error = %e, "Transcoding at capacity");
+                        ApiError::ServiceBusy("Transcoding capacity reached, try again later".to_string())
+                    }
+                    TranscodeError::FfmpegNotFound => {
+                        tracing::error!(error = %e, "FFmpeg not available");
+                        ApiError::Configuration("FFmpeg not installed".to_string())
+                    }
+                    _ => {
+                        tracing::error!(error = %e, path = %file_path.display(), "Transcoding failed");
+                        ApiError::AudioProcessing(format!("Transcoding failed: {}", e))
+                    }
+                }
+            })?;
+
+        let content_type = target_format.content_type();
+        let body = Body::from_stream(transcode_stream);
+
+        // Transcoded streams don't support range requests or Content-Length
+        // (we don't know the final size until transcoding completes)
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::TRANSFER_ENCODING, "chunked")
+            .header(
+                header::CACHE_CONTROL,
+                "private, no-store", // Don't cache transcoded content
+            )
+            .body(body)
+            .expect("Failed to build response"));
+    }
+
+    // 4. Passthrough: Open file and get metadata
     let file = File::open(&file_path).await.map_err(|e| {
         tracing::error!(error = %e, path = %file_path.display(), "Failed to open audio file");
         ApiError::AudioFileNotFound(track.file_path.clone())
@@ -110,12 +185,12 @@ async fn stream_track(
     let file_size = metadata.len();
     let content_type = content_type_for_format(&track.file_format);
 
-    // 4. Get modification time and generate caching headers
+    // 5. Get modification time and generate caching headers
     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
     let etag = generate_etag(file_size, modified);
     let last_modified = format_http_date(modified);
 
-    // 5. Check for conditional request (304 Not Modified)
+    // 6. Check for conditional request (304 Not Modified)
     if is_cache_valid(&headers, &etag, modified) {
         return Ok(Response::builder()
             .status(StatusCode::NOT_MODIFIED)
@@ -129,7 +204,7 @@ async fn stream_track(
             .expect("Failed to build response"));
     }
 
-    // 6. Handle range request
+    // 7. Handle range request
     let range_header = headers.get(header::RANGE).and_then(|h| h.to_str().ok());
 
     match range_header {
