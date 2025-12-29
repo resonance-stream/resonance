@@ -59,7 +59,7 @@ pub(crate) struct RawSimilarArtist {
 
 impl From<RawSimilarArtist> for SimilarArtist {
     fn from(raw: RawSimilarArtist) -> Self {
-        let match_score = raw.match_score.parse().unwrap_or_else(|e| {
+        let parsed: f64 = raw.match_score.parse().unwrap_or_else(|e| {
             tracing::warn!(
                 artist = %raw.name,
                 raw_score = %raw.match_score,
@@ -68,6 +68,14 @@ impl From<RawSimilarArtist> for SimilarArtist {
             );
             0.0
         });
+
+        // Validate and clamp the score to [0.0, 1.0] range
+        let match_score = if parsed.is_finite() {
+            parsed.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             name: raw.name,
             mbid: raw.mbid.filter(|s| !s.is_empty()),

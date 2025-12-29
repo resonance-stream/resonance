@@ -71,6 +71,13 @@ async fn execute_inner(
     track_id: sqlx::types::Uuid,
     force: bool,
 ) -> WorkerResult<()> {
+    // Ensure Ollama client is available
+    let ollama = state.ollama.as_ref().ok_or_else(|| {
+        crate::WorkerError::OllamaUnavailable(
+            "Ollama client not initialized - is Ollama running?".to_string(),
+        )
+    })?;
+
     // Check if both embeddings already exist (unless force regeneration)
     // Using EXISTS for efficiency - avoids fetching data
     // We check for both title AND description embeddings to ensure completeness
@@ -130,8 +137,8 @@ async fn execute_inner(
 
     // Generate embeddings via Ollama (parallel for performance)
     let (title_embedding, description_embedding) = tokio::try_join!(
-        state.ollama.generate_embedding(&title_text),
-        state.ollama.generate_embedding(&description_text)
+        ollama.generate_embedding(&title_text),
+        ollama.generate_embedding(&description_text)
     )?;
 
     // Validate embedding dimensions
@@ -139,8 +146,8 @@ async fn execute_inner(
     resonance_ollama_client::validate_embedding_dimension(&description_embedding)?;
 
     // Convert embeddings to pgvector format (text representation)
-    let title_vec_str = format_embedding_for_pgvector(&title_embedding);
-    let description_vec_str = format_embedding_for_pgvector(&description_embedding);
+    let title_vec_str = format_embedding_for_pgvector(&title_embedding)?;
+    let description_vec_str = format_embedding_for_pgvector(&description_embedding)?;
 
     // Upsert embeddings into track_embeddings table
     sqlx::query(
@@ -208,9 +215,17 @@ fn build_description_text(track: &TrackMetadata) -> String {
 }
 
 /// Format embedding vector as pgvector string representation
-fn format_embedding_for_pgvector(embedding: &[f32]) -> String {
+/// Returns an error if any values are non-finite (NaN/inf)
+fn format_embedding_for_pgvector(embedding: &[f32]) -> WorkerResult<String> {
+    // Validate that all values are finite to prevent database errors
+    if embedding.iter().any(|v| !v.is_finite()) {
+        return Err(crate::WorkerError::InvalidPayload(
+            "Embedding contains non-finite values (NaN/inf)".to_string(),
+        ));
+    }
+
     let values: Vec<String> = embedding.iter().map(|v| format!("{:.6}", v)).collect();
-    format!("[{}]", values.join(","))
+    Ok(format!("[{}]", values.join(",")))
 }
 
 #[cfg(test)]
@@ -263,7 +278,7 @@ mod tests {
     #[test]
     fn test_format_embedding_for_pgvector() {
         let embedding = vec![0.1, 0.2, -0.3, 0.0];
-        let result = format_embedding_for_pgvector(&embedding);
+        let result = format_embedding_for_pgvector(&embedding).unwrap();
 
         assert_eq!(result, "[0.100000,0.200000,-0.300000,0.000000]");
     }
@@ -271,8 +286,23 @@ mod tests {
     #[test]
     fn test_format_embedding_for_pgvector_empty() {
         let embedding: Vec<f32> = vec![];
-        let result = format_embedding_for_pgvector(&embedding);
+        let result = format_embedding_for_pgvector(&embedding).unwrap();
 
         assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_format_embedding_for_pgvector_rejects_nan() {
+        let embedding = vec![0.1, f32::NAN, 0.3];
+        let result = format_embedding_for_pgvector(&embedding);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-finite"));
+    }
+
+    #[test]
+    fn test_format_embedding_for_pgvector_rejects_inf() {
+        let embedding = vec![0.1, f32::INFINITY, 0.3];
+        let result = format_embedding_for_pgvector(&embedding);
+        assert!(result.is_err());
     }
 }

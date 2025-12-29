@@ -260,8 +260,16 @@ pub struct MoodTag {
 }
 
 /// Format a vector as pgvector literal string with fixed precision
+/// Non-finite values (NaN/inf) are sanitized to 0.0 to prevent database errors
 fn format_embedding(embedding: &[f32]) -> String {
-    let values: Vec<String> = embedding.iter().map(|v| format!("{:.6}", v)).collect();
+    let values: Vec<String> = embedding
+        .iter()
+        .map(|v| {
+            // Sanitize non-finite values to prevent database casting errors
+            let v = if v.is_finite() { *v } else { 0.0 };
+            format!("{:.6}", v)
+        })
+        .collect();
     format!("[{}]", values.join(","))
 }
 
@@ -309,6 +317,22 @@ mod tests {
         let result = format_embedding(&embedding);
         // Should format to 6 decimal places
         assert_eq!(result, "[0.123457,-0.987654]");
+    }
+
+    #[test]
+    fn test_format_embedding_sanitizes_nan() {
+        let embedding = vec![0.1, f32::NAN, 0.3];
+        let result = format_embedding(&embedding);
+        // NaN should be replaced with 0.0
+        assert_eq!(result, "[0.100000,0.000000,0.300000]");
+    }
+
+    #[test]
+    fn test_format_embedding_sanitizes_inf() {
+        let embedding = vec![f32::INFINITY, -f32::INFINITY, 0.5];
+        let result = format_embedding(&embedding);
+        // Infinity should be replaced with 0.0
+        assert_eq!(result, "[0.000000,0.000000,0.500000]");
     }
 
     #[test]

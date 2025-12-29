@@ -40,11 +40,27 @@ pub enum LastfmError {
 
 impl LastfmError {
     /// Check if this error is retryable (transient failure)
+    ///
+    /// Retries on:
+    /// - Timeouts
+    /// - Rate limiting
+    /// - Transport errors (connect, timeout)
+    /// - Server errors (5xx)
+    ///
+    /// Does NOT retry on client errors (4xx except 429 rate limiting).
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            LastfmError::Timeout | LastfmError::Http(_) | LastfmError::RateLimited
-        )
+        match self {
+            LastfmError::Timeout | LastfmError::RateLimited => true,
+            LastfmError::Http(e) => {
+                // Retry on transport issues
+                if e.is_timeout() || e.is_connect() {
+                    return true;
+                }
+                // Retry on server errors (5xx) but not client errors (4xx)
+                matches!(e.status(), Some(status) if status.is_server_error())
+            }
+            _ => false,
+        }
     }
 }
 

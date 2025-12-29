@@ -87,6 +87,13 @@ async fn execute_inner(
     track_id: sqlx::types::Uuid,
     force: bool,
 ) -> WorkerResult<()> {
+    // Ensure Ollama client is available
+    let ollama = state.ollama.as_ref().ok_or_else(|| {
+        crate::WorkerError::OllamaUnavailable(
+            "Ollama client not initialized - is Ollama running?".to_string(),
+        )
+    })?;
+
     // Check if mood already exists (unless force regeneration)
     if !force {
         let has_mood: (bool,) = sqlx::query_as(
@@ -150,7 +157,7 @@ async fn execute_inner(
         ..Default::default()
     });
 
-    let response = state.ollama.chat_with_options(messages, options).await?;
+    let response = ollama.chat_with_options(messages, options).await?;
 
     // Parse the JSON response
     let analysis = parse_mood_response(&response)?;
@@ -164,12 +171,17 @@ async fn execute_inner(
 
     // Update track with mood data
     // Use array deduplication to prevent duplicate tags on re-runs
+    // COALESCE handles NULL ai_tags column to prevent concatenation errors
     sqlx::query(
         r#"
         UPDATE tracks
         SET
             ai_mood = $2,
-            ai_tags = (SELECT ARRAY(SELECT DISTINCT unnest(ai_tags || $3))),
+            ai_tags = (
+                SELECT ARRAY(
+                    SELECT DISTINCT unnest(COALESCE(ai_tags, '{}'::text[]) || $3)
+                )
+            ),
             ai_description = $4,
             updated_at = NOW()
         WHERE id = $1

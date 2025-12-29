@@ -81,6 +81,11 @@ impl OllamaClient {
         F: Fn() -> Fut,
         Fut: Future<Output = OllamaResult<T>>,
     {
+        // Handle edge case of 0 retry attempts - run operation once
+        if self.retry_attempts == 0 {
+            return operation().await;
+        }
+
         let mut last_error = None;
 
         for attempt in 0..self.retry_attempts {
@@ -120,12 +125,21 @@ impl OllamaClient {
     }
 
     /// Truncate error body to prevent memory exhaustion
+    /// Safely handles UTF-8 boundaries to avoid panics on multi-byte characters
     fn truncate_error_body(body: String) -> String {
-        if body.len() > MAX_ERROR_BODY_SIZE {
-            format!("{}... (truncated)", &body[..MAX_ERROR_BODY_SIZE])
-        } else {
-            body
+        if body.len() <= MAX_ERROR_BODY_SIZE {
+            return body;
         }
+
+        // Find a safe truncation point at a character boundary
+        let truncate_at = body
+            .char_indices()
+            .take_while(|(i, _)| *i < MAX_ERROR_BODY_SIZE)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+
+        format!("{}... (truncated)", &body[..truncate_at])
     }
 
     /// Check if Ollama is reachable
@@ -472,5 +486,34 @@ mod tests {
         let truncated = OllamaClient::truncate_error_body(long);
         assert!(truncated.len() < 1100);
         assert!(truncated.ends_with("... (truncated)"));
+    }
+
+    #[test]
+    fn test_truncate_error_body_utf8_boundary() {
+        // Create a string with multi-byte characters
+        // '日' is 3 bytes in UTF-8
+        let utf8_str = "日".repeat(500); // 1500 bytes
+        let truncated = OllamaClient::truncate_error_body(utf8_str);
+        // Should not panic and should be valid UTF-8
+        assert!(truncated.ends_with("... (truncated)"));
+        // Verify it's valid UTF-8 (no partial chars)
+        let _ = truncated.chars().count();
+    }
+
+    #[test]
+    fn test_truncate_error_body_exact_boundary() {
+        let exact = "x".repeat(MAX_ERROR_BODY_SIZE);
+        let result = OllamaClient::truncate_error_body(exact.clone());
+        // At exactly MAX_ERROR_BODY_SIZE, should NOT truncate (it's within limit)
+        assert_eq!(result, exact);
+    }
+
+    #[test]
+    fn test_truncate_error_body_just_over() {
+        let over = "x".repeat(MAX_ERROR_BODY_SIZE + 1);
+        let result = OllamaClient::truncate_error_body(over);
+        // Just over the limit should truncate
+        assert!(result.ends_with("... (truncated)"));
+        assert!(result.len() < MAX_ERROR_BODY_SIZE + 20);
     }
 }

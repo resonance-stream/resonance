@@ -44,11 +44,27 @@ pub enum OllamaError {
 
 impl OllamaError {
     /// Check if this error is retryable (transient)
+    ///
+    /// Only retry on:
+    /// - Timeouts
+    /// - Connection refused
+    /// - HTTP transport errors (connect, timeout)
+    /// - Server errors (5xx) and rate limiting (429)
+    ///
+    /// Does NOT retry on client errors (4xx except 429).
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            OllamaError::Timeout(_) | OllamaError::ConnectionRefused(_) | OllamaError::HttpError(_)
-        )
+        match self {
+            OllamaError::Timeout(_) | OllamaError::ConnectionRefused(_) => true,
+            OllamaError::HttpError(e) => {
+                // Retry on transport issues
+                if e.is_timeout() || e.is_connect() {
+                    return true;
+                }
+                // Retry on server errors (5xx) or rate limiting (429)
+                matches!(e.status(), Some(status) if status.is_server_error() || status.as_u16() == 429)
+            }
+            _ => false,
+        }
     }
 }
 
