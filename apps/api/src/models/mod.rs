@@ -4,6 +4,7 @@
 //! - Users and authentication
 //! - Artists, albums, and tracks
 //! - Playlists and user library
+//! - Device presence and sync
 //! - Recommendations and AI features
 
 // Re-exports for public API - some types not yet consumed externally
@@ -11,6 +12,7 @@
 
 pub mod album;
 pub mod artist;
+pub mod device;
 pub mod playlist;
 pub mod track;
 pub mod user;
@@ -18,6 +20,10 @@ pub mod user;
 // Re-export commonly used types for external consumers
 pub use album::{Album, AlbumType, CoverArtColors, CreateAlbum};
 pub use artist::{Artist, CreateArtist};
+pub use device::{
+    DevicePresence, DeviceValidationError, UpdateDevicePlaybackState, UpsertDevicePresence,
+    VALID_DEVICE_TYPES,
+};
 pub use playlist::{
     CreatePlaylist, Playlist, PlaylistCollaborator, PlaylistTrack, PlaylistType,
     SmartPlaylistRules, UpdatePlaylist,

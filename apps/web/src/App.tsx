@@ -3,6 +3,7 @@ import { Suspense, lazy } from 'react'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { MainLayout } from './components/layout'
 import { AudioProvider } from './providers/AudioProvider'
+import { SyncProvider } from './providers/SyncProvider'
 
 // Lazy load pages for code splitting
 const Home = lazy(() => import('./pages/Home'))
@@ -38,8 +39,9 @@ function LoadingFallback() {
 function App() {
   return (
     <AudioProvider>
-      <Suspense fallback={<LoadingFallback />}>
-        <Routes>
+      <SyncProvider>
+        <Suspense fallback={<LoadingFallback />}>
+          <Routes>
         {/* Public routes - no authentication required */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
@@ -116,10 +118,11 @@ function App() {
           }
         />
 
-        {/* Catch-all for 404 */}
-        <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
+          {/* Catch-all for 404 */}
+          <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
+      </SyncProvider>
     </AudioProvider>
   )
 }
