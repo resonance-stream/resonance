@@ -31,10 +31,12 @@ resonance/
 │   │   ├── src/
 │   │   │   ├── routes/         # HTTP/GraphQL endpoints
 │   │   │   ├── services/       # Business logic
+│   │   │   ├── repositories/   # Database access layer (SQLx queries)
 │   │   │   ├── models/         # Database models (SQLx)
 │   │   │   ├── websocket/      # Real-time sync handlers
 │   │   │   └── graphql/        # GraphQL schema definitions
 │   │   ├── migrations/         # SQLx migrations
+│   │   ├── tests/              # Integration tests (require DB)
 │   │   └── Cargo.toml
 │   │
 │   ├── worker/                 # Background job processor
@@ -110,10 +112,13 @@ resonance/
 # Build all Rust packages
 cargo build
 
-# Run API server (from apps/api)
+# Run API server
 cargo run -p resonance-api
 
-# Run worker (from apps/worker)
+# Run API with hot reload (requires cargo-watch)
+cargo watch -x 'run -p resonance-api'
+
+# Run worker
 cargo run -p resonance-worker
 
 # Run all tests
@@ -125,14 +130,17 @@ cargo test test_name
 # Run tests in a specific package
 cargo test -p resonance-api
 
+# Run integration tests (require running database)
+cargo test -p resonance-api --test '*' -- --test-threads=1
+
 # Run tests with coverage
 cargo tarpaulin
 
 # Format code
 cargo fmt
 
-# Lint
-cargo clippy -- -D warnings
+# Lint (CI uses -D warnings to fail on warnings)
+cargo clippy --all-targets --all-features -- -D warnings
 
 # Check SQLx queries (requires DATABASE_URL)
 cargo sqlx prepare --workspace
@@ -140,11 +148,14 @@ cargo sqlx prepare --workspace
 
 ### Frontend
 ```bash
-# Install dependencies
+# Install dependencies (run from repo root for workspace)
 pnpm install
 
+# Build shared-types (required before typecheck/build)
+pnpm --filter @resonance/shared-types build
+
 # Start dev server (from apps/web)
-pnpm dev
+cd apps/web && pnpm dev
 
 # Build for production
 pnpm build
@@ -164,7 +175,7 @@ pnpm test -- -t "pattern"
 # Lint
 pnpm lint
 
-# Type check
+# Type check (build shared-types first)
 pnpm typecheck
 
 # Generate GraphQL types
@@ -261,16 +272,17 @@ chore(deps): update dependencies
 
 ## Architecture Patterns
 
-### Backend: Modular Monolith
+### Backend: Layered Architecture
 ```
-Request → Router → Handler → Service → Repository → Database
-                      ↓
-                  Response
+Request → Router → Handler/Resolver → Service → Repository → Database
+                         ↓
+                     Response
 ```
 
-- **Handlers**: Parse requests, call services, format responses
-- **Services**: Business logic, orchestration
-- **Repositories**: Database access (via SQLx)
+- **Routes/Handlers**: Parse requests, call services, format responses (REST endpoints)
+- **GraphQL Resolvers**: GraphQL query/mutation handlers using DataLoader for N+1 prevention
+- **Services**: Business logic, orchestration, cross-cutting concerns
+- **Repositories**: Database access layer (SQLx queries, transaction handling)
 - **Models**: Domain types and database entities
 
 ### API Design
@@ -306,9 +318,10 @@ The worker (`apps/worker`) handles scheduled background tasks:
 ## Testing
 
 ### Rust
-- Unit tests: Inline in `src/` files (run with `cargo test`)
-- Integration tests: `apps/api/tests/` (require running database)
-- Use `cargo test --test '*' -- --test-threads=1` for integration tests
+- Unit tests: Inline in `src/` files with `#[cfg(test)]` modules
+- Integration tests: `apps/api/tests/` (require running database and Redis)
+- Common test utilities: `apps/api/tests/common/` (fixtures, helpers)
+- Use `cargo test -p resonance-api --test '*' -- --test-threads=1` for integration tests
 
 ### Frontend
 - **Vitest** for test runner
@@ -320,29 +333,23 @@ The worker (`apps/worker`) handles scheduled background tasks:
 
 ## Common Tasks
 
-### Adding a New API Endpoint
+### Adding a New GraphQL Query
 
-1. **Define GraphQL schema** (`apps/api/src/graphql/schema.graphql`):
-```graphql
-extend type Query {
-  playlist(id: ID!): Playlist
-}
-```
-
-2. **Create resolver** (`apps/api/src/graphql/resolvers/playlist.rs`):
+1. **Add GraphQL type** (`apps/api/src/graphql/types/playlist.rs`)
+2. **Add query resolver** (`apps/api/src/graphql/query/playlist.rs`):
 ```rust
 #[Object]
 impl PlaylistQuery {
     async fn playlist(&self, ctx: &Context<'_>, id: ID) -> Result<Playlist> {
-        let service = ctx.data::<PlaylistService>()?;
-        service.get_by_id(id.parse()?).await
+        let repo = ctx.data::<PlaylistRepository>()?;
+        repo.find_by_id(id.parse()?).await
     }
 }
 ```
-
-3. **Implement service** (`apps/api/src/services/playlist.rs`)
-4. **Add tests**
-5. **Regenerate frontend types**: `pnpm codegen`
+3. **Add DataLoader** (if needed) (`apps/api/src/graphql/loaders/`)
+4. **Register in schema** (`apps/api/src/graphql/schema.rs`)
+5. **Add tests**
+6. **Regenerate frontend types**: `pnpm codegen`
 
 ### Adding a New React Component
 
