@@ -143,8 +143,8 @@ export default function Artist() {
   // Error state
   if (error || !artist) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center p-6 animate-fade-in">
-        <AlertCircle size={48} className="text-text-muted mb-4" />
+      <div role="alert" className="flex flex-1 flex-col items-center justify-center p-6 animate-fade-in">
+        <AlertCircle size={48} className="text-text-muted mb-4" aria-hidden="true" />
         <h2 className="text-xl font-semibold text-text-primary mb-2">
           Artist not found
         </h2>
@@ -292,7 +292,7 @@ export default function Artist() {
                   subtitle={album.releaseYear ? String(album.releaseYear) : 'Unknown year'}
                   imageUrl={album.coverArtUrl}
                   href={`/album/${album.id}`}
-                  onPlay={() => handlePlayAlbum(album)}
+                  onPlay={album.tracks?.length ? () => handlePlayAlbum(album) : undefined}
                 />
               ))}
             </div>

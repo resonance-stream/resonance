@@ -36,6 +36,13 @@ const localStorageMock = (() => {
 Object.defineProperty(window, 'localStorage', {
   value: localStorageMock,
   writable: true,
+  configurable: true,
+})
+
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+  configurable: true,
 })
 
 // Start MSW server before all tests
@@ -45,10 +52,10 @@ beforeAll(() => {
 
 // Reset handlers after each test for test isolation
 afterEach(() => {
+  // Clear localStorage first to prevent components from reading stale data during unmount
+  localStorageMock.clear()
   cleanup()
   server.resetHandlers()
-  // Clear localStorage to prevent test pollution
-  localStorageMock.clear()
 })
 
 // Clean up MSW server after all tests

@@ -107,8 +107,8 @@ export default function Search() {
 
       {/* Error State */}
       {hasQuery && error && (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <AlertCircle size={48} className="text-text-muted mb-4" />
+        <div role="alert" className="flex flex-col items-center justify-center py-12 text-center">
+          <AlertCircle size={48} className="text-text-muted mb-4" aria-hidden="true" />
           <h2 className="text-xl font-semibold text-text-primary mb-2">
             Search failed
           </h2>
@@ -168,7 +168,7 @@ export default function Search() {
                     subtitle={album.artist?.name ?? 'Unknown Artist'}
                     imageUrl={album.coverArtUrl}
                     href={`/album/${album.id}`}
-                    onPlay={() => handlePlayAlbum(album)}
+                    onPlay={album.tracks?.length ? () => handlePlayAlbum(album) : undefined}
                   />
                 ))}
               </div>
@@ -188,7 +188,7 @@ export default function Search() {
                     title={track.title}
                     subtitle={track.artist?.name ?? 'Unknown Artist'}
                     imageUrl={track.album?.coverArtUrl}
-                    href={`/album/${track.albumId}`}
+                    href={track.albumId ? `/album/${track.albumId}` : undefined}
                     onPlay={() => handlePlayTrack(track)}
                   />
                 ))}

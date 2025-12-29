@@ -115,8 +115,8 @@ export default function Album() {
   // Error state
   if (error || !album) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center p-6 animate-fade-in">
-        <AlertCircle size={48} className="text-text-muted mb-4" />
+      <div role="alert" className="flex flex-1 flex-col items-center justify-center p-6 animate-fade-in">
+        <AlertCircle size={48} className="text-text-muted mb-4" aria-hidden="true" />
         <h2 className="text-xl font-semibold text-text-primary mb-2">
           Album not found
         </h2>

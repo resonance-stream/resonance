@@ -29,10 +29,10 @@ vi.mock('../hooks/useLibrary', () => ({
 }))
 
 describe('Home', () => {
-  let dateSpy: ReturnType<typeof vi.spyOn>
+  let dateSpy: ReturnType<typeof vi.spyOn> | undefined
 
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
   })
 
   afterEach(() => {

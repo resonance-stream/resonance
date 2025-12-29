@@ -63,14 +63,19 @@ export interface SkeletonTextProps extends SkeletonProps {
 export const SkeletonText = forwardRef<HTMLDivElement, SkeletonTextProps>(
   ({ className, lines = 1, ...props }, ref) => {
     return (
-      <div ref={ref} role="status" aria-label="Loading text" className={cn('space-y-2', className)}>
+      <div
+        ref={ref}
+        role="status"
+        aria-label="Loading text"
+        className={cn('space-y-2', className)}
+        {...props}
+      >
         {Array.from({ length: lines }).map((_, i) => (
           <Skeleton
             key={i}
             role="presentation"
             aria-label={undefined}
             className={cn('h-4', i === lines - 1 && lines > 1 ? 'w-3/4' : 'w-full')}
-            {...props}
           />
         ))}
       </div>

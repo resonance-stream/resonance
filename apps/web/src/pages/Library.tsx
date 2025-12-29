@@ -81,6 +81,7 @@ export default function Library() {
 
     if (shouldFetchAlbums && albums) {
       albums.forEach((album) => {
+        const canPlay = Boolean(album.tracks?.length)
         result.push({
           type: 'album',
           id: album.id,
@@ -88,7 +89,7 @@ export default function Library() {
           subtitle: album.artist?.name ?? 'Unknown Artist',
           imageUrl: album.coverArtUrl,
           href: `/album/${album.id}`,
-          onPlay: () => handlePlayAlbum(album),
+          onPlay: canPlay ? () => handlePlayAlbum(album) : undefined,
         })
       })
     }
@@ -180,8 +181,8 @@ export default function Library() {
 
       {/* Error State */}
       {error && (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <AlertCircle size={48} className="text-text-muted mb-4" />
+        <div role="alert" className="flex flex-col items-center justify-center py-12 text-center">
+          <AlertCircle size={48} className="text-text-muted mb-4" aria-hidden="true" />
           <h2 className="text-xl font-semibold text-text-primary mb-2">
             Failed to load library
           </h2>

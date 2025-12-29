@@ -61,7 +61,7 @@ export default function Home() {
               <SkeletonCard key={i} />
             ))
           ) : albumsError ? (
-            <p className="text-text-muted col-span-full">Failed to load albums</p>
+            <p role="alert" className="text-text-muted col-span-full">Failed to load albums</p>
           ) : recentAlbums?.length ? (
             recentAlbums.map((album) => (
               <MediaCard
@@ -70,7 +70,7 @@ export default function Home() {
                 subtitle={album.artist?.name ?? 'Unknown Artist'}
                 imageUrl={album.coverArtUrl}
                 href={`/album/${album.id}`}
-                onPlay={() => handlePlayAlbum(album)}
+                onPlay={album.tracks?.length ? () => handlePlayAlbum(album) : undefined}
               />
             ))
           ) : (
@@ -90,7 +90,7 @@ export default function Home() {
               <SkeletonCard key={i} />
             ))
           ) : playlistsError ? (
-            <p className="text-text-muted col-span-full">Failed to load playlists</p>
+            <p role="alert" className="text-text-muted col-span-full">Failed to load playlists</p>
           ) : playlists?.length ? (
             playlists.map((playlist: GqlPlaylist) => (
               <MediaCard
@@ -118,7 +118,7 @@ export default function Home() {
               <SkeletonCard key={i} />
             ))
           ) : tracksError ? (
-            <p className="text-text-muted col-span-full">Failed to load top tracks</p>
+            <p role="alert" className="text-text-muted col-span-full">Failed to load top tracks</p>
           ) : topTracks?.length ? (
             topTracks.map((track) => (
               <MediaCard
@@ -126,7 +126,7 @@ export default function Home() {
                 title={track.title}
                 subtitle={track.artist?.name ?? 'Unknown Artist'}
                 imageUrl={track.album?.coverArtUrl}
-                href={`/album/${track.albumId}`}
+                href={track.albumId ? `/album/${track.albumId}` : undefined}
                 onPlay={() => handlePlayTrack(track)}
               />
             ))
