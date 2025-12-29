@@ -70,6 +70,10 @@ pub enum WorkerError {
     UnsupportedFormat(String),
 
     // ========== Audio Feature Extraction Errors ==========
+    /// Generic audio processing error
+    #[error("audio processing error: {0}")]
+    AudioProcessing(String),
+
     /// Audio decoding failed
     #[error("audio decoding failed for '{path}': {reason}")]
     AudioDecoding { path: String, reason: String },
@@ -208,7 +212,9 @@ impl WorkerError {
     /// Get the job type this error is related to, if applicable
     pub fn job_context(&self) -> Option<&'static str> {
         match self {
-            Self::LibraryNotFound(_) | Self::MetadataExtraction { .. } => Some("library_scan"),
+            Self::LibraryNotFound(_)
+            | Self::MetadataExtraction { .. }
+            | Self::AudioProcessing(_) => Some("library_scan"),
             Self::AudioDecoding { .. }
             | Self::AudioAnalysis(_)
             | Self::InvalidAudioData(_)

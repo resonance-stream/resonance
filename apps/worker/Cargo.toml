@@ -23,7 +23,7 @@ tracing-subscriber = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
@@ -37,6 +37,11 @@ url = { workspace = true }
 
 # Audio processing
 symphonia = { workspace = true }
+lofty = { workspace = true }
+
+# File system
+walkdir = { workspace = true }
+sha2 = { workspace = true }
 
 # Internal crates
 resonance-shared-config = { workspace = true }
