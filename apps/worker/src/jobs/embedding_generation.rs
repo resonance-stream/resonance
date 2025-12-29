@@ -71,18 +71,19 @@ async fn execute_inner(
     track_id: sqlx::types::Uuid,
     force: bool,
 ) -> WorkerResult<()> {
-    // Check if embeddings already exist (unless force regeneration)
+    // Check if both embeddings already exist (unless force regeneration)
     // Using EXISTS for efficiency - avoids fetching data
+    // We check for both title AND description embeddings to ensure completeness
     if !force {
         let exists: (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM track_embeddings WHERE track_id = $1 AND description_embedding IS NOT NULL)",
+            "SELECT EXISTS(SELECT 1 FROM track_embeddings WHERE track_id = $1 AND title_embedding IS NOT NULL AND description_embedding IS NOT NULL)",
         )
         .bind(track_id)
         .fetch_one(&state.db)
         .await?;
 
         if exists.0 {
-            tracing::debug!(track_id = %track_id, "Embeddings already exist, skipping");
+            tracing::debug!(track_id = %track_id, "Both embeddings already exist, skipping");
             return Ok(());
         }
     }

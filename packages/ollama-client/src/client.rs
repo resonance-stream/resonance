@@ -87,7 +87,11 @@ impl OllamaClient {
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
-                    if e.is_retryable() && attempt < self.retry_attempts - 1 {
+                    if !e.is_retryable() {
+                        // Non-retryable errors return immediately
+                        return Err(e);
+                    } else if attempt < self.retry_attempts - 1 {
+                        // Retryable error, not last attempt - wait and retry
                         let delay = self.retry_base_delay_ms * 2_u64.pow(attempt);
                         warn!(
                             attempt = attempt + 1,
@@ -99,7 +103,9 @@ impl OllamaClient {
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                         last_error = Some(e);
                     } else {
-                        return Err(e);
+                        // Retryable error on last attempt - exit loop to return RetriesExhausted
+                        last_error = Some(e);
+                        break;
                     }
                 }
             }

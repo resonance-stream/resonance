@@ -417,6 +417,13 @@ impl From<resonance_ollama_client::OllamaError> for WorkerError {
             resonance_ollama_client::OllamaError::Timeout(secs) => Self::ServiceTimeout {
                 service: format!("Ollama ({}s)", secs),
             },
+            resonance_ollama_client::OllamaError::RetriesExhausted {
+                attempts,
+                last_error,
+            } => Self::MaxRetriesExceeded {
+                attempts: *attempts,
+                reason: last_error.clone(),
+            },
             _ => Self::EmbeddingGeneration(err.to_string()),
         }
     }

@@ -59,10 +59,19 @@ pub(crate) struct RawSimilarArtist {
 
 impl From<RawSimilarArtist> for SimilarArtist {
     fn from(raw: RawSimilarArtist) -> Self {
+        let match_score = raw.match_score.parse().unwrap_or_else(|e| {
+            tracing::warn!(
+                artist = %raw.name,
+                raw_score = %raw.match_score,
+                error = %e,
+                "Failed to parse match_score, defaulting to 0.0"
+            );
+            0.0
+        });
         Self {
             name: raw.name,
             mbid: raw.mbid.filter(|s| !s.is_empty()),
-            match_score: raw.match_score.parse().unwrap_or(0.0),
+            match_score,
             url: raw.url,
         }
     }

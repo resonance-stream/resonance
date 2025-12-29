@@ -182,7 +182,17 @@ impl SimilarityService {
         let source_features =
             source_features.ok_or_else(|| ApiError::not_found("track", track_id.to_string()))?;
 
-        let source: AudioFeatures = serde_json::from_value(source_features.0).unwrap_or_default();
+        let source: AudioFeatures = match serde_json::from_value(source_features.0.clone()) {
+            Ok(features) => features,
+            Err(e) => {
+                warn!(
+                    track_id = %track_id,
+                    error = %e,
+                    "Failed to parse audio features JSON, using defaults"
+                );
+                AudioFeatures::default()
+            }
+        };
 
         // Check if source has useful features
         if source.energy.is_none() && source.loudness.is_none() {

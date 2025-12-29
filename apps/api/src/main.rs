@@ -342,7 +342,7 @@ async fn main() -> anyhow::Result<()> {
             Some(service)
         }
         Err(e) => {
-            tracing::info!(
+            tracing::warn!(
                 error = %e,
                 "LastfmService not configured - similar artists feature unavailable. Set LASTFM_API_KEY to enable."
             );

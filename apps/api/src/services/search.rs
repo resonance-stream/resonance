@@ -259,9 +259,9 @@ pub struct MoodTag {
     pub track_count: i64,
 }
 
-/// Format a vector as pgvector literal string
+/// Format a vector as pgvector literal string with fixed precision
 fn format_embedding(embedding: &[f32]) -> String {
-    let values: Vec<String> = embedding.iter().map(|v| v.to_string()).collect();
+    let values: Vec<String> = embedding.iter().map(|v| format!("{:.6}", v)).collect();
     format!("[{}]", values.join(","))
 }
 
@@ -292,7 +292,7 @@ mod tests {
     fn test_format_embedding() {
         let embedding = vec![0.1, 0.2, 0.3];
         let result = format_embedding(&embedding);
-        assert_eq!(result, "[0.1,0.2,0.3]");
+        assert_eq!(result, "[0.100000,0.200000,0.300000]");
     }
 
     #[test]
@@ -300,6 +300,15 @@ mod tests {
         let embedding: Vec<f32> = vec![];
         let result = format_embedding(&embedding);
         assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_format_embedding_precision() {
+        // Verify consistent precision for pgvector compatibility
+        let embedding = vec![0.123_456_78, -0.987_654_3];
+        let result = format_embedding(&embedding);
+        // Should format to 6 decimal places
+        assert_eq!(result, "[0.123457,-0.987654]");
     }
 
     #[test]
