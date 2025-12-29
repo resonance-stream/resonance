@@ -160,6 +160,7 @@ export class WebSocketClient {
    */
   disconnect(): void {
     this.shouldReconnect = false;
+    this.messageQueue = []; // Clear queued messages to prevent stale data on reconnect
     this.cleanup();
     this.setState('disconnected');
   }
@@ -171,8 +172,8 @@ export class WebSocketClient {
    * Returns true if sent/queued successfully, false if rate limited or queue full.
    */
   send(message: ClientMessage): boolean {
-    // Check rate limit
-    if (!this.checkRateLimit()) {
+    // Bypass rate limiting for heartbeat messages (critical for connection health)
+    if (message.type !== 'Heartbeat' && !this.checkRateLimit()) {
       console.warn('[WebSocketClient] Rate limited, message dropped');
       return false;
     }
@@ -323,9 +324,12 @@ export class WebSocketClient {
           this._activeDeviceId = message.payload.to_device_id;
           break;
 
-        case 'Error':
-          console.error('[WebSocketClient] Server error:', message.payload);
+        case 'Error': {
+          // Sanitize payload to prevent log injection (remove newlines/carriage returns)
+          const sanitizedPayload = JSON.stringify(message.payload).replace(/[\r\n]+/g, ' ');
+          console.error('[WebSocketClient] Server error:', sanitizedPayload);
           break;
+        }
       }
 
       this.events.onMessage?.(message);
@@ -400,9 +404,15 @@ export class WebSocketClient {
 
   private flushMessageQueue(): void {
     while (this.messageQueue.length > 0 && this._state === 'connected') {
-      const message = this.messageQueue.shift();
+      const message = this.messageQueue[0]; // Peek at the message
       if (message) {
-        this.send(message);
+        const sent = this.send(message);
+        if (sent) {
+          this.messageQueue.shift(); // Remove only if sent successfully
+        } else {
+          // If sending fails, stop flushing - connection may be lost
+          break;
+        }
       }
     }
   }

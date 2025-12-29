@@ -148,9 +148,18 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
 
     stateSourceRef.current = 'remote';
 
-    // Adjust for clock drift since the seek was issued
-    const elapsed = Date.now() - timestamp;
-    const adjustedPosition = positionMs + (isPlaying ? elapsed : 0);
+    // Reuse clock drift adjustment logic from types.ts
+    const seekState: PlaybackState = {
+      track_id: null,
+      is_playing: isPlaying,
+      position_ms: positionMs,
+      timestamp,
+      volume: 0,
+      is_muted: false,
+      shuffle: false,
+      repeat: 'off',
+    };
+    const adjustedPosition = adjustPositionForClockDrift(seekState);
     setCurrentTime(adjustedPosition / 1000);
 
     queueMicrotask(() => {

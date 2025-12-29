@@ -59,6 +59,7 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
   const connectionState = useDeviceStore((s) => s.connectionState);
   const deviceId = useDeviceStore((s) => s.deviceId);
   const deviceName = useDeviceStore((s) => s.deviceName);
+  const deviceType = useDeviceStore((s) => s.deviceType);
 
   // Handle transfer request
   const handleTransfer = (targetDeviceId: string) => {
@@ -75,7 +76,7 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
         title={`${deviceCount} device${deviceCount !== 1 ? 's' : ''} connected`}
         disabled={!isConnected}
       >
-        <span className="device-icon">{getDeviceIcon('web')}</span>
+        <span className="device-icon">{getDeviceIcon(deviceType)}</span>
         {otherDevices.length > 0 && (
           <span className="device-count">{deviceCount}</span>
         )}
@@ -113,7 +114,7 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
           aria-selected={isActiveDevice}
           className={`device-item device-item--current ${isActiveDevice ? 'device-item--active' : ''}`}
         >
-          <span className="device-icon" aria-hidden="true">{getDeviceIcon('web')}</span>
+          <span className="device-icon" aria-hidden="true">{getDeviceIcon(deviceType)}</span>
           <div className="device-info">
             <span className="device-name">{deviceName}</span>
             <span className="device-label">

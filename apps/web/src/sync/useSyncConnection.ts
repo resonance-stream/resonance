@@ -191,6 +191,9 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
             case 'TransferAccepted':
               setActiveDeviceId(message.payload.to_device_id);
               break;
+            case 'ActiveDeviceChanged':
+              setActiveDeviceId(message.payload.new_device_id);
+              break;
           }
 
           callbacksRef.current.onMessage?.(message);

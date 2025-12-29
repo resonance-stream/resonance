@@ -139,6 +139,16 @@ impl SyncHandler {
             return Ok(());
         }
 
+        // Prevent transferring to self when already active (no-op)
+        // But allow "claiming" control when no active device exists
+        if self.device_id == target_device_id && current_active.is_some() {
+            self.send_error(ErrorPayload::new(
+                "INVALID_TARGET",
+                "Already the active device",
+            ));
+            return Ok(());
+        }
+
         // Verify target device exists
         if !self
             .connection_manager
@@ -328,9 +338,15 @@ pub fn sync_event_to_server_message(
                 device_id: device_id.clone(),
             })
         }
-        SyncEvent::ActiveDeviceChanged { .. } => {
-            // Active device changes are communicated via TransferAccepted
-            None
+        SyncEvent::ActiveDeviceChanged {
+            previous_device_id,
+            new_device_id,
+        } => {
+            // Notify all devices about the active device change
+            Some(ServerMessage::ActiveDeviceChanged {
+                previous_device_id: previous_device_id.clone(),
+                new_device_id: new_device_id.clone(),
+            })
         }
         SyncEvent::TransferRequest {
             from_device_id,

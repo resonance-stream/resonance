@@ -33,6 +33,7 @@ export type ServerMessage =
   | { type: 'DeviceDisconnected'; payload: { device_id: string } }
   | { type: 'TransferRequested'; payload: { from_device_id: string } }
   | { type: 'TransferAccepted'; payload: { to_device_id: string } }
+  | { type: 'ActiveDeviceChanged'; payload: { previous_device_id: string | null; new_device_id: string } }
   | { type: 'Pong'; payload: { server_time: number } }
   | { type: 'SettingsSync'; payload: SyncedSettings };
 

@@ -74,6 +74,12 @@ pub enum ServerMessage {
     /// Playback transfer accepted
     TransferAccepted { to_device_id: String },
 
+    /// Active device changed
+    ActiveDeviceChanged {
+        previous_device_id: Option<String>,
+        new_device_id: String,
+    },
+
     /// Heartbeat response
     Pong { server_time: i64 },
 

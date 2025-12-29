@@ -83,20 +83,26 @@ export const useDeviceStore = create<DeviceState>()(
       },
 
       addDevice: (device) => {
-        const { devices } = get();
-        // Don't add duplicates
-        if (devices.some((d) => d.device_id === device.device_id)) {
-          // Update existing device instead
-          set({
-            devices: devices.map((d) => (d.device_id === device.device_id ? device : d)),
-            activeDeviceId: device.is_active ? device.device_id : get().activeDeviceId,
-          });
-        } else {
-          set({
-            devices: [...devices, device],
-            activeDeviceId: device.is_active ? device.device_id : get().activeDeviceId,
-          });
+        const { devices, activeDeviceId } = get();
+        const existingDevice = devices.some((d) => d.device_id === device.device_id);
+
+        const newDevices = existingDevice
+          ? devices.map((d) => (d.device_id === device.device_id ? device : d))
+          : [...devices, device];
+
+        let newActiveDeviceId = activeDeviceId;
+        if (device.is_active) {
+          // If the new/updated device is active, it becomes the active device
+          newActiveDeviceId = device.device_id;
+        } else if (activeDeviceId === device.device_id) {
+          // If the updated device was the active one but is no longer, clear it
+          newActiveDeviceId = null;
         }
+
+        set({
+          devices: newDevices,
+          activeDeviceId: newActiveDeviceId,
+        });
       },
 
       removeDevice: (deviceId) => {
