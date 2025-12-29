@@ -7,8 +7,12 @@
 //! - Makes testing easier through dependency injection
 //! - Keeps SQL queries consistent across the codebase
 
+// Allow unused imports - some repositories are prepared for future features
+#![allow(unused_imports)]
+
 pub mod album;
 pub mod artist;
+pub mod device;
 pub mod playlist;
 pub mod session;
 pub mod track;
@@ -17,6 +21,7 @@ pub mod utils;
 
 pub use album::AlbumRepository;
 pub use artist::ArtistRepository;
+pub use device::DeviceRepository;
 pub use playlist::PlaylistRepository;
 pub use session::SessionRepository;
 pub use track::TrackRepository;

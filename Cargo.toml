@@ -20,7 +20,10 @@ bytes = "1"
 futures-core = "0.3"
 
 # Web framework
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
+futures-util = "0.3"
+dashmap = "6"
+tokio-stream = "0.1"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 

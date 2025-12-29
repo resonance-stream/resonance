@@ -31,6 +31,7 @@ use routes::{
     HealthState, StreamingState,
 };
 use services::auth::{AuthConfig, AuthService};
+use websocket::{ws_handler, ConnectionManager, SyncPubSub};
 
 /// Build the CORS layer based on configuration.
 ///
@@ -305,7 +306,7 @@ async fn main() -> anyhow::Result<()> {
     let cors_layer = build_cors_layer(&config);
 
     // Build GraphQL schema and auth router - with or without rate limiting based on Redis availability
-    let (schema, auth_routes) = match redis_client {
+    let (schema, auth_routes, sync_pubsub) = match redis_client {
         Some(client) => {
             // Create rate limit state for REST endpoints
             let rate_limit_state = AuthRateLimitState::new(client.clone());
@@ -318,7 +319,7 @@ async fn main() -> anyhow::Result<()> {
             );
 
             // Create GraphQL rate limiter
-            let graphql_rate_limiter = GraphQLRateLimiter::new(client);
+            let graphql_rate_limiter = GraphQLRateLimiter::new(client.clone());
             tracing::info!("GraphQL auth rate limiting enabled");
 
             // Build schema with rate limiting
@@ -330,7 +331,12 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("GraphQL schema built with rate limiting");
 
             let auth_routes = auth_router_with_rate_limiting(auth_state, rate_limit_state);
-            (schema, auth_routes)
+
+            // Create Redis-backed pub/sub for real-time sync
+            let sync_pubsub = SyncPubSub::new_with_redis(client);
+            tracing::info!("WebSocket sync using Redis pub/sub (multi-instance capable)");
+
+            (schema, auth_routes, sync_pubsub)
         }
         None => {
             tracing::warn!(
@@ -342,9 +348,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("GraphQL schema built (rate limiting disabled)");
 
             let auth_routes = auth_router(auth_state);
-            (schema, auth_routes)
+
+            // Create in-memory pub/sub for real-time sync (single instance only)
+            let sync_pubsub = SyncPubSub::new_in_memory();
+            tracing::warn!("WebSocket sync using in-memory pub/sub (single instance only)");
+
+            (schema, auth_routes, sync_pubsub)
         }
     };
+
+    // Initialize WebSocket connection manager
+    let connection_manager = ConnectionManager::new();
+    tracing::info!("WebSocket ConnectionManager initialized");
 
     // Build the router
     let app = Router::new()
@@ -352,6 +367,8 @@ async fn main() -> anyhow::Result<()> {
         // GraphQL endpoints
         .route("/graphql", post(graphql_handler))
         .route("/graphql/playground", get(graphql_playground))
+        // WebSocket sync endpoint
+        .route("/ws/sync", get(ws_handler))
         // Nested health routes: /health, /health/live, /health/ready
         .nest("/health", health_router(health_state))
         // Auth REST routes: /auth/register, /auth/login, /auth/refresh, /auth/logout
@@ -364,6 +381,8 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(user_repo))
         .layer(Extension(session_repo))
         .layer(Extension(auth_service))
+        .layer(Extension(connection_manager))
+        .layer(Extension(sync_pubsub))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);
 
