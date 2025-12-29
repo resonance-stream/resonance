@@ -131,12 +131,13 @@ impl OllamaClient {
             return body;
         }
 
-        // Find a safe truncation point at a character boundary
+        // Find the last UTF-8 character boundary at or below MAX_ERROR_BODY_SIZE
+        // We use the start index of each character to ensure we don't overshoot
         let truncate_at = body
             .char_indices()
-            .take_while(|(i, _)| *i < MAX_ERROR_BODY_SIZE)
+            .map(|(i, _)| i)
+            .take_while(|i| *i <= MAX_ERROR_BODY_SIZE)
             .last()
-            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
 
         format!("{}... (truncated)", &body[..truncate_at])
@@ -267,6 +268,9 @@ impl OllamaClient {
         concurrency: usize,
     ) -> OllamaResult<Vec<Vec<f32>>> {
         use futures_util::stream::{self, StreamExt};
+
+        // Ensure concurrency is at least 1 to prevent buffer_unordered from hanging
+        let concurrency = concurrency.max(1);
 
         debug!(
             count = texts.len(),

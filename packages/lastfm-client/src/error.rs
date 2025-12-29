@@ -56,8 +56,8 @@ impl LastfmError {
                 if e.is_timeout() || e.is_connect() {
                     return true;
                 }
-                // Retry on server errors (5xx) but not client errors (4xx)
-                matches!(e.status(), Some(status) if status.is_server_error())
+                // Retry on server errors (5xx) and rate limiting (429)
+                matches!(e.status(), Some(status) if status.is_server_error() || status.as_u16() == 429)
             }
             _ => false,
         }

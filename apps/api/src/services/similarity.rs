@@ -151,7 +151,8 @@ impl SimilarityService {
                 title: r.title,
                 artist_name: r.artist_name,
                 album_title: r.album_title,
-                score: r.score.unwrap_or(0.0),
+                // Clamp score to [0.0, 1.0] - cosine distance can produce values outside this range
+                score: r.score.unwrap_or(0.0).clamp(0.0, 1.0),
                 similarity_type: SimilarityType::Semantic,
             })
             .collect())

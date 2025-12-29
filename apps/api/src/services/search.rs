@@ -164,6 +164,7 @@ impl SearchService {
         let moods_lower: Vec<String> = moods.iter().map(|m| m.to_lowercase()).collect();
 
         // Find tracks with matching moods, scored by number of matches
+        // Uses LATERAL JOIN to correctly unnest and compare track moods
         let tracks: Vec<ScoredTrackRow> = sqlx::query_as(
             r#"
             WITH mood_search AS (
@@ -181,9 +182,10 @@ impl SearchService {
             FROM tracks t
             LEFT JOIN artists a ON t.artist_id = a.id
             LEFT JOIN albums al ON t.album_id = al.id
-            JOIN mood_search ms ON LOWER(ms.mood) = ANY(
-                SELECT LOWER(unnest(t.ai_mood))
-            )
+            JOIN LATERAL (
+                SELECT LOWER(unnest(t.ai_mood)) AS mood
+            ) tm ON TRUE
+            JOIN mood_search ms ON LOWER(ms.mood) = tm.mood
             GROUP BY t.id, t.title, t.artist_id, a.name, t.album_id, al.title
             ORDER BY score DESC, t.play_count DESC
             LIMIT $3

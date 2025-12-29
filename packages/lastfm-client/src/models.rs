@@ -73,6 +73,12 @@ impl From<RawSimilarArtist> for SimilarArtist {
         let match_score = if parsed.is_finite() {
             parsed.clamp(0.0, 1.0)
         } else {
+            tracing::warn!(
+                artist = %raw.name,
+                raw_score = %raw.match_score,
+                parsed_value = %parsed,
+                "Non-finite match_score from API, defaulting to 0.0"
+            );
             0.0
         };
 

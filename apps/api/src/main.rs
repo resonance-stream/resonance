@@ -372,14 +372,14 @@ async fn main() -> anyhow::Result<()> {
                 .pool(pool.clone())
                 .auth_service(auth_service.clone())
                 .rate_limiter(graphql_rate_limiter)
-                .search_service(search_service)
-                .similarity_service(similarity_service);
+                .search_service(search_service.clone())
+                .similarity_service(similarity_service.clone());
 
             // Add optional services if available
-            if let Some(ollama) = ollama_client {
+            if let Some(ollama) = ollama_client.as_ref().cloned() {
                 builder = builder.ollama_client(ollama);
             }
-            if let Some(lastfm) = lastfm_service {
+            if let Some(lastfm) = lastfm_service.as_ref().cloned() {
                 builder = builder.lastfm_service(lastfm);
             }
 
