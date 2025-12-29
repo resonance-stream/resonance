@@ -249,7 +249,8 @@ async fn upsert_artist(
     mbid: Option<Uuid>,
 ) -> WorkerResult<bool> {
     // Use ON CONFLICT to handle race conditions atomically
-    let result = sqlx::query(
+    // xmax = 0 indicates a fresh insert (no previous version existed)
+    let row = sqlx::query(
         r#"
         INSERT INTO artists (name, sort_name, biography, image_url, genres, lidarr_id, mbid)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -261,6 +262,7 @@ async fn upsert_artist(
             genres = EXCLUDED.genres,
             mbid = COALESCE(EXCLUDED.mbid, artists.mbid),
             updated_at = NOW()
+        RETURNING (xmax = 0) AS inserted
         "#,
     )
     .bind(name)
@@ -270,20 +272,18 @@ async fn upsert_artist(
     .bind(genres)
     .bind(lidarr_id as i32)
     .bind(mbid)
-    .execute(db)
+    .fetch_one(db)
     .await?;
 
-    // If we inserted a new row, rows_affected is 1 and xmax is 0
-    // If we updated, rows_affected is 1 but we can check if it was an insert
-    let was_insert = result.rows_affected() > 0;
+    let inserted: bool = row.get("inserted");
 
-    if was_insert {
-        tracing::debug!("Synced artist: {} (lidarr_id: {})", name, lidarr_id);
+    if inserted {
+        tracing::debug!("Created artist: {} (lidarr_id: {})", name, lidarr_id);
+    } else {
+        tracing::debug!("Updated artist: {} (lidarr_id: {})", name, lidarr_id);
     }
 
-    // For simplicity, we always return false (update) since ON CONFLICT doesn't distinguish
-    // This is fine since the created/updated count is just informational
-    Ok(false)
+    Ok(inserted)
 }
 
 /// Check for new releases from monitored artists

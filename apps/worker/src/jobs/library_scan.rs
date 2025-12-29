@@ -145,14 +145,30 @@ pub async fn execute(state: &AppState, job: &LibraryScanJob) -> WorkerResult<()>
             continue;
         }
 
-        let path_str = path.to_string_lossy().to_string();
+        // Security: prevent symlink escapes when follow_links(true)
+        let canonical_file = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("Failed to canonicalize {:?}: {}", path, e);
+                error_count += 1;
+                continue;
+            }
+        };
+
+        if !canonical_file.starts_with(&canonical_library) {
+            tracing::warn!("Skipping file outside library: {:?}", canonical_file);
+            skipped_count += 1;
+            continue;
+        }
+
+        let path_str = canonical_file.to_string_lossy().to_string();
         found_paths.insert(path_str.clone());
 
         // Check if file exists in database
         let existing = existing_tracks.iter().find(|t| t.file_path == path_str);
 
         // Process the file
-        match process_audio_file(state, path, existing, job.force_rescan).await {
+        match process_audio_file(state, &canonical_file, existing, job.force_rescan).await {
             Ok(ProcessResult::New(track_id)) => {
                 new_count += 1;
                 // Queue feature extraction for new tracks
@@ -455,7 +471,7 @@ async fn insert_track(
     .bind(artist_id)
     .bind(album_id)
     .bind(metadata.track_number)
-    .bind(metadata.disc_number.unwrap_or(1))
+    .bind(metadata.disc_number)
     .bind(metadata.duration_ms)
     .bind(file_path)
     .bind(metadata.file_size)
@@ -513,7 +529,7 @@ async fn update_track(
     .bind(artist_id)
     .bind(album_id)
     .bind(metadata.track_number)
-    .bind(metadata.disc_number.unwrap_or(1))
+    .bind(metadata.disc_number)
     .bind(metadata.duration_ms)
     .bind(metadata.file_size)
     .bind(&metadata.file_hash)
