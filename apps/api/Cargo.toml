@@ -10,6 +10,8 @@ description = "Resonance music streaming API server"
 # Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+bytes = { workspace = true }
+futures-core = { workspace = true }
 
 # Web framework
 axum = { workspace = true }
@@ -56,6 +58,9 @@ resonance-shared-config = { workspace = true }
 
 # HTTP utilities
 httpdate = { workspace = true }
+
+# URL encoding
+url = { workspace = true }
 
 [lib]
 name = "resonance_api"

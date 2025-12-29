@@ -10,9 +10,11 @@
 
 pub mod auth;
 pub mod health;
+pub mod transcoder;
 
 pub use auth::AuthService;
 pub use health::HealthService;
+pub use transcoder::{TranscodeFormat, TranscodeOptions, TranscoderService};
 
 // AuthConfig is available for custom configuration
 #[allow(unused_imports)]

@@ -80,6 +80,10 @@ pub enum ApiError {
     #[error("database connection unavailable")]
     DatabaseUnavailable,
 
+    /// Service temporarily unavailable (at capacity)
+    #[error("service temporarily unavailable: {0}")]
+    ServiceBusy(String),
+
     // ========== External Service Errors ==========
     /// Redis operation failed
     #[error("cache error: {0}")]
@@ -184,7 +188,7 @@ impl ApiError {
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
 
             // 503 Service Unavailable
-            Self::DatabaseUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::DatabaseUnavailable | Self::ServiceBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
 
             // 502 Bad Gateway (external service errors)
             Self::Search(_) | Self::AiService(_) | Self::Lidarr(_) | Self::HttpClient(_) => {
@@ -216,6 +220,7 @@ impl ApiError {
             Self::InvalidQueryParam { .. } => "INVALID_QUERY_PARAM",
             Self::Database(_) => "DATABASE_ERROR",
             Self::DatabaseUnavailable => "DATABASE_UNAVAILABLE",
+            Self::ServiceBusy(_) => "SERVICE_BUSY",
             Self::Redis(_) => "CACHE_ERROR",
             Self::Search(_) => "SEARCH_ERROR",
             Self::AiService(_) => "AI_SERVICE_ERROR",

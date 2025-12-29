@@ -77,6 +77,11 @@ interface PlayerState {
   toggleMute: () => void
   setQueue: (tracks: Track[], startIndex?: number) => void
   addToQueue: (track: Track) => void
+  playNext: (track: Track) => void
+  removeFromQueue: (index: number) => void
+  reorderQueue: (fromIndex: number, toIndex: number) => void
+  clearQueue: () => void
+  jumpToIndex: (index: number) => void
   nextTrack: () => void
   previousTrack: () => void
   toggleShuffle: () => void
@@ -128,6 +133,100 @@ export const usePlayerStore = create<PlayerState>()(
       addToQueue: (track) => set((state) => ({
         queue: [...state.queue, track],
       })),
+
+      playNext: (track) => set((state) => {
+        // Insert after current track position
+        const newQueue = [...state.queue]
+        newQueue.splice(state.queueIndex + 1, 0, track)
+        return { queue: newQueue }
+      }),
+
+      removeFromQueue: (index) => set((state) => {
+        if (index < 0 || index >= state.queue.length) return state
+
+        const newQueue = state.queue.filter((_, i) => i !== index)
+
+        // Adjust queueIndex if needed
+        let newQueueIndex = state.queueIndex
+        if (index < state.queueIndex) {
+          // Removed track before current, shift index back
+          newQueueIndex = state.queueIndex - 1
+        } else if (index === state.queueIndex) {
+          // Removed current track - play next or stop
+          if (newQueue.length === 0) {
+            return {
+              queue: newQueue,
+              queueIndex: 0,
+              currentTrack: null,
+              isPlaying: false,
+            }
+          }
+          // Keep same index (next track slides in), or go to last if at end
+          newQueueIndex = Math.min(state.queueIndex, newQueue.length - 1)
+          return {
+            queue: newQueue,
+            queueIndex: newQueueIndex,
+            currentTrack: newQueue[newQueueIndex] ?? null,
+            isLoading: true,
+            isPlaying: state.isPlaying, // Preserve current playback state (respect user's pause intent)
+          }
+        }
+
+        return { queue: newQueue, queueIndex: newQueueIndex }
+      }),
+
+      reorderQueue: (fromIndex, toIndex) => set((state) => {
+        if (
+          fromIndex < 0 ||
+          fromIndex >= state.queue.length ||
+          toIndex < 0 ||
+          toIndex >= state.queue.length ||
+          fromIndex === toIndex
+        ) {
+          return state
+        }
+
+        const newQueue = [...state.queue]
+        const [movedTrack] = newQueue.splice(fromIndex, 1)
+        if (!movedTrack) return state
+        newQueue.splice(toIndex, 0, movedTrack)
+
+        // Adjust queueIndex to follow the current track
+        let newQueueIndex = state.queueIndex
+        if (fromIndex === state.queueIndex) {
+          // Moving current track
+          newQueueIndex = toIndex
+        } else if (fromIndex < state.queueIndex && toIndex >= state.queueIndex) {
+          // Moving track from before to after current
+          newQueueIndex = state.queueIndex - 1
+        } else if (fromIndex > state.queueIndex && toIndex <= state.queueIndex) {
+          // Moving track from after to before current
+          newQueueIndex = state.queueIndex + 1
+        }
+
+        return { queue: newQueue, queueIndex: newQueueIndex }
+      }),
+
+      clearQueue: () => set({
+        queue: [],
+        queueIndex: 0,
+        currentTrack: null,
+        isPlaying: false,
+        currentTime: 0,
+      }),
+
+      jumpToIndex: (index) => {
+        const state = get()
+        if (index < 0 || index >= state.queue.length) return
+
+        set({
+          queueIndex: index,
+          currentTrack: state.queue[index] ?? null,
+          currentTime: 0,
+          isLoading: true,
+          isPlaying: true,
+        })
+      },
 
       nextTrack: () => {
         const state = get()
