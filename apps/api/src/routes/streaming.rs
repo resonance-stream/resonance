@@ -126,6 +126,13 @@ async fn stream_track(
 
     // 4. Check if transcoding is requested
     if let Some(format_str) = &transcode_query.format {
+        // Reject Range requests for transcoding - we can't seek in a live-transcoded stream
+        if headers.get(header::RANGE).is_some() {
+            return Err(ApiError::InvalidRange(
+                "Range requests not supported for transcoding".to_string(),
+            ));
+        }
+
         // Parse the target format
         let target_format = TranscodeFormat::parse(format_str).ok_or_else(|| {
             ApiError::ValidationError(format!("Unsupported format: {}", format_str))
@@ -166,10 +173,11 @@ async fn stream_track(
 
         // Transcoded streams don't support range requests or Content-Length
         // (we don't know the final size until transcoding completes)
+        // Note: Transfer-Encoding: chunked is implicit when streaming without Content-Length
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, content_type)
-            .header(header::TRANSFER_ENCODING, "chunked")
+            .header(header::ACCEPT_RANGES, "none") // Inform clients seeking is not supported
             .header(
                 header::CACHE_CONTROL,
                 "private, no-store", // Don't cache transcoded content

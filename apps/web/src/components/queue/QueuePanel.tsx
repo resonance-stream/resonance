@@ -37,8 +37,10 @@ export function QueuePanel({ className, onClose }: QueuePanelProps): JSX.Element
   const handleDrop = useCallback(
     (e: React.DragEvent, toIndex: number) => {
       e.preventDefault();
-      if (draggedIndex !== null && draggedIndex !== toIndex) {
-        reorderQueue(draggedIndex, toIndex);
+      // Use React state if available, fall back to dataTransfer payload
+      const fromIndex = draggedIndex ?? parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (!Number.isNaN(fromIndex) && fromIndex !== toIndex) {
+        reorderQueue(fromIndex, toIndex);
       }
       setDraggedIndex(null);
     },

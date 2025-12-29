@@ -18,9 +18,9 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(
         <input
           type="checkbox"
           role="switch"
-          aria-checked={checked}
+          aria-checked={!!checked}
           className="sr-only peer"
-          checked={checked}
+          checked={!!checked}
           onChange={handleChange}
           ref={ref}
           {...props}

@@ -168,7 +168,7 @@ export const usePlayerStore = create<PlayerState>()(
             queueIndex: newQueueIndex,
             currentTrack: newQueue[newQueueIndex] ?? null,
             isLoading: true,
-            isPlaying: true, // Continue playback with next track
+            isPlaying: state.isPlaying, // Preserve current playback state (respect user's pause intent)
           }
         }
 

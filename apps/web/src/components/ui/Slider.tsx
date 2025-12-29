@@ -46,7 +46,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(
             className
           )}
           ref={ref}
-          value={value}
+          value={numValue}
           {...props}
         />
         {showValue && (

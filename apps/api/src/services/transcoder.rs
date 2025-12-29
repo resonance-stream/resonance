@@ -27,6 +27,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::io::ReaderStream;
+use url::Url;
 
 /// Errors that can occur during transcoding
 #[derive(Error, Debug)]
@@ -49,6 +50,9 @@ pub enum TranscodeError {
 
     #[error("Transcoding limit reached, try again later")]
     ResourceExhausted,
+
+    #[error("Invalid file path for transcoding")]
+    InvalidPath,
 }
 
 /// Output format for transcoding
@@ -184,6 +188,9 @@ impl Drop for TranscodeStream {
         if let Err(e) = self.child.start_kill() {
             tracing::warn!(error = %e, "Failed to kill FFmpeg process on drop");
         }
+        // Reap the child process to prevent zombie processes from accumulating
+        // try_wait is non-blocking and will reap if the process has exited
+        let _ = self.child.try_wait();
     }
 }
 
@@ -242,7 +249,8 @@ impl TranscoderService {
 
     /// Get the number of currently active transcoding operations
     pub fn active_transcodes(&self) -> usize {
-        self.max_concurrent - self.semaphore.available_permits()
+        self.max_concurrent
+            .saturating_sub(self.semaphore.available_permits())
     }
 
     /// Transcode an audio file to a different format
@@ -281,10 +289,16 @@ impl TranscoderService {
 
         let mut cmd = Command::new("ffmpeg");
 
-        // Input file - use file: protocol to prevent argument injection
-        // (prevents paths starting with special characters like - or http: from being misinterpreted)
+        // Input file - use file: protocol URL to prevent argument injection and properly
+        // encode special characters. Url::from_file_path handles all URL encoding
+        // (spaces, #, %, ?, non-ASCII, etc.) per RFC 8089.
+        let file_url = Url::from_file_path(input_path).map_err(|()| {
+            tracing::error!(path = %input_path.display(), "Failed to convert path to file URL");
+            TranscodeError::InvalidPath
+        })?;
+
         cmd.arg("-i")
-            .arg(format!("file:{}", input_path.display()))
+            .arg(file_url.as_str())
             // Suppress banner and stats
             .arg("-hide_banner")
             .arg("-loglevel")
