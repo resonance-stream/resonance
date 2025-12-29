@@ -20,6 +20,7 @@ pub mod embedding_generation;
 pub mod feature_extraction;
 pub mod library_scan;
 pub mod lidarr_sync;
+pub mod mood_detection;
 pub mod prefetch;
 pub mod weekly_playlist;
 
@@ -35,6 +36,9 @@ pub enum Job {
 
     /// Generate AI embeddings for a track
     EmbeddingGeneration(embedding_generation::EmbeddingGenerationJob),
+
+    /// Detect mood and generate AI description for a track
+    MoodDetection(mood_detection::MoodDetectionJob),
 
     /// Generate weekly personalized playlist
     WeeklyPlaylist(weekly_playlist::WeeklyPlaylistJob),
@@ -178,6 +182,7 @@ impl JobRunner {
             Job::EmbeddingGeneration(payload) => {
                 embedding_generation::execute(&self.state, payload).await
             }
+            Job::MoodDetection(payload) => mood_detection::execute(&self.state, payload).await,
             Job::WeeklyPlaylist(payload) => weekly_playlist::execute(&self.state, payload).await,
             Job::LidarrSync(payload) => lidarr_sync::execute(&self.state, payload).await,
             Job::Prefetch(payload) => prefetch::execute(&self.state, payload).await,

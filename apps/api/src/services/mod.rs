@@ -10,11 +10,23 @@
 
 pub mod auth;
 pub mod health;
+pub mod lastfm;
+pub mod search;
+pub mod similarity;
 pub mod transcoder;
 
 pub use auth::AuthService;
 pub use health::HealthService;
 pub use transcoder::{TranscodeFormat, TranscodeOptions, TranscoderService};
+
+// AI/Search services - re-exported for schema builder and external use
+// These are used via the schema builder pattern, not direct crate imports
+#[allow(unused_imports)]
+pub use lastfm::LastfmService;
+#[allow(unused_imports)]
+pub use search::SearchService;
+#[allow(unused_imports)]
+pub use similarity::SimilarityService;
 
 // AuthConfig is available for custom configuration
 #[allow(unused_imports)]

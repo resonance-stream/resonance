@@ -58,6 +58,8 @@ sha2 = { workspace = true }
 
 # Internal crates
 resonance-shared-config = { workspace = true }
+resonance-lastfm-client = { workspace = true }
+resonance-ollama-client = { workspace = true }
 
 # HTTP utilities
 httpdate = { workspace = true }

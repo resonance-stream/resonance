@@ -22,7 +22,7 @@ mod websocket;
 
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
-use graphql::{build_schema, build_schema_with_rate_limiting, GraphQLRateLimiter, ResonanceSchema};
+use graphql::{GraphQLRateLimiter, ResonanceSchema, SchemaBuilder};
 use middleware::{extract_client_ip, AuthRateLimitState};
 use models::user::RequestMetadata;
 use repositories::{SessionRepository, TrackRepository, UserRepository};
@@ -31,6 +31,9 @@ use routes::{
     HealthState, StreamingState,
 };
 use services::auth::{AuthConfig, AuthService};
+use services::lastfm::LastfmService;
+use services::search::SearchService;
+use services::similarity::SimilarityService;
 use websocket::{ws_handler, ConnectionManager, SyncPubSub};
 
 /// Build the CORS layer based on configuration.
@@ -305,6 +308,48 @@ async fn main() -> anyhow::Result<()> {
     // Build the CORS layer from configuration
     let cors_layer = build_cors_layer(&config);
 
+    // Initialize AI/Search services (optional - gracefully degrade if not configured)
+    // These services are always created since they only require the database pool
+    let search_service = SearchService::new(pool.clone());
+    tracing::info!("SearchService initialized");
+
+    let similarity_service = SimilarityService::new(pool.clone());
+    tracing::info!("SimilarityService initialized");
+
+    // Initialize Ollama client (optional - requires running Ollama server)
+    let ollama_client = match resonance_ollama_client::OllamaClient::new(config.ollama()) {
+        Ok(client) => {
+            tracing::info!(
+                ollama_url = %config.ollama().url,
+                embedding_model = %config.ollama().embedding_model,
+                "OllamaClient initialized for semantic search"
+            );
+            Some(client)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "OllamaClient initialization failed - semantic search will be unavailable"
+            );
+            None
+        }
+    };
+
+    // Initialize Last.fm service (optional - requires LASTFM_API_KEY)
+    let lastfm_service = match LastfmService::from_env(pool.clone()) {
+        Ok(service) => {
+            tracing::info!("LastfmService initialized for similar artists");
+            Some(service)
+        }
+        Err(e) => {
+            tracing::info!(
+                error = %e,
+                "LastfmService not configured - similar artists feature unavailable. Set LASTFM_API_KEY to enable."
+            );
+            None
+        }
+    };
+
     // Build GraphQL schema and auth router - with or without rate limiting based on Redis availability
     let (schema, auth_routes, sync_pubsub) = match redis_client {
         Some(client) => {
@@ -322,13 +367,24 @@ async fn main() -> anyhow::Result<()> {
             let graphql_rate_limiter = GraphQLRateLimiter::new(client.clone());
             tracing::info!("GraphQL auth rate limiting enabled");
 
-            // Build schema with rate limiting
-            let schema = build_schema_with_rate_limiting(
-                pool.clone(),
-                auth_service.clone(),
-                graphql_rate_limiter,
-            );
-            tracing::info!("GraphQL schema built with rate limiting");
+            // Build schema with rate limiting and AI services
+            let mut builder = SchemaBuilder::new()
+                .pool(pool.clone())
+                .auth_service(auth_service.clone())
+                .rate_limiter(graphql_rate_limiter)
+                .search_service(search_service)
+                .similarity_service(similarity_service);
+
+            // Add optional services if available
+            if let Some(ollama) = ollama_client {
+                builder = builder.ollama_client(ollama);
+            }
+            if let Some(lastfm) = lastfm_service {
+                builder = builder.lastfm_service(lastfm);
+            }
+
+            let schema = builder.build();
+            tracing::info!("GraphQL schema built with rate limiting and AI services");
 
             let auth_routes = auth_router_with_rate_limiting(auth_state, rate_limit_state);
 
@@ -343,9 +399,23 @@ async fn main() -> anyhow::Result<()> {
                 "Auth rate limiting DISABLED - configure Redis (REDIS_URL) to enable protection against brute-force attacks"
             );
 
-            // Build schema without rate limiting
-            let schema = build_schema(pool.clone(), auth_service.clone());
-            tracing::info!("GraphQL schema built (rate limiting disabled)");
+            // Build schema without rate limiting but with AI services
+            let mut builder = SchemaBuilder::new()
+                .pool(pool.clone())
+                .auth_service(auth_service.clone())
+                .search_service(search_service)
+                .similarity_service(similarity_service);
+
+            // Add optional services if available
+            if let Some(ollama) = ollama_client {
+                builder = builder.ollama_client(ollama);
+            }
+            if let Some(lastfm) = lastfm_service {
+                builder = builder.lastfm_service(lastfm);
+            }
+
+            let schema = builder.build();
+            tracing::info!("GraphQL schema built with AI services (rate limiting disabled)");
 
             let auth_routes = auth_router(auth_state);
 

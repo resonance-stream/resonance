@@ -21,4 +21,4 @@ pub mod types;
 
 pub use guards::GraphQLRateLimiter;
 pub use loaders::{create_loaders, Loaders};
-pub use schema::{build_schema, build_schema_with_rate_limiting, ResonanceSchema};
+pub use schema::{build_schema, build_schema_with_rate_limiting, ResonanceSchema, SchemaBuilder};

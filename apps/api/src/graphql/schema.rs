@@ -8,6 +8,9 @@ use sqlx::PgPool;
 
 use crate::repositories::{AlbumRepository, ArtistRepository, PlaylistRepository, TrackRepository};
 use crate::services::auth::AuthService;
+use crate::services::lastfm::LastfmService;
+use crate::services::search::SearchService;
+use crate::services::similarity::SimilarityService;
 
 use super::guards::GraphQLRateLimiter;
 use super::loaders::{
@@ -29,6 +32,11 @@ pub struct SchemaBuilder {
     album_repository: Option<AlbumRepository>,
     track_repository: Option<TrackRepository>,
     playlist_repository: Option<PlaylistRepository>,
+    // AI/Search services (optional - gracefully degrade if not configured)
+    search_service: Option<SearchService>,
+    similarity_service: Option<SimilarityService>,
+    lastfm_service: Option<LastfmService>,
+    ollama_client: Option<resonance_ollama_client::OllamaClient>,
 }
 
 impl SchemaBuilder {
@@ -42,6 +50,10 @@ impl SchemaBuilder {
             album_repository: None,
             track_repository: None,
             playlist_repository: None,
+            search_service: None,
+            similarity_service: None,
+            lastfm_service: None,
+            ollama_client: None,
         }
     }
 
@@ -90,6 +102,34 @@ impl SchemaBuilder {
     #[allow(dead_code)]
     pub fn playlist_repository(mut self, repo: PlaylistRepository) -> Self {
         self.playlist_repository = Some(repo);
+        self
+    }
+
+    /// Set the search service for semantic search
+    #[allow(dead_code)] // Public API for external callers
+    pub fn search_service(mut self, service: SearchService) -> Self {
+        self.search_service = Some(service);
+        self
+    }
+
+    /// Set the similarity service for audio-based track similarity
+    #[allow(dead_code)] // Public API for external callers
+    pub fn similarity_service(mut self, service: SimilarityService) -> Self {
+        self.similarity_service = Some(service);
+        self
+    }
+
+    /// Set the Last.fm service for similar artists
+    #[allow(dead_code)] // Public API for external callers
+    pub fn lastfm_service(mut self, service: LastfmService) -> Self {
+        self.lastfm_service = Some(service);
+        self
+    }
+
+    /// Set the Ollama client for embedding generation
+    #[allow(dead_code)] // Public API for external callers
+    pub fn ollama_client(mut self, client: resonance_ollama_client::OllamaClient) -> Self {
+        self.ollama_client = Some(client);
         self
     }
 
@@ -153,6 +193,20 @@ impl SchemaBuilder {
             builder = builder.data(rate_limiter);
         }
 
+        // Add AI/Search services if configured (optional - queries gracefully degrade)
+        if let Some(search_service) = self.search_service {
+            builder = builder.data(search_service);
+        }
+        if let Some(similarity_service) = self.similarity_service {
+            builder = builder.data(similarity_service);
+        }
+        if let Some(lastfm_service) = self.lastfm_service {
+            builder = builder.data(lastfm_service);
+        }
+        if let Some(ollama_client) = self.ollama_client {
+            builder = builder.data(ollama_client);
+        }
+
         builder.finish()
     }
 }
@@ -168,6 +222,7 @@ impl Default for SchemaBuilder {
 /// This is a convenience function for quickly creating a schema
 /// with all required dependencies. Rate limiting is not enabled.
 /// Use `build_schema_with_rate_limiting` for rate-limited schemas.
+#[allow(dead_code)] // Public API for simple use cases and tests
 pub fn build_schema(pool: PgPool, auth_service: AuthService) -> ResonanceSchema {
     SchemaBuilder::new()
         .pool(pool)
@@ -179,6 +234,7 @@ pub fn build_schema(pool: PgPool, auth_service: AuthService) -> ResonanceSchema 
 ///
 /// This adds the GraphQL rate limiter to the schema context,
 /// enabling rate limit guards on authentication mutations.
+#[allow(dead_code)] // Public API for simple use cases and tests
 pub fn build_schema_with_rate_limiting(
     pool: PgPool,
     auth_service: AuthService,
@@ -208,5 +264,9 @@ mod tests {
         assert!(builder.album_repository.is_none());
         assert!(builder.track_repository.is_none());
         assert!(builder.playlist_repository.is_none());
+        assert!(builder.search_service.is_none());
+        assert!(builder.similarity_service.is_none());
+        assert!(builder.lastfm_service.is_none());
+        assert!(builder.ollama_client.is_none());
     }
 }
