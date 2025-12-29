@@ -39,6 +39,10 @@ impl SyncHandler {
 
     /// Handle an incoming client message
     pub async fn handle_message(&self, message: ClientMessage) -> Result<(), SyncError> {
+        // Update last activity timestamp for this device
+        self.connection_manager
+            .touch_device(self.user_id, &self.device_id);
+
         match message {
             ClientMessage::PlaybackStateUpdate(state) => self.handle_playback_update(state).await,
             ClientMessage::Seek { position_ms } => self.handle_seek(position_ms).await,
@@ -175,7 +179,7 @@ impl SyncHandler {
         // Broadcast active device change
         let change_event = SyncEvent::ActiveDeviceChanged {
             previous_device_id,
-            new_device_id: target_device_id.clone(),
+            new_device_id: Some(target_device_id.clone()),
         };
         self.pubsub.publish(self.user_id, change_event).await;
 
@@ -240,9 +244,16 @@ impl SyncHandler {
         };
         self.pubsub.publish(self.user_id, event).await;
 
-        // If this was the active device, clear active status
+        // If this was the active device, clear active status and notify others
         if self.is_active_device() {
             self.connection_manager.clear_active_device(self.user_id);
+
+            // Broadcast that there's no longer an active device
+            let change_event = SyncEvent::ActiveDeviceChanged {
+                previous_device_id: Some(self.device_id.clone()),
+                new_device_id: None,
+            };
+            self.pubsub.publish(self.user_id, change_event).await;
         }
     }
 

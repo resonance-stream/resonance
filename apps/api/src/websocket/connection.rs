@@ -358,6 +358,15 @@ impl ConnectionManager {
         Ok(())
     }
 
+    /// Update last activity timestamp for a device (call when receiving messages)
+    pub fn touch_device(&self, user_id: Uuid, device_id: &str) {
+        if let Some(user_state) = self.users.get(&user_id) {
+            if let Some(handle) = user_state.connections.get(device_id) {
+                handle.touch();
+            }
+        }
+    }
+
     /// Send a message to all devices for a user
     pub fn broadcast_to_user(&self, user_id: Uuid, msg: ServerMessage) -> usize {
         let user_state = match self.users.get(&user_id) {

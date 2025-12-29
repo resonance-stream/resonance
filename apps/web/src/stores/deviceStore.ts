@@ -95,8 +95,12 @@ export const useDeviceStore = create<DeviceState>()(
           // If the new/updated device is active, it becomes the active device
           newActiveDeviceId = device.device_id;
         } else if (activeDeviceId === device.device_id) {
-          // If the updated device was the active one but is no longer, clear it
-          newActiveDeviceId = null;
+          // If the updated device was the active one but is no longer,
+          // scan for another active device in the list
+          const otherActive = newDevices.find(
+            (d) => d.device_id !== device.device_id && d.is_active
+          );
+          newActiveDeviceId = otherActive?.device_id ?? null;
         }
 
         set({

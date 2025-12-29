@@ -33,7 +33,7 @@ export type ServerMessage =
   | { type: 'DeviceDisconnected'; payload: { device_id: string } }
   | { type: 'TransferRequested'; payload: { from_device_id: string } }
   | { type: 'TransferAccepted'; payload: { to_device_id: string } }
-  | { type: 'ActiveDeviceChanged'; payload: { previous_device_id: string | null; new_device_id: string } }
+  | { type: 'ActiveDeviceChanged'; payload: { previous_device_id: string | null; new_device_id: string | null } }
   | { type: 'Pong'; payload: { server_time: number } }
   | { type: 'SettingsSync'; payload: SyncedSettings };
 
@@ -224,21 +224,73 @@ export function detectDeviceType(): DeviceType {
 }
 
 /**
- * Generate a unique device ID (stored in localStorage)
+ * Generate a UUID with fallback for environments without crypto.randomUUID
  */
-export function getOrCreateDeviceId(): string {
-  const STORAGE_KEY = 'resonance-device-id';
-
-  if (typeof localStorage === 'undefined') {
+function generateUUID(): string {
+  // Use native crypto.randomUUID if available (modern browsers)
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
 
-  let deviceId = localStorage.getItem(STORAGE_KEY);
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    localStorage.setItem(STORAGE_KEY, deviceId);
+  // Fallback: use crypto.getRandomValues if available
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    // Set version (4) and variant (RFC 4122)
+    // Using non-null assertion since we know the array has 16 elements
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
+  // Last resort fallback (not cryptographically secure, but functional)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** Canonical storage key for device identity (matches Zustand persist) */
+const DEVICE_STORAGE_KEY = 'resonance-device';
+/** Legacy key for backwards compatibility */
+const LEGACY_DEVICE_ID_KEY = 'resonance-device-id';
+
+/**
+ * Generate a unique device ID (stored in localStorage)
+ *
+ * Uses the same storage key as Zustand persist to ensure consistency.
+ * Also checks legacy key for backwards compatibility.
+ */
+export function getOrCreateDeviceId(): string {
+  if (typeof localStorage === 'undefined') {
+    return generateUUID();
+  }
+
+  // First, check the canonical Zustand persist storage
+  const zustandData = localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (zustandData) {
+    try {
+      const parsed = JSON.parse(zustandData);
+      if (parsed?.state?.deviceId) {
+        return parsed.state.deviceId;
+      }
+    } catch {
+      // JSON parse failed, continue to fallback
+    }
+  }
+
+  // Check legacy key for backwards compatibility
+  const legacyId = localStorage.getItem(LEGACY_DEVICE_ID_KEY);
+  if (legacyId) {
+    return legacyId;
+  }
+
+  // Generate new device ID and store in legacy key
+  // (Zustand persist will pick it up and store in canonical location)
+  const deviceId = generateUUID();
+  localStorage.setItem(LEGACY_DEVICE_ID_KEY, deviceId);
   return deviceId;
 }
 

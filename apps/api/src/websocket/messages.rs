@@ -74,10 +74,10 @@ pub enum ServerMessage {
     /// Playback transfer accepted
     TransferAccepted { to_device_id: String },
 
-    /// Active device changed
+    /// Active device changed (new_device_id is None when active device disconnects)
     ActiveDeviceChanged {
         previous_device_id: Option<String>,
-        new_device_id: String,
+        new_device_id: Option<String>,
     },
 
     /// Heartbeat response
@@ -358,10 +358,10 @@ pub enum SyncEvent {
     /// Device disconnected
     DeviceDisconnected { device_id: String },
 
-    /// Active device changed
+    /// Active device changed (new_device_id is None when active device disconnects)
     ActiveDeviceChanged {
         previous_device_id: Option<String>,
-        new_device_id: String,
+        new_device_id: Option<String>,
     },
 
     /// Playback transfer requested

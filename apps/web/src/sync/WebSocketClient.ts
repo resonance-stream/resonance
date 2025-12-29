@@ -92,6 +92,9 @@ export class WebSocketClient {
   // Message queue (for messages sent during reconnection)
   private messageQueue: ClientMessage[] = [];
 
+  // Retry timeout for flushing rate-limited messages
+  private flushRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+
   constructor(config: WebSocketClientConfig = {}, events: WebSocketClientEvents = {}) {
     this._deviceId = getOrCreateDeviceId();
 
@@ -403,17 +406,34 @@ export class WebSocketClient {
   }
 
   private flushMessageQueue(): void {
-    while (this.messageQueue.length > 0 && this._state === 'connected') {
+    // Clear any pending retry since we're flushing now
+    if (this.flushRetryTimeout) {
+      clearTimeout(this.flushRetryTimeout);
+      this.flushRetryTimeout = null;
+    }
+
+    // Limit messages per flush cycle to prevent tight loops
+    const maxBatch = this.config.rateLimit;
+    let messagesSent = 0;
+
+    while (this.messageQueue.length > 0 && this._state === 'connected' && messagesSent < maxBatch) {
       const message = this.messageQueue[0]; // Peek at the message
       if (message) {
         const sent = this.send(message);
         if (sent) {
           this.messageQueue.shift(); // Remove only if sent successfully
+          messagesSent++;
         } else {
-          // If sending fails, stop flushing - connection may be lost
-          break;
+          // Rate limited or connection lost - schedule retry after rate limit window resets
+          this.flushRetryTimeout = setTimeout(() => this.flushMessageQueue(), 1000);
+          return;
         }
       }
+    }
+
+    // If there are still messages and we're connected, schedule next batch
+    if (this.messageQueue.length > 0 && this._state === 'connected') {
+      this.flushRetryTimeout = setTimeout(() => this.flushMessageQueue(), 1000);
     }
   }
 
@@ -448,6 +468,11 @@ export class WebSocketClient {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
+    }
+
+    if (this.flushRetryTimeout) {
+      clearTimeout(this.flushRetryTimeout);
+      this.flushRetryTimeout = null;
     }
 
     if (this.ws) {

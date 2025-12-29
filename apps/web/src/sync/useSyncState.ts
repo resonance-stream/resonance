@@ -89,6 +89,7 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
 
   // Device state
   const deviceId = useDeviceStore((s) => s.deviceId);
+  const activeDeviceId = useDeviceStore((s) => s.activeDeviceId);
   const isActiveDevice = useIsActiveDevice();
 
   // Handle incoming playback sync
@@ -146,8 +147,6 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
   const handleSeekSync = useCallback((positionMs: number, timestamp: number) => {
     if (isActiveDevice) return;
 
-    stateSourceRef.current = 'remote';
-
     // Reuse clock drift adjustment logic from types.ts
     const seekState: PlaybackState = {
       track_id: null,
@@ -160,6 +159,14 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
       repeat: 'off',
     };
     const adjustedPosition = adjustPositionForClockDrift(seekState);
+
+    // Skip seek if position difference is within threshold (avoid jitter)
+    const localPositionMs = currentTime * 1000;
+    if (Math.abs(adjustedPosition - localPositionMs) <= SEEK_THRESHOLD_MS) {
+      return;
+    }
+
+    stateSourceRef.current = 'remote';
     setCurrentTime(adjustedPosition / 1000);
 
     queueMicrotask(() => {
@@ -167,7 +174,7 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
         stateSourceRef.current = null;
       }
     });
-  }, [isActiveDevice, isPlaying, setCurrentTime]);
+  }, [isActiveDevice, isPlaying, currentTime, setCurrentTime]);
 
   // Handle incoming queue sync
   const handleQueueSync = useCallback((syncQueue: QueueState) => {
@@ -263,12 +270,26 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
     broadcastPlaybackState();
   }, [isConnected, isActiveDevice, isPlaying, volume, isMuted, shuffle, repeat, broadcastPlaybackState]);
 
-  // NOTE: Explicit seek broadcast is not implemented yet.
-  // Current behavior: Seek position is synced via playbackState broadcasts (throttled).
-  // For more precise seek sync, consider:
-  // 1. Add a seek action to playerStore that triggers a callback
-  // 2. Have AudioProvider.seek() call a sync broadcast
-  // 3. Track large position jumps (>2s) as seek events
+  // Ref for broadcast function to avoid recreating interval on every change
+  const broadcastPlaybackStateRef = useRef(broadcastPlaybackState);
+  useEffect(() => {
+    broadcastPlaybackStateRef.current = broadcastPlaybackState;
+  }, [broadcastPlaybackState]);
+
+  // Periodic position broadcast while playing (every 5 seconds)
+  // This keeps other devices in sync even without explicit seeks
+  useEffect(() => {
+    if (!isConnected || !isActiveDevice || !isPlaying) return;
+
+    const interval = setInterval(() => {
+      // Only broadcast if not processing a remote update
+      if (stateSourceRef.current !== 'remote') {
+        broadcastPlaybackStateRef.current();
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isConnected, isActiveDevice, isPlaying]);
 
   // Broadcast queue changes
   useEffect(() => {
@@ -281,15 +302,19 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
   // Transfer to another device
   const transferToDevice = useCallback((targetDeviceId: string) => {
     if (!isConnected) return;
+    // Skip if target is already the active device
+    if (targetDeviceId === activeDeviceId) return;
     requestTransfer(targetDeviceId);
-  }, [isConnected, requestTransfer]);
+  }, [isConnected, activeDeviceId, requestTransfer]);
 
   // Request to become active device
   const requestControl = useCallback(() => {
     if (!isConnected) return;
+    // Skip if already the active device
+    if (isActiveDevice) return;
     // Transfer to self
     requestTransfer(deviceId);
-  }, [isConnected, requestTransfer, deviceId]);
+  }, [isConnected, isActiveDevice, requestTransfer, deviceId]);
 
   return {
     isSyncActive: isConnected,
