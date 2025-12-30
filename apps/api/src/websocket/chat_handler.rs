@@ -20,6 +20,9 @@ use super::messages::{
 use crate::services::chat::{
     ChatAction as ServiceChatAction, ChatError, ChatService, UserContextBuilder,
 };
+use crate::services::search::SearchService;
+use crate::services::similarity::SimilarityService;
+use resonance_ollama_client::OllamaClient;
 
 /// Maximum messages per minute per user
 const MAX_MESSAGES_PER_MINUTE: u32 = 20;
@@ -47,11 +50,25 @@ pub struct ChatHandler {
 
 impl ChatHandler {
     /// Create a new chat handler
+    ///
+    /// # Arguments
+    /// * `user_id` - The user's ID
+    /// * `device_id` - The device identifier
+    /// * `pool` - Database connection pool
+    /// * `config` - Ollama configuration for chat completions
+    /// * `search_service` - Service for semantic and mood-based search
+    /// * `similarity_service` - Service for finding similar tracks
+    /// * `ollama_client` - Optional Ollama client for embeddings
+    /// * `connection_manager` - WebSocket connection manager
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_id: Uuid,
         device_id: String,
         pool: PgPool,
         config: OllamaConfig,
+        search_service: SearchService,
+        similarity_service: SimilarityService,
+        ollama_client: Option<OllamaClient>,
         connection_manager: ConnectionManager,
     ) -> Self {
         let now = Instant::now();
@@ -60,7 +77,13 @@ impl ChatHandler {
         Self {
             user_id,
             device_id,
-            chat_service: ChatService::new(pool.clone(), config),
+            chat_service: ChatService::new(
+                pool.clone(),
+                config,
+                search_service,
+                similarity_service,
+                ollama_client,
+            ),
             context_builder: UserContextBuilder::new(pool),
             connection_manager,
             last_message_time: Arc::new(Mutex::new(past)),
@@ -352,16 +375,29 @@ fn convert_chat_error(conversation_id: Option<Uuid>, error: ChatError) -> ChatEr
 /// Returns a tuple of (sender, join_handle) so the caller can:
 /// - Send messages via the sender
 /// - Abort the task via the join_handle when the connection closes
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_chat_handler(
     user_id: Uuid,
     device_id: String,
     pool: PgPool,
     config: OllamaConfig,
+    search_service: SearchService,
+    similarity_service: SimilarityService,
+    ollama_client: Option<OllamaClient>,
     connection_manager: ConnectionManager,
 ) -> (mpsc::Sender<ChatSendPayload>, JoinHandle<()>) {
     let (tx, mut rx) = mpsc::channel::<ChatSendPayload>(CHAT_CHANNEL_CAPACITY);
 
-    let handler = ChatHandler::new(user_id, device_id.clone(), pool, config, connection_manager);
+    let handler = ChatHandler::new(
+        user_id,
+        device_id.clone(),
+        pool,
+        config,
+        search_service,
+        similarity_service,
+        ollama_client,
+        connection_manager,
+    );
 
     let handle = tokio::spawn(async move {
         while let Some(payload) = rx.recv().await {

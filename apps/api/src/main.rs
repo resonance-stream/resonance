@@ -403,15 +403,15 @@ async fn main() -> anyhow::Result<()> {
             let mut builder = SchemaBuilder::new()
                 .pool(pool.clone())
                 .auth_service(auth_service.clone())
-                .search_service(search_service)
-                .similarity_service(similarity_service);
+                .search_service(search_service.clone())
+                .similarity_service(similarity_service.clone());
 
             // Add optional services if available
-            if let Some(ollama) = ollama_client {
-                builder = builder.ollama_client(ollama);
+            if let Some(ref ollama) = ollama_client {
+                builder = builder.ollama_client(ollama.clone());
             }
-            if let Some(lastfm) = lastfm_service {
-                builder = builder.lastfm_service(lastfm);
+            if let Some(ref lastfm) = lastfm_service {
+                builder = builder.lastfm_service(lastfm.clone());
             }
 
             let schema = builder.build();
@@ -453,6 +453,11 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(auth_service))
         .layer(Extension(connection_manager))
         .layer(Extension(sync_pubsub))
+        // Add AI/Search services for WebSocket chat handler
+        .layer(Extension(config.ollama().clone()))
+        .layer(Extension(search_service))
+        .layer(Extension(similarity_service))
+        .layer(Extension(ollama_client))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);
 
