@@ -80,6 +80,15 @@ export const libraryKeys = {
     combined: (query: string, limit?: number) =>
       [...libraryKeys.search.all(), 'combined', query, limit] as const,
   },
+
+  // ============ Discovery (Last.fm) ============
+  discovery: {
+    all: () => [...libraryKeys.all, 'discovery'] as const,
+    similarArtists: (artistName: string, limit?: number) =>
+      [...libraryKeys.discovery.all(), 'similar-artists', artistName, limit] as const,
+    artistTags: (artistName: string) =>
+      [...libraryKeys.discovery.all(), 'artist-tags', artistName] as const,
+  },
 } as const
 
 /**
@@ -128,4 +137,7 @@ export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.playlists.public
   | typeof libraryKeys.search.all
   | typeof libraryKeys.search.combined
+  | typeof libraryKeys.discovery.all
+  | typeof libraryKeys.discovery.similarArtists
+  | typeof libraryKeys.discovery.artistTags
 >
