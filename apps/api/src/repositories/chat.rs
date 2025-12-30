@@ -270,15 +270,16 @@ impl ChatRepository {
         let mut tx = self.pool.begin().await?;
 
         // Lock the conversation row and verify ownership/existence
-        let locked = sqlx::query(
+        // Use fetch_optional since rows_affected() returns 0 for SELECT queries
+        let locked: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE",
         )
         .bind(input.conversation_id)
         .bind(input.user_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        if locked.rows_affected() == 0 {
+        if locked.is_none() {
             return Err(sqlx::Error::RowNotFound);
         }
 
@@ -357,15 +358,16 @@ impl ChatRepository {
         // Lock the conversation row and verify ownership to prevent:
         // 1. Concurrent message insertions causing sequence number race conditions
         // 2. Users writing to other users' conversations
-        let locked = sqlx::query(
+        // Use fetch_optional since rows_affected() returns 0 for SELECT queries
+        let locked: Option<(Uuid,)> = sqlx::query_as(
             "SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE",
         )
         .bind(first.conversation_id)
         .bind(first.user_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        if locked.rows_affected() == 0 {
+        if locked.is_none() {
             return Err(sqlx::Error::RowNotFound);
         }
 

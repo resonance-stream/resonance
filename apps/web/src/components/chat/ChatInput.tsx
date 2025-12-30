@@ -23,6 +23,7 @@ export function ChatInput({
   placeholder = 'Ask about your music...',
 }: ChatInputProps): JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const didAutoFocusRef = useRef(false);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -33,10 +34,11 @@ export function ChatInput({
     }
   }, [value]);
 
-  // Focus on mount (only if not disabled)
+  // Focus on initial mount only (not on every disabled change)
   useEffect(() => {
-    if (!disabled) {
+    if (!disabled && !didAutoFocusRef.current) {
       textareaRef.current?.focus();
+      didAutoFocusRef.current = true;
     }
   }, [disabled]);
 

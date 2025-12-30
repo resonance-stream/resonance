@@ -284,12 +284,14 @@ export const useChatStore = create<ChatState>()(
         };
 
         // Update messages: fix any 'pending' conversation_ids and add the assistant message
+        // Filter out any existing message with the same ID to ensure idempotency
         const updatedMessages = messages
           .map((m) =>
             m.conversationId === 'pending'
               ? { ...m, conversationId: payload.conversation_id }
               : m
           )
+          .filter((m) => m.id !== payload.message_id)
           .concat(assistantMessage);
 
         set({

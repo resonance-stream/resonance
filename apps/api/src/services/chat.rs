@@ -420,8 +420,11 @@ impl ChatService {
         history: &[ChatMessage],
         context: &UserContext,
     ) -> ChatResult<(String, Vec<ToolCall>, Vec<ChatAction>)> {
-        let total_timeout =
-            std::time::Duration::from_secs(self.config.timeout_secs * TOTAL_TIMEOUT_MULTIPLIER);
+        let total_timeout = std::time::Duration::from_secs(
+            self.config
+                .timeout_secs
+                .saturating_mul(TOTAL_TIMEOUT_MULTIPLIER),
+        );
 
         tokio::time::timeout(total_timeout, self.chat_with_ollama_inner(history, context))
             .await
@@ -505,12 +508,17 @@ impl ChatService {
                     Err(e) => format!("Failed to read error body: {}", e),
                 };
                 // Log truncated body to avoid flooding logs
+                // Use char boundary to avoid panic on multi-byte UTF-8 characters
                 const MAX_LOG_BODY: usize = 4096;
                 let truncated_body = if body.len() > MAX_LOG_BODY {
+                    let mut cut = MAX_LOG_BODY;
+                    while cut > 0 && !body.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
                     format!(
                         "{}...[truncated {} bytes]",
-                        &body[..MAX_LOG_BODY],
-                        body.len() - MAX_LOG_BODY
+                        &body[..cut],
+                        body.len() - cut
                     )
                 } else {
                     body
@@ -524,6 +532,15 @@ impl ChatService {
             }
 
             let chat_response: OllamaChatResponse = response.json().await?;
+
+            // Verify response is complete for non-streaming requests
+            if !chat_response.done {
+                return Err(ChatError::OllamaResponse(
+                    chat_response
+                        .done_reason
+                        .unwrap_or_else(|| "AI response not complete".to_string()),
+                ));
+            }
 
             // Check for tool calls
             if let Some(ref tool_calls) = chat_response.message.tool_calls {
@@ -984,11 +1001,14 @@ You can help users with their music library by:
             Vec::new()
         };
 
+        // Store name before moving into action
+        let name = args.name;
+
         // Create action for frontend with validated UUIDs
         let action = ChatAction {
             action_type: "create_playlist".to_string(),
             data: serde_json::json!({
-                "name": args.name,
+                "name": &name,
                 "description": args.description,
                 "track_ids": validated_track_ids
             }),
@@ -997,7 +1017,7 @@ You can help users with their music library by:
         let result = serde_json::json!({
             "success": true,
             "action": "create_playlist",
-            "name": args.name
+            "name": name
         });
 
         (result.to_string(), Some(action))

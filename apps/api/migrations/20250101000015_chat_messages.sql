@@ -95,12 +95,19 @@ CREATE TRIGGER update_chat_conversations_updated_at
 
 -- Trigger to update conversation updated_at when messages are added
 -- Uses SECURITY DEFINER to bypass RLS for the update operation
+-- Includes user_id check to prevent cross-user updates
 CREATE OR REPLACE FUNCTION update_chat_conversation_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
     UPDATE chat_conversations
     SET updated_at = NOW()
-    WHERE id = NEW.conversation_id;
+    WHERE id = NEW.conversation_id
+      AND user_id = NEW.user_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Conversation does not belong to user';
+    END IF;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = 'pg_catalog, public';

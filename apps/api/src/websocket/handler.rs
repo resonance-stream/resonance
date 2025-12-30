@@ -302,6 +302,7 @@ async fn handle_socket(
 
     // Handle incoming messages
     let device_id_recv = device_id.clone();
+    let chat_tx_recv = chat_tx.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(result) = ws_receiver.next().await {
             match result {
@@ -310,7 +311,7 @@ async fn handle_socket(
                         Ok(msg) => {
                             // Route ChatSend messages to the chat handler
                             if let ClientMessage::ChatSend(payload) = msg {
-                                match chat_tx.try_send(payload) {
+                                match chat_tx_recv.try_send(payload) {
                                     Ok(_) => {}
                                     Err(mpsc::error::TrySendError::Full(_)) => {
                                         tracing::warn!(
@@ -332,6 +333,16 @@ async fn handle_socket(
                                         tracing::warn!(
                                             device_id = %device_id_recv,
                                             "Chat handler channel closed"
+                                        );
+                                        // Notify client that chat is unavailable
+                                        let error_msg = super::messages::ChatErrorPayload::new(
+                                            None,
+                                            "CHAT_UNAVAILABLE",
+                                            "Chat service is temporarily unavailable. Please try again.",
+                                        );
+                                        sync_handler.send_to_device(
+                                            &device_id_recv,
+                                            ServerMessage::ChatError(error_msg),
                                         );
                                     }
                                 }
@@ -395,9 +406,28 @@ async fn handle_socket(
         }
     }
 
-    // Abort the chat handler task to prevent resource leaks during active AI requests
-    chat_handle.abort();
-    tracing::debug!(device_id = %device_id, "Chat handler task aborted");
+    // Gracefully stop the chat handler by dropping the sender (closes channel)
+    // The handler will receive None and exit its loop naturally
+    drop(chat_tx);
+
+    // Wait briefly for graceful shutdown, then abort if still running
+    let shutdown_timeout = std::time::Duration::from_secs(1);
+    match tokio::time::timeout(shutdown_timeout, chat_handle).await {
+        Ok(Ok(_)) => {
+            tracing::debug!(device_id = %device_id, "Chat handler stopped gracefully");
+        }
+        Ok(Err(e)) if e.is_cancelled() => {
+            tracing::debug!(device_id = %device_id, "Chat handler was cancelled");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(device_id = %device_id, error = %e, "Chat handler panicked");
+        }
+        Err(_) => {
+            // Timeout elapsed - the handle was consumed so we can't abort explicitly,
+            // but the task will be cleaned up when dropping its resources
+            tracing::debug!(device_id = %device_id, "Chat handler shutdown timed out");
+        }
+    }
 
     // Check if this device was active BEFORE removing connection (to avoid race condition)
     let was_active = connection_manager.get_active_device(user_id) == Some(device_id.clone());
