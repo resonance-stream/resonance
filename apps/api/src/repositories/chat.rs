@@ -269,11 +269,18 @@ impl ChatRepository {
         // Use a transaction with row-level lock to prevent race conditions on sequence_number
         let mut tx = self.pool.begin().await?;
 
-        // Lock the conversation row to prevent concurrent message insertions
-        sqlx::query("SELECT id FROM chat_conversations WHERE id = $1 FOR UPDATE")
-            .bind(input.conversation_id)
-            .execute(&mut *tx)
-            .await?;
+        // Lock the conversation row and verify ownership/existence
+        let locked = sqlx::query(
+            "SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE",
+        )
+        .bind(input.conversation_id)
+        .bind(input.user_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if locked.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
 
         // Now safe to compute and insert with sequence number
         let message = sqlx::query_as::<_, ChatMessage>(
@@ -328,16 +335,38 @@ impl ChatRepository {
             return Ok(vec![]);
         }
 
+        // All results must share the same conversation_id and user_id
+        let first = results.first().unwrap();
+        if results
+            .iter()
+            .any(|r| r.conversation_id != first.conversation_id)
+        {
+            return Err(sqlx::Error::Protocol(
+                "all tool results must share the same conversation_id".to_string(),
+            ));
+        }
+        if results.iter().any(|r| r.user_id != first.user_id) {
+            return Err(sqlx::Error::Protocol(
+                "all tool results must share the same user_id".to_string(),
+            ));
+        }
+
         let mut messages = Vec::with_capacity(results.len());
         let mut tx = self.pool.begin().await?;
 
-        // Lock the conversation row to prevent concurrent message insertions
-        // from causing sequence number race conditions
-        if let Some(first) = results.first() {
-            sqlx::query("SELECT id FROM chat_conversations WHERE id = $1 FOR UPDATE")
-                .bind(first.conversation_id)
-                .execute(&mut *tx)
-                .await?;
+        // Lock the conversation row and verify ownership to prevent:
+        // 1. Concurrent message insertions causing sequence number race conditions
+        // 2. Users writing to other users' conversations
+        let locked = sqlx::query(
+            "SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL FOR UPDATE",
+        )
+        .bind(first.conversation_id)
+        .bind(first.user_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if locked.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
         }
 
         for input in results {

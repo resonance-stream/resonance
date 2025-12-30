@@ -504,8 +504,18 @@ impl ChatService {
                     Ok(text) => text,
                     Err(e) => format!("Failed to read error body: {}", e),
                 };
-                // Log full details internally
-                error!(status = %status, body = %body, "Ollama request failed");
+                // Log truncated body to avoid flooding logs
+                const MAX_LOG_BODY: usize = 4096;
+                let truncated_body = if body.len() > MAX_LOG_BODY {
+                    format!(
+                        "{}...[truncated {} bytes]",
+                        &body[..MAX_LOG_BODY],
+                        body.len() - MAX_LOG_BODY
+                    )
+                } else {
+                    body
+                };
+                error!(status = %status, body = %truncated_body, "Ollama request failed");
                 // Return sanitized error to caller
                 return Err(ChatError::OllamaResponse(format!(
                     "AI service unavailable (status {})",

@@ -33,10 +33,12 @@ export function ChatInput({
     }
   }, [value]);
 
-  // Focus on mount
+  // Focus on mount (only if not disabled)
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
+    if (!disabled) {
+      textareaRef.current?.focus();
+    }
+  }, [disabled]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Send on Enter (but not Shift+Enter for new lines)

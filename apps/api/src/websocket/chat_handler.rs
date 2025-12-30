@@ -55,13 +55,15 @@ impl ChatHandler {
         connection_manager: ConnectionManager,
     ) -> Self {
         let now = Instant::now();
+        // Initialize last_message_time in the past so first message isn't rate-limited
+        let past = now - Duration::from_secs(MIN_MESSAGE_INTERVAL_SECS);
         Self {
             user_id,
             device_id,
             chat_service: ChatService::new(pool.clone(), config),
             context_builder: UserContextBuilder::new(pool),
             connection_manager,
-            last_message_time: Arc::new(Mutex::new(now)),
+            last_message_time: Arc::new(Mutex::new(past)),
             message_count: Arc::new(AtomicU32::new(0)),
             window_start: Arc::new(Mutex::new(now)),
         }

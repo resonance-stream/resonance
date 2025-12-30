@@ -247,12 +247,17 @@ export const useChatStore = create<ChatState>()(
       receiveToken: (payload: ChatTokenPayload) => {
         const { conversationId: currentId } = get();
 
-        // Ignore tokens for a different conversation
-        if (currentId !== payload.conversation_id) {
+        // Accept tokens for current conversation or if we're in 'pending' state
+        const isNewConversation = currentId === 'pending';
+        if (!isNewConversation && currentId !== payload.conversation_id) {
           return;
         }
 
         set((state) => ({
+          // Update conversation_id if we were pending
+          conversationId: isNewConversation
+            ? payload.conversation_id
+            : state.conversationId,
           streamingContent: state.streamingContent + payload.token,
         }));
       },
@@ -260,8 +265,10 @@ export const useChatStore = create<ChatState>()(
       completeResponse: (payload: ChatCompletePayload) => {
         const { conversationId: currentId, messages } = get();
 
-        // Ignore completion for a different conversation
-        if (currentId !== payload.conversation_id) {
+        // Handle 'pending' → real conversation_id transition for new conversations
+        // Also accept if it matches the current conversation
+        const isNewConversation = currentId === 'pending';
+        if (!isNewConversation && currentId !== payload.conversation_id) {
           return;
         }
 
@@ -276,11 +283,22 @@ export const useChatStore = create<ChatState>()(
           isStreaming: false,
         };
 
+        // Update messages: fix any 'pending' conversation_ids and add the assistant message
+        const updatedMessages = messages
+          .map((m) =>
+            m.conversationId === 'pending'
+              ? { ...m, conversationId: payload.conversation_id }
+              : m
+          )
+          .concat(assistantMessage);
+
         set({
-          messages: [...messages, assistantMessage],
+          conversationId: payload.conversation_id,
+          messages: updatedMessages,
           streamingContent: '',
           status: 'idle',
           inputValue: '',
+          error: null, // Clear any previous errors on successful completion
         });
 
         // Execute any actions returned by the AI
@@ -294,8 +312,13 @@ export const useChatStore = create<ChatState>()(
       handleError: (payload: ChatErrorPayload) => {
         const { conversationId: currentId } = get();
 
-        // Only handle errors for current conversation or global errors
-        if (payload.conversation_id && currentId !== payload.conversation_id) {
+        // Only handle errors for current conversation, 'pending' state, or global errors
+        const isNewConversation = currentId === 'pending';
+        if (
+          payload.conversation_id &&
+          !isNewConversation &&
+          currentId !== payload.conversation_id
+        ) {
           return;
         }
 
@@ -332,9 +355,11 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'resonance-chat',
       // Only persist panel open state and last conversation
+      // Exclude 'pending' placeholder to avoid broken state on reload
       partialize: (state) => ({
         isOpen: state.isOpen,
-        conversationId: state.conversationId,
+        conversationId:
+          state.conversationId === 'pending' ? null : state.conversationId,
       }),
     }
   )
