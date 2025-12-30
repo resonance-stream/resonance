@@ -249,16 +249,18 @@ async fn predict_by_combined_similarity(
             WHERE t.id != $1
         ),
         combined_scores AS (
+            -- FULL OUTER JOIN allows tracks without embeddings to still be recommended
+            -- based on audio features and/or tags alone
             SELECT
-                e.id,
+                COALESCE(e.id, f.id, g.id) as id,
                 (
                     COALESCE(e.score, 0) * $4 +
                     COALESCE(f.score, 0) * $5 +
                     COALESCE(g.score, 0) * $6
                 ) as combined_score
             FROM embedding_scores e
-            LEFT JOIN feature_scores f ON e.id = f.id
-            LEFT JOIN tag_scores g ON e.id = g.id
+            FULL OUTER JOIN feature_scores f ON e.id = f.id
+            FULL OUTER JOIN tag_scores g ON COALESCE(e.id, f.id) = g.id
         )
         SELECT cs.id
         FROM combined_scores cs

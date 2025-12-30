@@ -12,7 +12,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
-use crate::models::playlist::{SmartPlaylistRule, SmartPlaylistRules};
+use crate::models::playlist::{Playlist, SmartPlaylistRule, SmartPlaylistRules};
 use crate::repositories::PlaylistRepository;
 use crate::services::similarity::SimilarityService;
 
@@ -549,9 +549,13 @@ impl PlaylistService {
     /// * `user_id` - The user triggering the refresh
     ///
     /// # Returns
-    /// The number of tracks in the refreshed playlist
+    /// The updated playlist with refreshed track list
     #[instrument(skip(self))]
-    pub async fn refresh_smart_playlist(&self, playlist_id: Uuid, user_id: Uuid) -> ApiResult<i32> {
+    pub async fn refresh_smart_playlist(
+        &self,
+        playlist_id: Uuid,
+        user_id: Uuid,
+    ) -> ApiResult<Playlist> {
         // Get the playlist
         let playlist = self
             .playlist_repo
@@ -576,7 +580,16 @@ impl PlaylistService {
             .set_tracks(playlist_id, &track_ids, Some(user_id))
             .await?;
 
-        Ok(track_ids.len() as i32)
+        // Re-fetch to get updated stats from update_playlist_stats
+        let updated = self
+            .playlist_repo
+            .find_by_id(playlist_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::Internal("Playlist disappeared during refresh".to_string())
+            })?;
+
+        Ok(updated)
     }
 }
 

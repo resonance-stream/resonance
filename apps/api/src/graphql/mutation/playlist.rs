@@ -464,7 +464,7 @@ impl PlaylistMutation {
 
         // Evaluate smart playlist rules and update tracks
         let playlist_service = ctx.data::<PlaylistService>()?;
-        let track_count = playlist_service
+        let updated = playlist_service
             .refresh_smart_playlist(playlist_id, claims.sub)
             .await
             .map_err(to_graphql_error)?;
@@ -472,18 +472,9 @@ impl PlaylistMutation {
         tracing::info!(
             playlist_id = %playlist_id,
             user_id = %claims.sub,
-            track_count = track_count,
+            track_count = updated.track_count,
             "Smart playlist refreshed successfully"
         );
-
-        // Fetch the updated playlist to return
-        // NOTE: This is a redundant fetch since PlaylistService also fetches the playlist.
-        // A future optimization would be to have the service return the updated playlist.
-        let updated = playlist_repo
-            .find_by_id(playlist_id)
-            .await
-            .map_err(|e| to_graphql_error(e.into()))?
-            .ok_or_else(|| async_graphql::Error::new("Playlist not found after refresh"))?;
 
         Ok(Playlist::from(updated))
     }
