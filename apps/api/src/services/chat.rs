@@ -876,8 +876,8 @@ You can help users with their music library by:
                 serde_json::json!({
                     "track_id": t.track_id.to_string(),
                     "title": &t.title,
-                    "artist_name": &t.artist_name,
-                    "album_title": &t.album_title,
+                    "artist_name": t.artist_name.as_deref().unwrap_or(""),
+                    "album_title": t.album_title.as_deref().unwrap_or(""),
                     "score": t.score
                 })
             })
@@ -909,7 +909,8 @@ You can help users with their music library by:
         };
 
         // Validate query is not empty
-        if args.query.trim().is_empty() {
+        let query = args.query.trim();
+        if query.is_empty() {
             return (
                 serde_json::json!({
                     "error": "Search query cannot be empty"
@@ -919,17 +920,44 @@ You can help users with their music library by:
             );
         }
 
+        // Prevent abuse / excessive embedding work
+        const MAX_QUERY_CHARS: usize = 512;
+        if query.chars().count() > MAX_QUERY_CHARS {
+            return (
+                serde_json::json!({
+                    "error": "Search query too long",
+                    "max_chars": MAX_QUERY_CHARS
+                })
+                .to_string(),
+                None,
+            );
+        }
+
         let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
         let search_type = args
             .search_type
-            .unwrap_or_else(|| "track".to_string())
-            .trim()
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("track")
             .to_lowercase();
+
+        // Validate search_type
+        if search_type != "track" && search_type != "mood" {
+            return (
+                serde_json::json!({
+                    "error": "Invalid search_type",
+                    "allowed": ["track", "mood"]
+                })
+                .to_string(),
+                None,
+            );
+        }
 
         // Use mood-based search if search_type is "mood"
         if search_type == "mood" {
             // Parse query as mood tags (could be comma-separated or single mood)
-            let moods = Self::parse_mood_tags(&args.query);
+            let moods = Self::parse_mood_tags(query);
 
             if moods.is_empty() {
                 return (
@@ -947,7 +975,7 @@ You can help users with their music library by:
                     let results = Self::format_search_results(&tracks);
                     let mut result = serde_json::json!({
                         "results": results,
-                        "query": args.query,
+                        "query": query,
                         "search_type": "mood",
                         "count": tracks.len()
                     });
@@ -962,7 +990,7 @@ You can help users with their music library by:
                     (
                         serde_json::json!({
                             "error": format!("Search failed: {}", e),
-                            "query": args.query
+                            "query": query
                         })
                         .to_string(),
                         None,
@@ -983,14 +1011,14 @@ You can help users with their music library by:
             };
 
             // Generate embedding for the query
-            let embedding = match ollama.generate_embedding(&args.query).await {
+            let embedding = match ollama.generate_embedding(query).await {
                 Ok(emb) => emb,
                 Err(e) => {
-                    warn!(error = %e, query = %args.query, "Failed to generate embedding");
+                    warn!(error = %e, query = %query, "Failed to generate embedding");
                     return (
                         serde_json::json!({
                             "error": format!("Failed to process query: {}", e),
-                            "query": args.query
+                            "query": query
                         })
                         .to_string(),
                         None,
@@ -1008,7 +1036,7 @@ You can help users with their music library by:
                     let results = Self::format_search_results(&tracks);
                     let mut result = serde_json::json!({
                         "results": results,
-                        "query": args.query,
+                        "query": query,
                         "search_type": "semantic",
                         "count": tracks.len()
                     });
@@ -1023,7 +1051,7 @@ You can help users with their music library by:
                     (
                         serde_json::json!({
                             "error": format!("Search failed: {}", e),
-                            "query": args.query
+                            "query": query
                         })
                         .to_string(),
                         None,
@@ -1195,8 +1223,8 @@ You can help users with their music library by:
                 serde_json::json!({
                     "track_id": t.track_id.to_string(),
                     "title": &t.title,
-                    "artist_name": &t.artist_name,
-                    "album_title": &t.album_title,
+                    "artist_name": t.artist_name.as_deref().unwrap_or(""),
+                    "album_title": t.album_title.as_deref().unwrap_or(""),
                     "score": t.score,
                     "similarity_type": format!("{:?}", t.similarity_type).to_lowercase()
                 })
