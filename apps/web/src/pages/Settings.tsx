@@ -2,6 +2,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../co
 import { Button } from '../components/ui/Button'
 import { Switch } from '../components/ui/Switch'
 import { Slider } from '../components/ui/Slider'
+import { IntegrationsSettings } from '../components/settings/IntegrationsSettings'
 import { useSettingsStore } from '../stores/settingsStore'
 
 // Note: Crossfade settings are synced to AudioEngine in AudioProvider.tsx
@@ -133,6 +134,9 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Integrations */}
+        <IntegrationsSettings />
 
         {/* Account Settings */}
         <Card padding="lg">

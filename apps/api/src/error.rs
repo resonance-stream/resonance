@@ -105,6 +105,10 @@ pub enum ApiError {
     #[error("Last.fm error: {0}")]
     Lastfm(String),
 
+    /// ListenBrainz integration error
+    #[error("ListenBrainz error: {0}")]
+    ListenBrainz(String),
+
     /// HTTP client error (for external API calls)
     #[error("external service error: {0}")]
     HttpClient(#[from] reqwest::Error),
@@ -199,6 +203,7 @@ impl ApiError {
             | Self::AiService(_)
             | Self::Lidarr(_)
             | Self::Lastfm(_)
+            | Self::ListenBrainz(_)
             | Self::HttpClient(_) => StatusCode::BAD_GATEWAY,
 
             // 500 Internal Server Error
@@ -232,6 +237,7 @@ impl ApiError {
             Self::AiService(_) => "AI_SERVICE_ERROR",
             Self::Lidarr(_) => "LIDARR_ERROR",
             Self::Lastfm(_) => "LASTFM_ERROR",
+            Self::ListenBrainz(_) => "LISTENBRAINZ_ERROR",
             Self::HttpClient(_) => "EXTERNAL_SERVICE_ERROR",
             Self::AudioFileNotFound(_) => "AUDIO_NOT_FOUND",
             Self::AudioProcessing(_) => "AUDIO_PROCESSING_ERROR",

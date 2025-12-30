@@ -196,4 +196,46 @@ impl TrackRepository {
         .await?;
         Ok(())
     }
+
+    /// Get track info for scrobbling to external services (ListenBrainz, Last.fm)
+    ///
+    /// Returns track title, artist name, album title, and MusicBrainz IDs
+    /// needed for submitting scrobbles to external services.
+    #[allow(dead_code)]
+    pub async fn get_track_for_scrobble(
+        &self,
+        track_id: Uuid,
+    ) -> Result<Option<TrackScrobbleInfo>, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            SELECT
+                t.title,
+                a.name as artist_name,
+                al.title as album_title,
+                t.duration_ms,
+                t.musicbrainz_id as recording_mbid,
+                al.musicbrainz_id as release_mbid,
+                a.musicbrainz_id as artist_mbid
+            FROM tracks t
+            JOIN artists a ON t.artist_id = a.id
+            LEFT JOIN albums al ON t.album_id = al.id
+            WHERE t.id = $1
+            "#,
+        )
+        .bind(track_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+}
+
+/// Track info needed for scrobbling to external services
+#[derive(Debug, sqlx::FromRow)]
+pub struct TrackScrobbleInfo {
+    pub title: String,
+    pub artist_name: String,
+    pub album_title: Option<String>,
+    pub duration_ms: i64,
+    pub recording_mbid: Option<String>,
+    pub release_mbid: Option<String>,
+    pub artist_mbid: Option<String>,
 }

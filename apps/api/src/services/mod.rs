@@ -11,6 +11,7 @@
 pub mod auth;
 pub mod health;
 pub mod lastfm;
+pub mod listenbrainz;
 pub mod playlist;
 pub mod search;
 pub mod similarity;
@@ -26,6 +27,8 @@ pub use transcoder::{TranscodeFormat, TranscodeOptions, TranscoderService};
 // These are used via the schema builder pattern, not direct crate imports
 #[allow(unused_imports)]
 pub use lastfm::LastfmService;
+#[allow(unused_imports)]
+pub use listenbrainz::{ListenBrainzService, ScrobbleTrack};
 #[allow(unused_imports)]
 pub use search::SearchService;
 #[allow(unused_imports)]
