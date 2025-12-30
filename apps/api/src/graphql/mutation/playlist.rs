@@ -18,6 +18,7 @@ use crate::models::playlist::{
 };
 use crate::models::user::Claims;
 use crate::repositories::PlaylistRepository;
+use crate::services::playlist::PlaylistService;
 
 // =============================================================================
 // Input Validation Limits
@@ -461,18 +462,21 @@ impl PlaylistMutation {
             ));
         }
 
-        // TODO: Implement smart rule evaluation in PlaylistService (Step 3)
-        // For now, just return the existing playlist
-        // let playlist_service = ctx.data::<PlaylistService>()?;
-        // let refreshed = playlist_service.refresh_smart_playlist(playlist_id).await?;
+        // Evaluate smart playlist rules and update tracks
+        let playlist_service = ctx.data::<PlaylistService>()?;
+        let updated = playlist_service
+            .refresh_smart_playlist(playlist_id, claims.sub)
+            .await
+            .map_err(to_graphql_error)?;
 
         tracing::info!(
             playlist_id = %playlist_id,
             user_id = %claims.sub,
-            "Smart playlist refresh requested (evaluation not yet implemented)"
+            track_count = updated.track_count,
+            "Smart playlist refreshed successfully"
         );
 
-        Ok(Playlist::from(existing))
+        Ok(Playlist::from(updated))
     }
 
     /// Add tracks to a playlist

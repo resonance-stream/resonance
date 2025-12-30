@@ -158,7 +158,7 @@ pub enum WorkerError {
     // ========== Prefetch Errors ==========
     /// Track not found for prefetch
     #[error("track not found for prefetch: {0}")]
-    TrackNotFound(i64),
+    TrackNotFound(uuid::Uuid),
 
     /// Prefetch queue full
     #[error("prefetch queue full, max capacity: {0}")]
@@ -479,7 +479,7 @@ mod tests {
             Some("lidarr_sync")
         );
         assert_eq!(
-            WorkerError::TrackNotFound(123).job_context(),
+            WorkerError::TrackNotFound(uuid::Uuid::nil()).job_context(),
             Some("prefetch")
         );
     }

@@ -12,7 +12,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
-use crate::models::playlist::{SmartPlaylistRule, SmartPlaylistRules};
+use crate::models::playlist::{Playlist, SmartPlaylistRule, SmartPlaylistRules};
 use crate::repositories::PlaylistRepository;
 use crate::services::similarity::SimilarityService;
 
@@ -27,15 +27,18 @@ enum SqlParam {
 }
 
 /// Maximum tracks to fetch when evaluating similarity rules
-#[allow(dead_code)] // Used within PlaylistService which isn't integrated yet
 const MAX_SIMILAR_TRACKS: i32 = 100;
 
 /// Default minimum similarity score threshold
-#[allow(dead_code)] // Used within PlaylistService which isn't integrated yet
 const DEFAULT_MIN_SCORE: f64 = 0.5;
 
 /// Service for playlist operations including smart rule evaluation
-#[allow(dead_code)] // Will be used by playlist mutations once integrated
+///
+/// NOTE: This service creates its own instances of PlaylistRepository and SimilarityService
+/// internally. While this results in duplicate instances when used alongside the schema-level
+/// services, all instances are stateless (they only hold Arc-based pool references) so this
+/// is not a correctness issue. A future optimization could use constructor injection to
+/// share instances: `new(pool, playlist_repo, similarity_service)`.
 #[derive(Clone)]
 pub struct PlaylistService {
     pool: PgPool,
@@ -43,7 +46,6 @@ pub struct PlaylistService {
     similarity_service: SimilarityService,
 }
 
-#[allow(dead_code)] // Methods will be used once integrated into playlist mutations
 impl PlaylistService {
     /// Create a new PlaylistService
     pub fn new(pool: PgPool) -> Self {
@@ -547,15 +549,26 @@ impl PlaylistService {
     /// * `user_id` - The user triggering the refresh
     ///
     /// # Returns
-    /// The number of tracks in the refreshed playlist
+    /// The updated playlist with refreshed track list
     #[instrument(skip(self))]
-    pub async fn refresh_smart_playlist(&self, playlist_id: Uuid, user_id: Uuid) -> ApiResult<i32> {
+    pub async fn refresh_smart_playlist(
+        &self,
+        playlist_id: Uuid,
+        user_id: Uuid,
+    ) -> ApiResult<Playlist> {
         // Get the playlist
         let playlist = self
             .playlist_repo
             .find_by_id(playlist_id)
             .await?
             .ok_or_else(|| ApiError::not_found("playlist", playlist_id.to_string()))?;
+
+        // Enforce ownership - defense-in-depth (mutation layer also checks)
+        if playlist.user_id != user_id {
+            return Err(ApiError::Forbidden(
+                "Cannot refresh another user's playlist".to_string(),
+            ));
+        }
 
         // Verify it's a smart playlist
         if playlist.smart_rules.is_none() {
@@ -574,7 +587,14 @@ impl PlaylistService {
             .set_tracks(playlist_id, &track_ids, Some(user_id))
             .await?;
 
-        Ok(track_ids.len() as i32)
+        // Re-fetch to get updated stats from update_playlist_stats
+        let updated = self
+            .playlist_repo
+            .find_by_id(playlist_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("playlist", playlist_id.to_string()))?;
+
+        Ok(updated)
     }
 }
 
