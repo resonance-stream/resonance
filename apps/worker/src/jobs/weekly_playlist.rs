@@ -193,6 +193,7 @@ async fn get_seed_tracks(state: &AppState, user_id: Uuid) -> WorkerResult<Vec<Uu
         WHERE lh.user_id = $1
           AND lh.played_at > NOW() - make_interval(days => $2)
           AND lh.completed = true
+          AND te.description_embedding IS NOT NULL
         GROUP BY lh.track_id
         HAVING COUNT(*) >= $3
         ORDER BY COUNT(*) DESC, MAX(lh.played_at) DESC
@@ -253,7 +254,7 @@ async fn find_similar_tracks_for_seeds(
         FROM track_embeddings te
         CROSS JOIN seed_embeddings se
         WHERE te.track_id != ALL($1)
-          AND te.track_id NOT IN (SELECT track_id FROM recently_played)
+          AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = te.track_id)
           AND te.description_embedding IS NOT NULL
         ORDER BY te.description_embedding <=> se.avg_embedding
         LIMIT $4

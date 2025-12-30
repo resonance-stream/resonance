@@ -265,10 +265,11 @@ async fn predict_by_combined_similarity(
         SELECT cs.id
         FROM combined_scores cs
         JOIN tracks t ON t.id = cs.id
-        WHERE cs.id NOT IN (
-            SELECT track_id FROM listening_history
-            WHERE user_id = $2
-              AND played_at > NOW() - INTERVAL '24 hours'
+        WHERE NOT EXISTS (
+            SELECT 1 FROM listening_history lh
+            WHERE lh.user_id = $2
+              AND lh.played_at > NOW() - INTERVAL '24 hours'
+              AND lh.track_id = cs.id
         )
         ORDER BY cs.combined_score DESC
         LIMIT $3
@@ -340,10 +341,11 @@ async fn predict_by_features(
         )
         SELECT fs.id
         FROM feature_scores fs
-        WHERE fs.id NOT IN (
-            SELECT track_id FROM listening_history
-            WHERE user_id = $2
-              AND played_at > NOW() - INTERVAL '24 hours'
+        WHERE NOT EXISTS (
+            SELECT 1 FROM listening_history lh
+            WHERE lh.user_id = $2
+              AND lh.played_at > NOW() - INTERVAL '24 hours'
+              AND lh.track_id = fs.id
         )
         ORDER BY (fs.feature_score * $6 + fs.tag_score * $7) DESC
         LIMIT $3
@@ -377,7 +379,8 @@ async fn cache_tracks(state: &AppState, user_id: Uuid, track_ids: &[Uuid]) -> Wo
         return Ok(());
     }
 
-    // Batch fetch track metadata in a single query
+    // Batch fetch track metadata in a single query, preserving the ranking order
+    // from predict_next_tracks() using UNNEST WITH ORDINALITY.
     // NOTE: Future optimization - use shared track cache (track:meta:{id}) instead of
     // per-user keys to reduce memory duplication for popular tracks across users.
     let tracks: Vec<CachedTrackMetadata> = sqlx::query_as(
@@ -390,11 +393,11 @@ async fn cache_tracks(state: &AppState, user_id: Uuid, track_ids: &[Uuid]) -> Wo
             t.duration_ms,
             t.file_path,
             t.file_format::text as file_format
-        FROM tracks t
+        FROM UNNEST($1::uuid[]) WITH ORDINALITY AS u(id, ord)
+        JOIN tracks t ON t.id = u.id
         LEFT JOIN artists ar ON t.artist_id = ar.id
         LEFT JOIN albums al ON t.album_id = al.id
-        WHERE t.id = ANY($1)
-        ORDER BY t.id
+        ORDER BY u.ord
         "#,
     )
     .bind(track_ids)

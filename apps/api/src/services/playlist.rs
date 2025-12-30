@@ -563,6 +563,13 @@ impl PlaylistService {
             .await?
             .ok_or_else(|| ApiError::not_found("playlist", playlist_id.to_string()))?;
 
+        // Enforce ownership - defense-in-depth (mutation layer also checks)
+        if playlist.user_id != user_id {
+            return Err(ApiError::Forbidden(
+                "Cannot refresh another user's playlist".to_string(),
+            ));
+        }
+
         // Verify it's a smart playlist
         if playlist.smart_rules.is_none() {
             return Err(ApiError::ValidationError(
@@ -585,9 +592,7 @@ impl PlaylistService {
             .playlist_repo
             .find_by_id(playlist_id)
             .await?
-            .ok_or_else(|| {
-                ApiError::Internal("Playlist disappeared during refresh".to_string())
-            })?;
+            .ok_or_else(|| ApiError::not_found("playlist", playlist_id.to_string()))?;
 
         Ok(updated)
     }
