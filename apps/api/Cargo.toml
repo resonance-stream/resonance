@@ -42,6 +42,7 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
+once_cell = { workspace = true }
 
 # External services
 redis = { workspace = true }

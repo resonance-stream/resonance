@@ -13,6 +13,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use sqlx::PgPool;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -65,12 +66,14 @@ fn validate_device_id(device_id: &str) -> Result<(), &'static str> {
 ///
 /// Authenticates the connection via JWT token in query parameter,
 /// then upgrades to WebSocket and manages the connection.
+#[allow(clippy::too_many_arguments)]
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<WsQueryParams>,
     Extension(auth_service): Extension<AuthService>,
     Extension(connection_manager): Extension<ConnectionManager>,
     Extension(pubsub): Extension<SyncPubSub>,
+    Extension(pool): Extension<PgPool>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
 ) -> Response {
@@ -145,6 +148,7 @@ pub async fn ws_handler(
             },
             connection_manager,
             pubsub,
+            pool,
         )
     })
 }
@@ -157,6 +161,7 @@ async fn handle_socket(
     device_info: DeviceInfo,
     connection_manager: ConnectionManager,
     pubsub: SyncPubSub,
+    pool: PgPool,
 ) {
     let device_id = device_info.device_id.clone();
     let device_name = device_info.device_name.clone();
@@ -170,12 +175,13 @@ async fn handle_socket(
     // Split the socket into sender and receiver
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // Create sync handler for processing messages
-    let sync_handler = SyncHandler::new(
+    // Create sync handler for processing messages with database persistence
+    let sync_handler = SyncHandler::with_pool(
         user_id,
         device_id.clone(),
         connection_manager.clone(),
         pubsub.clone(),
+        pool.clone(),
     );
 
     // Get current state for the connecting device
