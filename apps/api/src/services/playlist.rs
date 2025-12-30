@@ -77,7 +77,7 @@ impl PlaylistService {
         }
 
         // Combine results based on match mode (optimized to avoid unnecessary allocations)
-        let combined = if rules.match_mode == "any" {
+        let combined = if rules.match_mode.eq_ignore_ascii_case("any") {
             // Union of all results (OR logic) - extend in-place
             let mut result = all_results.pop().unwrap_or_default();
             for set in all_results {
@@ -105,9 +105,9 @@ impl PlaylistService {
             track_ids = self.sort_tracks(track_ids, sort_by, sort_order).await?;
         }
 
-        // Apply limit if specified
+        // Apply limit if specified (defensive: treat negative as 0)
         if let Some(limit) = rules.limit {
-            track_ids.truncate(limit as usize);
+            track_ids.truncate(limit.max(0) as usize);
         }
 
         Ok(track_ids)
@@ -209,28 +209,12 @@ impl PlaylistService {
 
         let sql = format!("SELECT id FROM tracks WHERE {}", where_clause);
 
-        // Execute the query with dynamic parameters
-        let track_ids: Vec<(Uuid,)> = match params.len() {
-            0 => sqlx::query_as(&sql).fetch_all(&self.pool).await?,
-            1 => {
-                sqlx::query_as(&sql)
-                    .bind(&params[0])
-                    .fetch_all(&self.pool)
-                    .await?
-            }
-            2 => {
-                sqlx::query_as(&sql)
-                    .bind(&params[0])
-                    .bind(&params[1])
-                    .fetch_all(&self.pool)
-                    .await?
-            }
-            _ => {
-                return Err(ApiError::Internal(
-                    "Too many parameters in filter rule".to_string(),
-                ));
-            }
-        };
+        // Execute the query with dynamic parameter binding
+        let mut query = sqlx::query_as::<_, (Uuid,)>(&sql);
+        for param in &params {
+            query = query.bind(param);
+        }
+        let track_ids: Vec<(Uuid,)> = query.fetch_all(&self.pool).await?;
 
         Ok(track_ids.into_iter().map(|(id,)| id).collect())
     }
@@ -394,7 +378,8 @@ impl PlaylistService {
             "title" => Ok("title".to_string()),
             "artist" => Ok("artist_name".to_string()),
             "album" => Ok("album_title".to_string()),
-            "genres" => Ok("genres".to_string()),
+            // "genre" (singular, from VALID_FIELDS) maps to "genres" column
+            "genre" | "genres" => Ok("genres".to_string()),
             "ai_mood" => Ok("ai_mood".to_string()),
             "ai_tags" => Ok("ai_tags".to_string()),
             "duration_ms" => Ok("duration_ms".to_string()),

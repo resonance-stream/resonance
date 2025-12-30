@@ -205,7 +205,9 @@ impl PlaylistRepository {
         let id = Uuid::new_v4();
         let smart_rules_json = smart_rules
             .as_ref()
-            .map(|r| serde_json::to_value(r).unwrap_or_default());
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
 
         let sql = format!(
             r#"
@@ -284,7 +286,9 @@ impl PlaylistRepository {
 
         let smart_rules_json = smart_rules
             .as_ref()
-            .map(|r| serde_json::to_value(r).unwrap_or_default());
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
 
         // Build the query dynamically
         let mut query = sqlx::query_as::<_, Playlist>(&sql).bind(playlist_id);

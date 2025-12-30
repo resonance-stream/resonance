@@ -120,7 +120,8 @@ impl From<SmartPlaylistRuleInput> for SmartPlaylistRule {
 impl From<SmartPlaylistRulesInput> for SmartPlaylistRules {
     fn from(input: SmartPlaylistRulesInput) -> Self {
         Self {
-            match_mode: input.match_mode,
+            // Normalize match_mode to lowercase for consistent comparison
+            match_mode: input.match_mode.to_ascii_lowercase(),
             rules: input.rules.into_iter().map(Into::into).collect(),
             limit: input.limit,
             sort_by: input.sort_by,
@@ -732,6 +733,17 @@ fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
         ));
     }
 
+    // Validate sort_by if provided
+    if let Some(ref sort_by) = rules.sort_by {
+        if !VALID_FIELDS.contains(&sort_by.as_str()) {
+            return Err(async_graphql::Error::new(format!(
+                "Invalid sort_by '{}'. Valid fields: {}",
+                sort_by,
+                VALID_FIELDS.join(", ")
+            )));
+        }
+    }
+
     // Validate sort_order if provided
     if let Some(ref order) = rules.sort_order {
         if order != "asc" && order != "desc" {
@@ -773,16 +785,26 @@ fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
             )));
         }
 
+        // Define similarity operators for bidirectional validation
+        const SIMILARITY_OPERATORS: &[&str] = &["combined", "semantic", "acoustic", "categorical"];
+
         // Validate similar_to rules have proper structure
         if rule.field == "similar_to" {
-            if !["combined", "semantic", "acoustic", "categorical"]
-                .contains(&rule.operator.as_str())
-            {
+            if !SIMILARITY_OPERATORS.contains(&rule.operator.as_str()) {
                 return Err(async_graphql::Error::new(
                     "similar_to field requires operator: combined, semantic, acoustic, or categorical",
                 ));
             }
+        } else if SIMILARITY_OPERATORS.contains(&rule.operator.as_str()) {
+            // Similarity operators can ONLY be used with similar_to field
+            return Err(async_graphql::Error::new(format!(
+                "Operator '{}' can only be used with the 'similar_to' field",
+                rule.operator
+            )));
+        }
 
+        // Continue validation for similar_to rules
+        if rule.field == "similar_to" {
             // Check for track_ids in value
             let track_ids = rule.value.get("track_ids").ok_or_else(|| {
                 async_graphql::Error::new("similar_to rule requires 'track_ids' in value")
