@@ -22,6 +22,9 @@ use resonance_shared_config::OllamaConfig;
 
 use crate::middleware::extract_client_ip;
 use crate::services::auth::AuthService;
+use crate::services::search::SearchService;
+use crate::services::similarity::SimilarityService;
+use resonance_ollama_client::OllamaClient;
 
 use super::chat_handler::spawn_chat_handler;
 use super::connection::{ConnectionManager, DeviceInfo};
@@ -78,6 +81,9 @@ pub async fn ws_handler(
     Extension(pubsub): Extension<SyncPubSub>,
     Extension(pool): Extension<PgPool>,
     Extension(ollama_config): Extension<OllamaConfig>,
+    Extension(search_service): Extension<SearchService>,
+    Extension(similarity_service): Extension<SimilarityService>,
+    Extension(ollama_client): Extension<Option<OllamaClient>>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
 ) -> Response {
@@ -154,6 +160,9 @@ pub async fn ws_handler(
             pubsub,
             pool,
             ollama_config,
+            search_service,
+            similarity_service,
+            ollama_client,
         )
     })
 }
@@ -169,6 +178,9 @@ async fn handle_socket(
     pubsub: SyncPubSub,
     pool: PgPool,
     ollama_config: OllamaConfig,
+    search_service: SearchService,
+    similarity_service: SimilarityService,
+    ollama_client: Option<OllamaClient>,
 ) {
     let device_id = device_info.device_id.clone();
     let device_name = device_info.device_name.clone();
@@ -188,6 +200,9 @@ async fn handle_socket(
         device_id.clone(),
         pool.clone(),
         ollama_config,
+        search_service,
+        similarity_service,
+        ollama_client,
         connection_manager.clone(),
     );
 

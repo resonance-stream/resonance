@@ -18,6 +18,9 @@ use crate::models::chat::{
     CreateConversation, ToolCall, ToolCallFunction,
 };
 use crate::repositories::ChatRepository;
+use crate::services::search::SearchService;
+use crate::services::similarity::SimilarityService;
+use resonance_ollama_client::OllamaClient;
 use resonance_shared_config::OllamaConfig;
 
 /// Chat service errors
@@ -219,11 +222,30 @@ pub struct ChatService {
     repository: ChatRepository,
     http_client: Client,
     config: OllamaConfig,
+    /// Search service for semantic and mood-based search
+    search_service: SearchService,
+    /// Similarity service for track recommendations
+    similarity_service: SimilarityService,
+    /// Ollama client for generating embeddings
+    ollama_client: Option<OllamaClient>,
 }
 
 impl ChatService {
-    /// Create a new ChatService with configured HTTP client
-    pub fn new(pool: PgPool, config: OllamaConfig) -> Self {
+    /// Create a new ChatService with configured HTTP client and AI services
+    ///
+    /// # Arguments
+    /// * `pool` - Database connection pool
+    /// * `config` - Ollama configuration
+    /// * `search_service` - Service for semantic and mood-based search
+    /// * `similarity_service` - Service for finding similar tracks
+    /// * `ollama_client` - Optional Ollama client for generating embeddings
+    pub fn new(
+        pool: PgPool,
+        config: OllamaConfig,
+        search_service: SearchService,
+        similarity_service: SimilarityService,
+        ollama_client: Option<OllamaClient>,
+    ) -> Self {
         let http_client = Client::builder()
             .pool_max_idle_per_host(5)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -236,6 +258,9 @@ impl ChatService {
             repository: ChatRepository::new(pool),
             http_client,
             config,
+            search_service,
+            similarity_service,
+            ollama_client,
         }
     }
 
@@ -654,23 +679,23 @@ You can help users with their music library by:
                 tool_type: "function".to_string(),
                 function: OllamaToolFunction {
                     name: "search_library".to_string(),
-                    description: "Search the user's music library for tracks, albums, or artists"
+                    description: "Search the user's music library. Use search_type 'track' for finding specific songs/artists/albums by name, or 'mood' for finding tracks matching a mood or vibe."
                         .to_string(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query (song title, artist name, or album)"
+                                "description": "Search query - song/artist/album name for 'track' search, or mood descriptors (e.g., 'upbeat', 'relaxing', 'energetic') for 'mood' search"
                             },
                             "search_type": {
                                 "type": "string",
-                                "enum": ["track", "album", "artist"],
-                                "description": "Type of content to search for"
+                                "enum": ["track", "mood"],
+                                "description": "Search mode: 'track' (default) for semantic search using AI embeddings, 'mood' for finding tracks by mood tags like 'happy' or 'energetic'"
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "Maximum number of results (default: 5)"
+                                "description": "Maximum number of results (default: 5, max: 20)"
                             }
                         },
                         "required": ["query"]
@@ -742,24 +767,21 @@ You can help users with their music library by:
                 tool_type: "function".to_string(),
                 function: OllamaToolFunction {
                     name: "get_recommendations".to_string(),
-                    description: "Get music recommendations based on mood or similar tracks"
+                    description: "Get track recommendations similar to a given track. For mood-based search, use search_library with search_type 'mood' instead."
                         .to_string(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
-                            "mood": {
-                                "type": "string",
-                                "description": "Mood/vibe to base recommendations on (e.g., 'energetic', 'chill', 'melancholic')"
-                            },
                             "similar_to_track_id": {
                                 "type": "string",
-                                "description": "Track ID to find similar tracks to"
+                                "description": "Track ID to find similar tracks to (required)"
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "Maximum number of recommendations (default: 5)"
+                                "description": "Maximum number of recommendations (default: 5, max: 20)"
                             }
-                        }
+                        },
+                        "required": ["similar_to_track_id"]
                     }),
                 },
             },
@@ -833,8 +855,41 @@ You can help users with their music library by:
 
     // ==================== Tool Implementations ====================
 
-    /// Search library tool implementation
-    /// Note: This returns mock data - real implementation will query the database
+    /// Parse mood tags from comma-separated input string
+    ///
+    /// Splits by comma, trims whitespace, converts to lowercase, and filters empty strings.
+    fn parse_mood_tags(input: &str) -> Vec<String> {
+        input
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Format search results as JSON values for consistent response structure
+    fn format_search_results(
+        tracks: &[crate::services::search::ScoredTrack],
+    ) -> Vec<serde_json::Value> {
+        tracks
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "track_id": t.track_id.to_string(),
+                    "title": &t.title,
+                    "artist_name": t.artist_name.as_deref().unwrap_or(""),
+                    "album_title": t.album_title.as_deref().unwrap_or(""),
+                    "score": t.score
+                })
+            })
+            .collect()
+    }
+
+    /// Search library tool implementation using semantic search or mood-based search
+    ///
+    /// Supports two search modes:
+    /// - `mood`: Searches tracks by mood tags (e.g., "happy", "energetic", "melancholic")
+    /// - `track`/default: Uses semantic search with AI embeddings to find matching tracks
+    #[instrument(skip(self))]
     async fn tool_search_library(&self, arguments: &str) -> (String, Option<ChatAction>) {
         #[derive(Deserialize)]
         struct Args {
@@ -853,18 +908,157 @@ You can help users with their music library by:
             }
         };
 
-        let _limit = args.limit.unwrap_or(5);
-        let _search_type = args.search_type.unwrap_or_else(|| "track".to_string());
+        // Validate query is not empty
+        let query = args.query.trim();
+        if query.is_empty() {
+            return (
+                serde_json::json!({
+                    "error": "Search query cannot be empty"
+                })
+                .to_string(),
+                None,
+            );
+        }
 
-        // TODO: Implement actual search using SearchService/Meilisearch
-        // For now, return a placeholder that indicates the search was understood
-        let result = serde_json::json!({
-            "results": [],
-            "query": args.query,
-            "message": "Search functionality will be connected in Phase 4"
-        });
+        // Prevent abuse / excessive embedding work
+        const MAX_QUERY_CHARS: usize = 512;
+        if query.chars().count() > MAX_QUERY_CHARS {
+            return (
+                serde_json::json!({
+                    "error": "Search query too long",
+                    "max_chars": MAX_QUERY_CHARS
+                })
+                .to_string(),
+                None,
+            );
+        }
 
-        (result.to_string(), None)
+        let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
+        let search_type = args
+            .search_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("track")
+            .to_lowercase();
+
+        // Validate search_type
+        if search_type != "track" && search_type != "mood" {
+            return (
+                serde_json::json!({
+                    "error": "Invalid search_type",
+                    "allowed": ["track", "mood"]
+                })
+                .to_string(),
+                None,
+            );
+        }
+
+        // Use mood-based search if search_type is "mood"
+        if search_type == "mood" {
+            // Parse query as mood tags (could be comma-separated or single mood)
+            let moods = Self::parse_mood_tags(query);
+
+            if moods.is_empty() {
+                return (
+                    serde_json::json!({
+                        "error": "No valid mood tags provided",
+                        "hint": "Provide moods like 'happy', 'energetic', 'melancholic'"
+                    })
+                    .to_string(),
+                    None,
+                );
+            }
+
+            match self.search_service.search_by_mood(&moods, limit).await {
+                Ok(tracks) => {
+                    let results = Self::format_search_results(&tracks);
+                    let mut result = serde_json::json!({
+                        "results": results,
+                        "query": query,
+                        "search_type": "mood",
+                        "count": tracks.len()
+                    });
+                    if tracks.is_empty() {
+                        result["message"] =
+                            serde_json::json!("No tracks found matching the specified mood");
+                    }
+                    (result.to_string(), None)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Mood search failed");
+                    (
+                        serde_json::json!({
+                            "error": format!("Search failed: {}", e),
+                            "query": query
+                        })
+                        .to_string(),
+                        None,
+                    )
+                }
+            }
+        } else {
+            // Use semantic search with embeddings
+            let Some(ref ollama) = self.ollama_client else {
+                return (
+                    serde_json::json!({
+                        "error": "Semantic search not available (Ollama not configured)",
+                        "hint": "Try mood-based search instead with search_type: 'mood'"
+                    })
+                    .to_string(),
+                    None,
+                );
+            };
+
+            // Generate embedding for the query
+            let embedding = match ollama.generate_embedding(query).await {
+                Ok(emb) => emb,
+                Err(e) => {
+                    warn!(error = %e, query = %query, "Failed to generate embedding");
+                    return (
+                        serde_json::json!({
+                            "error": format!("Failed to process query: {}", e),
+                            "query": query
+                        })
+                        .to_string(),
+                        None,
+                    );
+                }
+            };
+
+            // Search by embedding
+            match self
+                .search_service
+                .search_by_embedding(&embedding, limit)
+                .await
+            {
+                Ok(tracks) => {
+                    let results = Self::format_search_results(&tracks);
+                    let mut result = serde_json::json!({
+                        "results": results,
+                        "query": query,
+                        "search_type": "semantic",
+                        "count": tracks.len()
+                    });
+                    if tracks.is_empty() {
+                        result["message"] =
+                            serde_json::json!("No tracks found matching your query");
+                    }
+                    (result.to_string(), None)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Semantic search failed");
+                    (
+                        serde_json::json!({
+                            "error": format!("Search failed: {}", e),
+                            "query": query
+                        })
+                        .to_string(),
+                        None,
+                    )
+                }
+            }
+        }
     }
 
     /// Play track tool implementation
@@ -1019,12 +1213,34 @@ You can help users with their music library by:
         (result.to_string(), Some(action))
     }
 
+    /// Format similar tracks as JSON values for consistent response structure
+    fn format_similar_tracks(
+        tracks: &[crate::services::similarity::SimilarTrack],
+    ) -> Vec<serde_json::Value> {
+        tracks
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "track_id": t.track_id.to_string(),
+                    "title": &t.title,
+                    "artist_name": t.artist_name.as_deref().unwrap_or(""),
+                    "album_title": t.album_title.as_deref().unwrap_or(""),
+                    "score": t.score,
+                    "similarity_type": format!("{:?}", t.similarity_type).to_lowercase()
+                })
+            })
+            .collect()
+    }
+
     /// Get recommendations tool implementation
+    ///
+    /// Finds tracks similar to a given track using combined similarity (semantic, acoustic, categorical).
+    /// For mood-based searches, use `search_library` with `search_type: "mood"` instead.
+    #[instrument(skip(self))]
     async fn tool_get_recommendations(&self, arguments: &str) -> (String, Option<ChatAction>) {
         #[derive(Deserialize)]
         struct Args {
-            mood: Option<String>,
-            similar_to_track_id: Option<String>,
+            similar_to_track_id: String,
             limit: Option<i32>,
         }
 
@@ -1032,42 +1248,64 @@ You can help users with their music library by:
             Ok(a) => a,
             Err(e) => {
                 return (
-                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    serde_json::json!({
+                        "error": format!("Invalid arguments: {}", e),
+                        "hint": "Provide similar_to_track_id (required). For mood-based search, use search_library with search_type: 'mood'"
+                    })
+                    .to_string(),
                     None,
                 )
             }
         };
 
-        // Validate similar_to_track_id if provided
-        let validated_similar_to = if let Some(ref track_id) = args.similar_to_track_id {
-            match Uuid::parse_str(track_id) {
-                Ok(uuid) => Some(uuid.to_string()),
-                Err(_) => {
-                    return (
-                        serde_json::json!({
-                            "error": "Invalid similar_to_track_id - must be a valid UUID"
-                        })
-                        .to_string(),
-                        None,
-                    )
-                }
+        let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
+
+        // Validate similar_to_track_id UUID format
+        let track_uuid = match Uuid::parse_str(&args.similar_to_track_id) {
+            Ok(uuid) => uuid,
+            Err(_) => {
+                return (
+                    serde_json::json!({
+                        "error": "Invalid similar_to_track_id - must be a valid UUID"
+                    })
+                    .to_string(),
+                    None,
+                )
             }
-        } else {
-            None
         };
 
-        let _limit = args.limit.unwrap_or(5);
-
-        // TODO: Implement actual recommendations using SimilarityService
-        // For now, return a placeholder
-        let result = serde_json::json!({
-            "recommendations": [],
-            "mood": args.mood,
-            "similar_to": validated_similar_to,
-            "message": "Recommendation functionality will be connected in Phase 4"
-        });
-
-        (result.to_string(), None)
+        // Find similar tracks using combined similarity
+        match self
+            .similarity_service
+            .find_similar_combined(track_uuid, limit)
+            .await
+        {
+            Ok(similar_tracks) => {
+                let results = Self::format_similar_tracks(&similar_tracks);
+                let mut result = serde_json::json!({
+                    "recommendations": results,
+                    "similar_to": track_uuid.to_string(),
+                    "recommendation_type": "similar_tracks",
+                    "count": similar_tracks.len()
+                });
+                if similar_tracks.is_empty() {
+                    result["message"] =
+                        serde_json::json!("No similar tracks found in your library");
+                }
+                (result.to_string(), None)
+            }
+            Err(e) => {
+                warn!(error = %e, track_id = %track_uuid, "Similarity recommendations failed");
+                (
+                    serde_json::json!({
+                        "error": format!("Failed to get similar tracks: {}", e),
+                        "similar_to": track_uuid.to_string()
+                    })
+                    .to_string(),
+                    None,
+                )
+            }
+        }
     }
 }
 
@@ -1175,11 +1413,13 @@ mod tests {
     /// Note: This pool is never actually connected, used only for unit testing
     async fn test_service() -> ChatService {
         let pool = sqlx::PgPool::connect_lazy("postgres://test").unwrap();
-        ChatService {
-            repository: ChatRepository::new(pool),
-            http_client: Client::new(),
-            config: OllamaConfig::default(),
-        }
+        ChatService::new(
+            pool.clone(),
+            OllamaConfig::default(),
+            SearchService::new(pool.clone()),
+            SimilarityService::new(pool),
+            None, // Tests don't exercise AI embedding features
+        )
     }
 
     #[tokio::test]
