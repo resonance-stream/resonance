@@ -875,9 +875,9 @@ You can help users with their music library by:
             .map(|t| {
                 serde_json::json!({
                     "track_id": t.track_id.to_string(),
-                    "title": t.title,
-                    "artist_name": t.artist_name,
-                    "album_title": t.album_title,
+                    "title": &t.title,
+                    "artist_name": &t.artist_name,
+                    "album_title": &t.album_title,
                     "score": t.score
                 })
             })
@@ -920,7 +920,11 @@ You can help users with their music library by:
         }
 
         let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
-        let search_type = args.search_type.unwrap_or_else(|| "track".to_string());
+        let search_type = args
+            .search_type
+            .unwrap_or_else(|| "track".to_string())
+            .trim()
+            .to_lowercase();
 
         // Use mood-based search if search_type is "mood"
         if search_type == "mood" {
@@ -1190,9 +1194,9 @@ You can help users with their music library by:
             .map(|t| {
                 serde_json::json!({
                     "track_id": t.track_id.to_string(),
-                    "title": t.title,
-                    "artist_name": t.artist_name,
-                    "album_title": t.album_title,
+                    "title": &t.title,
+                    "artist_name": &t.artist_name,
+                    "album_title": &t.album_title,
                     "score": t.score,
                     "similarity_type": format!("{:?}", t.similarity_type).to_lowercase()
                 })
