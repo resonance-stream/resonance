@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use resonance_ollama_client::OllamaClient;
 use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
 use tokio::sync::broadcast;
@@ -37,6 +38,9 @@ pub struct AppState {
 
     /// HTTP client for external API calls
     pub http_client: reqwest::Client,
+
+    /// Ollama AI client for embeddings and generation (optional - AI jobs fail if unavailable)
+    pub ollama: Option<OllamaClient>,
 
     /// Application configuration
     pub config: Config,
@@ -88,11 +92,33 @@ async fn main() -> Result<()> {
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
+    // Initialize Ollama client for AI embeddings and generation (optional)
+    let ollama = match OllamaClient::new(config.ollama()) {
+        Ok(client) => {
+            tracing::info!(
+                url = %config.ollama().url,
+                model = %config.ollama().model,
+                embedding_model = %config.ollama().embedding_model,
+                "Initialized Ollama client"
+            );
+            Some(client)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                url = %config.ollama().url,
+                "Ollama client not available - AI jobs will fail until Ollama is running"
+            );
+            None
+        }
+    };
+
     // Create application state
     let state = Arc::new(AppState {
         db,
         redis,
         http_client,
+        ollama,
         config: config.clone(),
     });
 

@@ -101,6 +101,10 @@ pub enum ApiError {
     #[error("Lidarr integration error: {0}")]
     Lidarr(String),
 
+    /// Last.fm integration error
+    #[error("Last.fm error: {0}")]
+    Lastfm(String),
+
     /// HTTP client error (for external API calls)
     #[error("external service error: {0}")]
     HttpClient(#[from] reqwest::Error),
@@ -191,9 +195,11 @@ impl ApiError {
             Self::DatabaseUnavailable | Self::ServiceBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
 
             // 502 Bad Gateway (external service errors)
-            Self::Search(_) | Self::AiService(_) | Self::Lidarr(_) | Self::HttpClient(_) => {
-                StatusCode::BAD_GATEWAY
-            }
+            Self::Search(_)
+            | Self::AiService(_)
+            | Self::Lidarr(_)
+            | Self::Lastfm(_)
+            | Self::HttpClient(_) => StatusCode::BAD_GATEWAY,
 
             // 500 Internal Server Error
             Self::Database(_)
@@ -225,6 +231,7 @@ impl ApiError {
             Self::Search(_) => "SEARCH_ERROR",
             Self::AiService(_) => "AI_SERVICE_ERROR",
             Self::Lidarr(_) => "LIDARR_ERROR",
+            Self::Lastfm(_) => "LASTFM_ERROR",
             Self::HttpClient(_) => "EXTERNAL_SERVICE_ERROR",
             Self::AudioFileNotFound(_) => "AUDIO_NOT_FOUND",
             Self::AudioProcessing(_) => "AUDIO_PROCESSING_ERROR",

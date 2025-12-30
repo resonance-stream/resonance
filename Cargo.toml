@@ -4,6 +4,8 @@ members = [
     "apps/api",
     "apps/worker",
     "packages/shared-config",
+    "packages/ollama-client",
+    "packages/lastfm-client",
 ]
 
 [workspace.package]
@@ -57,6 +59,7 @@ reqwest = { version = "0.11", features = ["json"] }
 # Audio
 symphonia = { version = "0.5", features = ["all"] }
 lofty = "0.18"
+# bliss-audio requires aubio C library - using pure-Rust similarity instead
 
 # File system
 walkdir = "2"
@@ -74,6 +77,8 @@ httpdate = "1"
 
 # Internal crates
 resonance-shared-config = { path = "packages/shared-config" }
+resonance-ollama-client = { path = "packages/ollama-client" }
+resonance-lastfm-client = { path = "packages/lastfm-client" }
 
 # Testing
 tokio-test = "0.4"

@@ -10,6 +10,7 @@ mod album;
 mod artist;
 mod library;
 mod playlist;
+mod search;
 mod track;
 mod user;
 
@@ -17,5 +18,6 @@ pub use album::{Album, CoverArtColors};
 pub use artist::Artist;
 pub use library::{AlbumType, AudioFormat, PlaylistType};
 pub use playlist::{Playlist, PlaylistTrackEntry};
+pub use search::{ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist};
 pub use track::{AudioFeatures, Track};
 pub use user::{AuthPayload, RefreshPayload, User, UserRole};

@@ -1,0 +1,33 @@
+[package]
+name = "resonance-ollama-client"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ollama API client for Resonance AI features"
+
+[dependencies]
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+futures-util = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Shared config
+resonance-shared-config = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+wiremock = { workspace = true }
+tokio-test = { workspace = true }

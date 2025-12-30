@@ -14,6 +14,14 @@ pub enum WorkerError {
     #[error("invalid job data: {0}")]
     InvalidJobData(String),
 
+    /// Invalid job payload (missing or malformed fields)
+    #[error("invalid payload: {0}")]
+    InvalidPayload(String),
+
+    /// Resource not found
+    #[error("not found: {0}")]
+    NotFound(String),
+
     /// Job execution was cancelled (e.g., due to shutdown)
     #[error("job cancelled: {0}")]
     Cancelled(String),
@@ -102,6 +110,11 @@ pub enum WorkerError {
     /// Invalid embedding dimensions
     #[error("invalid embedding dimensions: expected {expected}, got {actual}")]
     InvalidEmbeddingDimensions { expected: usize, actual: usize },
+
+    // ========== Mood Detection Errors ==========
+    /// Mood detection failed
+    #[error("mood detection failed: {0}")]
+    MoodDetectionFailed(String),
 
     // ========== Lidarr Integration Errors ==========
     /// Lidarr not configured
@@ -223,6 +236,7 @@ impl WorkerError {
             | Self::OllamaModelNotFound(_)
             | Self::EmbeddingGeneration(_)
             | Self::InvalidEmbeddingDimensions { .. } => Some("embedding_generation"),
+            Self::MoodDetectionFailed(_) => Some("mood_detection"),
             Self::LidarrNotConfigured | Self::LidarrApi { .. } | Self::LidarrSyncConflict(_) => {
                 Some("lidarr_sync")
             }
@@ -382,6 +396,36 @@ impl From<std::env::VarError> for WorkerError {
 impl From<url::ParseError> for WorkerError {
     fn from(err: url::ParseError) -> Self {
         Self::Configuration(format!("invalid URL: {}", err))
+    }
+}
+
+impl From<resonance_ollama_client::OllamaError> for WorkerError {
+    fn from(err: resonance_ollama_client::OllamaError) -> Self {
+        match &err {
+            resonance_ollama_client::OllamaError::ConnectionRefused(url) => {
+                Self::OllamaUnavailable(format!("connection refused to {}", url))
+            }
+            resonance_ollama_client::OllamaError::ModelNotFound(model) => {
+                Self::OllamaModelNotFound(model.clone())
+            }
+            resonance_ollama_client::OllamaError::DimensionMismatch { expected, actual } => {
+                Self::InvalidEmbeddingDimensions {
+                    expected: *expected,
+                    actual: *actual,
+                }
+            }
+            resonance_ollama_client::OllamaError::Timeout(secs) => Self::ServiceTimeout {
+                service: format!("Ollama ({}s)", secs),
+            },
+            resonance_ollama_client::OllamaError::RetriesExhausted {
+                attempts,
+                last_error,
+            } => Self::MaxRetriesExceeded {
+                attempts: *attempts,
+                reason: last_error.clone(),
+            },
+            _ => Self::EmbeddingGeneration(err.to_string()),
+        }
     }
 }
 

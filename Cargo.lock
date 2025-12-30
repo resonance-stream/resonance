@@ -2593,6 +2593,8 @@ dependencies = [
  "once_cell",
  "redis",
  "reqwest",
+ "resonance-lastfm-client",
+ "resonance-ollama-client",
  "resonance-shared-config",
  "rstest",
  "serde",
@@ -2614,6 +2616,36 @@ dependencies = [
  "tracing-test",
  "url",
  "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "resonance-lastfm-client"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "resonance-ollama-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "resonance-shared-config",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
  "wiremock",
 ]
 
@@ -2640,6 +2672,7 @@ dependencies = [
  "once_cell",
  "redis",
  "reqwest",
+ "resonance-ollama-client",
  "resonance-shared-config",
  "rstest",
  "serde",

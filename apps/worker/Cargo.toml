@@ -45,6 +45,7 @@ sha2 = { workspace = true }
 
 # Internal crates
 resonance-shared-config = { workspace = true }
+resonance-ollama-client = { workspace = true }
 
 [[bin]]
 name = "resonance-worker"
