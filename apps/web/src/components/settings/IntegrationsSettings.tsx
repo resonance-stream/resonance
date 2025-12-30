@@ -6,12 +6,11 @@
  * - Discord Rich Presence
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Switch } from '../ui/Switch'
 import { Input } from '../ui/Input'
-import { useSettingsStore } from '../../stores/settingsStore'
 import {
   useIntegrations,
   useUpdateIntegrations,
@@ -19,30 +18,18 @@ import {
 } from '../../hooks/useIntegrations'
 
 export function IntegrationsSettings() {
-  const { integrations, setListenbrainzEnabled, setDiscordRpcEnabled } = useSettingsStore()
-
   // Token input state (local state, not synced until save)
   const [tokenInput, setTokenInput] = useState('')
   const [showTokenInput, setShowTokenInput] = useState(false)
   const [mutationError, setMutationError] = useState<string | null>(null)
 
-  // Fetch current integration settings from backend
+  // Fetch current integration settings from backend (single source of truth)
   const { data: serverSettings, isLoading } = useIntegrations()
-
-  // Sync Zustand store from server on initial load
-  useEffect(() => {
-    if (serverSettings) {
-      setListenbrainzEnabled(serverSettings.listenbrainzEnabled)
-      setDiscordRpcEnabled(serverSettings.discordRpcEnabled)
-    }
-  }, [serverSettings, setListenbrainzEnabled, setDiscordRpcEnabled])
 
   // Mutations
   const updateIntegrations = useUpdateIntegrations({
-    onSuccess: (data) => {
-      // Sync local state with server response
-      setListenbrainzEnabled(data.listenbrainzEnabled)
-      setDiscordRpcEnabled(data.discordRpcEnabled)
+    onSuccess: () => {
+      // TanStack Query will automatically refetch and update serverSettings
       setTokenInput('')
       setShowTokenInput(false)
       setMutationError(null)
@@ -78,10 +65,10 @@ export function IntegrationsSettings() {
   const handleSaveToken = useCallback(() => {
     const token = tokenInput.trim()
     updateMutate({
-      listenbrainzToken: token || null,
-      listenbrainzEnabled: token ? true : integrations.listenbrainzEnabled,
+      listenbrainzToken: token, // Send empty string to remove, or the new token
+      listenbrainzEnabled: !!token, // Enable if token exists, disable if it's empty
     })
-  }, [tokenInput, integrations.listenbrainzEnabled, updateMutate])
+  }, [tokenInput, updateMutate])
 
   const handleRemoveToken = useCallback(() => {
     updateMutate({
@@ -92,35 +79,27 @@ export function IntegrationsSettings() {
 
   const handleListenbrainzToggle = useCallback(
     (enabled: boolean) => {
-      // Store previous value for rollback
-      const previousValue = integrations.listenbrainzEnabled
-      setListenbrainzEnabled(enabled)
       setMutationError(null)
-      updateMutate(
-        { listenbrainzEnabled: enabled },
-        {
-          onError: () => {
-            // Rollback on error
-            setListenbrainzEnabled(previousValue)
-          },
-        }
-      )
+      // TanStack Query handles optimistic updates via invalidation
+      updateMutate({ listenbrainzEnabled: enabled })
     },
-    [integrations.listenbrainzEnabled, setListenbrainzEnabled, updateMutate]
+    [updateMutate]
   )
 
   const handleDiscordToggle = useCallback(
     (enabled: boolean) => {
-      setDiscordRpcEnabled(enabled)
-      // Discord RPC is client-only, no backend sync needed
+      setMutationError(null)
+      // Sync Discord RPC preference to backend
+      updateMutate({ discordRpcEnabled: enabled })
     },
-    [setDiscordRpcEnabled]
+    [updateMutate]
   )
 
   const hasToken = serverSettings?.hasListenbrainzToken ?? false
   const username = serverSettings?.listenbrainzUsername
-  // Use server state as source of truth for display when available
-  const listenbrainzEnabled = serverSettings?.listenbrainzEnabled ?? integrations.listenbrainzEnabled
+  // Use server state as single source of truth
+  const listenbrainzEnabled = serverSettings?.listenbrainzEnabled ?? false
+  const discordRpcEnabled = serverSettings?.discordRpcEnabled ?? false
 
   return (
     <Card padding="lg">
@@ -180,6 +159,7 @@ export function IntegrationsSettings() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowTokenInput(true)}
+                disabled={isLoading}
               >
                 Add ListenBrainz Token
               </Button>
@@ -296,8 +276,9 @@ export function IntegrationsSettings() {
           </div>
           <Switch
             id="discord-rpc-toggle"
-            checked={integrations.discordRpcEnabled}
+            checked={discordRpcEnabled}
             onCheckedChange={handleDiscordToggle}
+            disabled={isLoading || updateIntegrations.isPending}
             aria-label="Enable Discord Rich Presence"
           />
         </div>

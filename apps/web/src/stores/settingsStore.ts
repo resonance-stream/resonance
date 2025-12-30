@@ -18,18 +18,13 @@ export interface AudioQualitySettings {
   downloadQuality: 'low' | 'normal' | 'high' | 'lossless'
 }
 
-export interface IntegrationSettings {
-  // ListenBrainz scrobbling
-  listenbrainzEnabled: boolean
-
-  // Discord Rich Presence (only functional in desktop app)
-  discordRpcEnabled: boolean
-}
+// Note: Integration settings (ListenBrainz, Discord RPC) are managed via
+// TanStack Query (useIntegrations hook) as they are server-synced settings.
+// This keeps TanStack Query as the single source of truth for server state.
 
 interface SettingsState {
   playback: PlaybackSettings
   audioQuality: AudioQualitySettings
-  integrations: IntegrationSettings
 
   // Playback actions
   setCrossfadeEnabled: (enabled: boolean) => void
@@ -40,10 +35,6 @@ interface SettingsState {
   // Audio quality actions
   setAudioQuality: (quality: AudioQualitySettings['quality']) => void
   setDownloadQuality: (quality: AudioQualitySettings['downloadQuality']) => void
-
-  // Integration actions
-  setListenbrainzEnabled: (enabled: boolean) => void
-  setDiscordRpcEnabled: (enabled: boolean) => void
 
   // Reset
   resetToDefaults: () => void
@@ -61,17 +52,11 @@ const DEFAULT_AUDIO_QUALITY: AudioQualitySettings = {
   downloadQuality: 'high',
 }
 
-const DEFAULT_INTEGRATIONS: IntegrationSettings = {
-  listenbrainzEnabled: false,
-  discordRpcEnabled: false,
-}
-
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       playback: { ...DEFAULT_PLAYBACK },
       audioQuality: { ...DEFAULT_AUDIO_QUALITY },
-      integrations: { ...DEFAULT_INTEGRATIONS },
 
       // Playback actions
       setCrossfadeEnabled: (enabled) =>
@@ -108,23 +93,11 @@ export const useSettingsStore = create<SettingsState>()(
           audioQuality: { ...state.audioQuality, downloadQuality: quality },
         })),
 
-      // Integration actions
-      setListenbrainzEnabled: (enabled) =>
-        set((state) => ({
-          integrations: { ...state.integrations, listenbrainzEnabled: enabled },
-        })),
-
-      setDiscordRpcEnabled: (enabled) =>
-        set((state) => ({
-          integrations: { ...state.integrations, discordRpcEnabled: enabled },
-        })),
-
       // Reset
       resetToDefaults: () =>
         set({
           playback: { ...DEFAULT_PLAYBACK },
           audioQuality: { ...DEFAULT_AUDIO_QUALITY },
-          integrations: { ...DEFAULT_INTEGRATIONS },
         }),
     }),
     {

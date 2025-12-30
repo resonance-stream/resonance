@@ -11,8 +11,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { usePlayerStore } from '../stores/playerStore'
-import { useSettingsStore } from '../stores/settingsStore'
-import { useSubmitScrobble } from './useIntegrations'
+import { useSubmitScrobble, useIntegrations } from './useIntegrations'
 import type { ScrobbleInput } from '../types/integrations'
 
 // Scrobble thresholds (following Last.fm/ListenBrainz standard rules)
@@ -66,10 +65,13 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const currentTime = usePlayerStore((s) => s.currentTime)
 
-  // Integration settings
-  const listenbrainzEnabled = useSettingsStore((s) => s.integrations.listenbrainzEnabled)
+  // Integration settings from server (TanStack Query as single source of truth)
+  const { data: integrations } = useIntegrations()
+  const listenbrainzEnabled = integrations?.listenbrainzEnabled ?? false
 
   // Use mutation hook for scrobble submission
+  // Note: We do NOT auto-retry on failure to prevent infinite loops.
+  // Failed scrobbles will be retried on the next track play session.
   const submitScrobbleMutation = useSubmitScrobble({
     onSuccess: (result) => {
       if (result.success) {
@@ -77,23 +79,14 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
           console.log('[useScrobble] Scrobble submitted successfully')
         }
       } else {
-        console.warn('[useScrobble] Scrobble failed:', result.error)
-        // Allow retry by resetting scrobbled state
-        setHasScrobbled(false)
-        if (playbackStartRef.current && currentTrack) {
-          const sessionKey = getPlaybackSessionKey(currentTrack.id, playbackStartRef.current)
-          scrobbledSessionsRef.current.delete(sessionKey)
-        }
+        // Log the error but do not automatically retry to prevent infinite loops.
+        // The scrobble will be attempted again on the next track play.
+        console.warn('[useScrobble] Scrobble submission was not successful:', result.error)
       }
     },
     onError: (error) => {
-      console.error('[useScrobble] Failed to submit scrobble:', error)
-      // Allow retry by resetting scrobbled state
-      setHasScrobbled(false)
-      if (playbackStartRef.current && currentTrack) {
-        const sessionKey = getPlaybackSessionKey(currentTrack.id, playbackStartRef.current)
-        scrobbledSessionsRef.current.delete(sessionKey)
-      }
+      // Log the error but do not automatically retry to prevent infinite loops.
+      console.error('[useScrobble] Failed to submit scrobble mutation:', error)
     },
   })
 
@@ -171,7 +164,14 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
 
   // Track accumulated playback time and check threshold
   useEffect(() => {
-    if (!currentTrack || !isPlaying || !listenbrainzEnabled) {
+    // When not playing or paused, reset last update time to prevent
+    // accumulating a large delta on resume
+    if (!isPlaying) {
+      lastUpdateTimeRef.current = 0
+      return
+    }
+
+    if (!currentTrack || !listenbrainzEnabled) {
       return
     }
 
@@ -185,6 +185,13 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
 
     // Skip if already scrobbled this session
     if (hasScrobbled) {
+      return
+    }
+
+    // On first update after play starts, initialize last update time
+    // This prevents the first delta from being large (equal to currentTime)
+    if (lastUpdateTimeRef.current === 0) {
+      lastUpdateTimeRef.current = currentTime
       return
     }
 

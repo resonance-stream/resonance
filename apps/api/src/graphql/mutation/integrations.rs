@@ -245,6 +245,16 @@ impl IntegrationsMutation {
             .map_err(|e| sanitize_db_error(e, "fetch updated user"))?
             .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
+        // If username is not set but token exists (token wasn't changed), fetch username
+        if listenbrainz_username.is_none() {
+            if let Some(ref token) = updated_user.listenbrainz_token {
+                let lb_service = get_listenbrainz_service(ctx)?;
+                if let Ok(Some(username)) = lb_service.validate_token(token).await {
+                    listenbrainz_username = Some(username);
+                }
+            }
+        }
+
         Ok(IntegrationsPayload {
             has_listenbrainz_token: updated_user.listenbrainz_token.is_some(),
             listenbrainz_enabled: updated_user.preferences.listenbrainz_scrobble,

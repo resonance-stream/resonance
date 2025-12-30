@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePlayerStore } from '../stores/playerStore'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useIntegrations } from './useIntegrations'
 import {
   getDiscordRpcService,
   type PresenceState,
@@ -49,8 +49,9 @@ export function useDiscordRpc(options: UseDiscordRpcOptions = {}): UseDiscordRpc
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const isPlaying = usePlayerStore((s) => s.isPlaying)
 
-  // Get integration settings
-  const discordRpcEnabled = useSettingsStore((s) => s.integrations.discordRpcEnabled)
+  // Get integration settings from server (TanStack Query as single source of truth)
+  const { data: integrations } = useIntegrations()
+  const discordRpcEnabled = integrations?.discordRpcEnabled ?? false
 
   // Memoize service and availability to prevent re-creation on every render
   const service = useMemo(() => getDiscordRpcService(), [])
