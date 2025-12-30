@@ -192,14 +192,28 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
     // This prevents the first delta from being large (equal to currentTime)
     if (lastUpdateTimeRef.current === 0) {
       lastUpdateTimeRef.current = currentTime
-      return
+      // Don't return early - continue to allow time accumulation even on first tick
     }
 
     // Calculate time delta since last update
     const timeDelta = currentTime - lastUpdateTimeRef.current
+
+    // Detect track restart / large seek backwards and reset session state
+    // This allows the track to be scrobbled again if the user restarts it
+    if (timeDelta < -5) {
+      playbackStartRef.current = new Date()
+      accumulatedTimeRef.current = 0
+      lastUpdateTimeRef.current = currentTime
+      setHasScrobbled(false)
+      if (debug) {
+        console.log('[useScrobble] Track restart detected, resetting session')
+      }
+      return
+    }
+
     lastUpdateTimeRef.current = currentTime
 
-    // Only accumulate positive deltas (ignore seeks backwards)
+    // Only accumulate positive deltas (ignore minor seeks backwards)
     // Cap at 5 seconds to ignore large jumps (seeks forward)
     if (timeDelta > 0 && timeDelta < 5) {
       accumulatedTimeRef.current += timeDelta

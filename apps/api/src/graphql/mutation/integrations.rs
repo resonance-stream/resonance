@@ -175,6 +175,21 @@ impl IntegrationsMutation {
                     .update_listenbrainz_token(user_id, None)
                     .await
                     .map_err(|e| sanitize_db_error(e, "remove token"))?;
+
+                // Ensure scrobbling is disabled when no token is configured
+                if user.preferences.listenbrainz_scrobble {
+                    let mut preferences = user.preferences.clone();
+                    preferences.listenbrainz_scrobble = false;
+                    let prefs_json = serde_json::to_value(&preferences).map_err(|e| {
+                        error!(error = %e, "Failed to serialize preferences");
+                        async_graphql::Error::new("Failed to update preferences")
+                    })?;
+                    user_repo
+                        .update_preferences(user_id, &prefs_json)
+                        .await
+                        .map_err(|e| sanitize_db_error(e, "disable scrobbling on token removal"))?;
+                    info!(user_id = %user_id, "Disabled scrobbling after token removal");
+                }
             } else {
                 // Validate token length
                 if token.len() > MAX_TOKEN_LENGTH {
@@ -245,12 +260,16 @@ impl IntegrationsMutation {
             .map_err(|e| sanitize_db_error(e, "fetch updated user"))?
             .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
-        // If username is not set but token exists (token wasn't changed), fetch username
+        // If username is not set but token exists (token wasn't changed), fetch username (best-effort)
         if listenbrainz_username.is_none() {
             if let Some(ref token) = updated_user.listenbrainz_token {
-                let lb_service = get_listenbrainz_service(ctx)?;
-                if let Ok(Some(username)) = lb_service.validate_token(token).await {
-                    listenbrainz_username = Some(username);
+                // Use data_opt to avoid error when service is not configured
+                if let Some(lb_service) = ctx.data_opt::<ListenBrainzService>() {
+                    if let Ok(Some(username)) = lb_service.validate_token(token).await {
+                        listenbrainz_username = Some(username);
+                    }
+                } else {
+                    warn!("ListenBrainz service not configured, skipping username fetch");
                 }
             }
         }

@@ -168,8 +168,20 @@ impl ListenBrainzService {
             } else {
                 Ok(None)
             }
-        } else {
+        } else if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            // Token is invalid (auth failure)
             Ok(None)
+        } else {
+            // Service error (outage, rate limit, etc.) - report as error
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(ApiError::ListenBrainz(format!(
+                "Token validation failed with status {}: {}",
+                status, body
+            )))
         }
     }
 
