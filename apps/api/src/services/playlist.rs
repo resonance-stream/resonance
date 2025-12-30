@@ -16,6 +16,16 @@ use crate::models::playlist::{SmartPlaylistRule, SmartPlaylistRules};
 use crate::repositories::PlaylistRepository;
 use crate::services::similarity::SimilarityService;
 
+/// SQL parameter type for dynamic query binding
+/// Supports both single text values and arrays for proper type handling
+#[derive(Debug)]
+enum SqlParam {
+    /// Single text value
+    Text(String),
+    /// Array of text values (for IN/NOT IN operators)
+    TextArray(Vec<String>),
+}
+
 /// Maximum tracks to fetch when evaluating similarity rules
 #[allow(dead_code)] // Used within PlaylistService which isn't integrated yet
 const MAX_SIMILAR_TRACKS: i32 = 100;
@@ -90,10 +100,18 @@ impl PlaylistService {
             }
             "all" => {
                 // Intersection of all results (AND logic) - use retain for efficiency
+                // Optimization: start with the smallest set to minimize iterations
                 if all_results.is_empty() {
                     HashSet::new()
                 } else {
-                    let mut result = all_results.remove(0);
+                    // Find and remove the smallest set to use as the starting point
+                    let min_idx = all_results
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, s)| s.len())
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    let mut result = all_results.swap_remove(min_idx);
                     for set in all_results {
                         result.retain(|item| set.contains(item));
                     }
@@ -220,9 +238,13 @@ impl PlaylistService {
         let sql = format!("SELECT id FROM tracks WHERE {}", where_clause);
 
         // Execute the query with dynamic parameter binding
+        // Handle both single values and arrays appropriately
         let mut query = sqlx::query_as::<_, (Uuid,)>(&sql);
-        for param in &params {
-            query = query.bind(param);
+        for param in params {
+            query = match param {
+                SqlParam::Text(s) => query.bind(s),
+                SqlParam::TextArray(v) => query.bind(v),
+            };
         }
         let track_ids: Vec<(Uuid,)> = query.fetch_all(&self.pool).await?;
 
@@ -230,7 +252,7 @@ impl PlaylistService {
     }
 
     /// Build SQL WHERE clause for a filter rule
-    fn build_filter_sql(&self, rule: &SmartPlaylistRule) -> ApiResult<(String, Vec<String>)> {
+    fn build_filter_sql(&self, rule: &SmartPlaylistRule) -> ApiResult<(String, Vec<SqlParam>)> {
         let field = self.get_sql_field(&rule.field)?;
         let is_array_field = matches!(rule.field.as_str(), "genres" | "ai_mood" | "ai_tags");
         let is_json_field = matches!(
@@ -249,42 +271,63 @@ impl PlaylistService {
             "equals" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float = $1::float", field), vec![val])
+                    (
+                        format!("({})::float = $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} = $1", field), vec![val])
+                    (format!("{} = $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "not_equals" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float != $1::float", field), vec![val])
+                    (
+                        format!("({})::float != $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} != $1", field), vec![val])
+                    (format!("{} != $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "contains" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_array_field {
-                    (format!("$1 = ANY({})", field), vec![val])
+                    (format!("$1 = ANY({})", field), vec![SqlParam::Text(val)])
                 } else {
-                    (format!("{} ILIKE '%' || $1 || '%'", field), vec![val])
+                    (
+                        format!("{} ILIKE '%' || $1 || '%'", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 }
             }
             "not_contains" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_array_field {
-                    (format!("NOT ($1 = ANY({}))", field), vec![val])
+                    (
+                        format!("NOT ($1 = ANY({}))", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} NOT ILIKE '%' || $1 || '%'", field), vec![val])
+                    (
+                        format!("{} NOT ILIKE '%' || $1 || '%'", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 }
             }
             "starts_with" => {
                 let val = self.extract_string_value(&rule.value)?;
-                (format!("{} ILIKE $1 || '%'", field), vec![val])
+                (
+                    format!("{} ILIKE $1 || '%'", field),
+                    vec![SqlParam::Text(val)],
+                )
             }
             "ends_with" => {
                 let val = self.extract_string_value(&rule.value)?;
-                (format!("{} ILIKE '%' || $1", field), vec![val])
+                (
+                    format!("{} ILIKE '%' || $1", field),
+                    vec![SqlParam::Text(val)],
+                )
             }
             "is_empty" => {
                 if is_array_field {
@@ -300,33 +343,45 @@ impl PlaylistService {
             "greater_than" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float > $1::float", field), vec![val])
+                    (
+                        format!("({})::float > $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} > $1", field), vec![val])
+                    (format!("{} > $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "less_than" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float < $1::float", field), vec![val])
+                    (
+                        format!("({})::float < $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} < $1", field), vec![val])
+                    (format!("{} < $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "greater_than_or_equal" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float >= $1::float", field), vec![val])
+                    (
+                        format!("({})::float >= $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} >= $1", field), vec![val])
+                    (format!("{} >= $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "less_than_or_equal" => {
                 let val = self.extract_string_value(&rule.value)?;
                 if is_json_field {
-                    (format!("({})::float <= $1::float", field), vec![val])
+                    (
+                        format!("({})::float <= $1::float", field),
+                        vec![SqlParam::Text(val)],
+                    )
                 } else {
-                    (format!("{} <= $1", field), vec![val])
+                    (format!("{} <= $1", field), vec![SqlParam::Text(val)])
                 }
             }
             "between" => {
@@ -334,10 +389,13 @@ impl PlaylistService {
                 if is_json_field {
                     (
                         format!("({})::float BETWEEN $1::float AND $2::float", field),
-                        vec![min, max],
+                        vec![SqlParam::Text(min), SqlParam::Text(max)],
                     )
                 } else {
-                    (format!("{} BETWEEN $1 AND $2", field), vec![min, max])
+                    (
+                        format!("{} BETWEEN $1 AND $2", field),
+                        vec![SqlParam::Text(min), SqlParam::Text(max)],
+                    )
                 }
             }
             "in" => {
@@ -345,11 +403,10 @@ impl PlaylistService {
                 if values.is_empty() {
                     (String::new(), vec![])
                 } else {
-                    // Pass array as single parameter using ANY syntax
-                    let joined = values.join(",");
+                    // Use proper array parameter binding to handle values with commas
                     (
-                        format!("{} = ANY(string_to_array($1, ','))", field),
-                        vec![joined],
+                        format!("{} = ANY($1::text[])", field),
+                        vec![SqlParam::TextArray(values)],
                     )
                 }
             }
@@ -359,11 +416,10 @@ impl PlaylistService {
                     // If no values to exclude, match everything
                     ("1=1".to_string(), vec![])
                 } else {
-                    // Pass array as single parameter using ALL syntax
-                    let joined = values.join(",");
+                    // Use proper array parameter binding to handle values with commas
                     (
-                        format!("{} != ALL(string_to_array($1, ','))", field),
-                        vec![joined],
+                        format!("{} != ALL($1::text[])", field),
+                        vec![SqlParam::TextArray(values)],
                     )
                 }
             }

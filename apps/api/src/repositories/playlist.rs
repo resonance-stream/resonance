@@ -363,7 +363,8 @@ impl PlaylistRepository {
         .fetch_one(&mut *tx)
         .await?;
 
-        let start_position = position.unwrap_or(max_position.unwrap_or(-1) + 1);
+        // Clamp start_position to min 0 for defense-in-depth (mutation layer also validates)
+        let start_position = position.unwrap_or(max_position.unwrap_or(-1) + 1).max(0);
 
         // Filter out tracks that already exist to prevent gaps when using position shifts
         // This is important because ON CONFLICT DO NOTHING would skip existing tracks,

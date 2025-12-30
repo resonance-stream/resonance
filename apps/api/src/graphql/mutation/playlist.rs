@@ -110,9 +110,9 @@ impl From<PlaylistTypeInput> for DbPlaylistType {
 impl From<SmartPlaylistRuleInput> for SmartPlaylistRule {
     fn from(input: SmartPlaylistRuleInput) -> Self {
         Self {
-            // Normalize field and operator to lowercase for consistent comparison
-            field: input.field.to_ascii_lowercase(),
-            operator: input.operator.to_ascii_lowercase(),
+            // Trim and normalize field and operator for consistent comparison
+            field: input.field.trim().to_ascii_lowercase(),
+            operator: input.operator.trim().to_ascii_lowercase(),
             value: input.value,
         }
     }
@@ -121,12 +121,12 @@ impl From<SmartPlaylistRuleInput> for SmartPlaylistRule {
 impl From<SmartPlaylistRulesInput> for SmartPlaylistRules {
     fn from(input: SmartPlaylistRulesInput) -> Self {
         Self {
-            // Normalize all string fields to lowercase for consistent comparison
-            match_mode: input.match_mode.to_ascii_lowercase(),
+            // Trim and normalize all string fields for consistent comparison
+            match_mode: input.match_mode.trim().to_ascii_lowercase(),
             rules: input.rules.into_iter().map(Into::into).collect(),
             limit: input.limit,
-            sort_by: input.sort_by.map(|s| s.to_ascii_lowercase()),
-            sort_order: input.sort_order.map(|s| s.to_ascii_lowercase()),
+            sort_by: input.sort_by.map(|s| s.trim().to_ascii_lowercase()),
+            sort_order: input.sort_order.map(|s| s.trim().to_ascii_lowercase()),
         }
     }
 }
@@ -552,6 +552,13 @@ impl PlaylistMutation {
             return Err(async_graphql::Error::new("No tracks provided"));
         }
 
+        // Validate position is non-negative (fail fast before hitting repo layer)
+        if let Some(pos) = input.position {
+            if pos < 0 {
+                return Err(async_graphql::Error::new("Position cannot be negative"));
+            }
+        }
+
         playlist_repo
             .add_tracks(playlist_id, &track_ids, claims.sub, input.position)
             .await
@@ -717,7 +724,15 @@ const VALID_OPERATORS: &[&str] = &[
     "categorical",
 ];
 
+/// Normalize a string input for validation (trim whitespace and lowercase)
+fn normalize_input(s: &str) -> String {
+    s.trim().to_ascii_lowercase()
+}
+
 /// Validate smart playlist rules
+///
+/// Note: Validation uses normalized values (trimmed + lowercased) to match
+/// the normalization that happens in the From trait implementations.
 fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
     // Validate rule count limit
     if rules.rules.len() > MAX_RULES {
@@ -727,27 +742,30 @@ fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
         )));
     }
 
-    // Validate match_mode
-    if rules.match_mode != "all" && rules.match_mode != "any" {
+    // Validate match_mode (normalize before checking)
+    let match_mode = normalize_input(&rules.match_mode);
+    if match_mode != "all" && match_mode != "any" {
         return Err(async_graphql::Error::new(
             "match_mode must be 'all' or 'any'",
         ));
     }
 
-    // Validate sort_by if provided
+    // Validate sort_by if provided (normalize before checking)
     if let Some(ref sort_by) = rules.sort_by {
-        if !VALID_FIELDS.contains(&sort_by.as_str()) {
+        let normalized = normalize_input(sort_by);
+        if !VALID_FIELDS.contains(&normalized.as_str()) {
             return Err(async_graphql::Error::new(format!(
                 "Invalid sort_by '{}'. Valid fields: {}",
-                sort_by,
+                normalized,
                 VALID_FIELDS.join(", ")
             )));
         }
     }
 
-    // Validate sort_order if provided
+    // Validate sort_order if provided (normalize before checking)
     if let Some(ref order) = rules.sort_order {
-        if order != "asc" && order != "desc" {
+        let normalized = normalize_input(order);
+        if normalized != "asc" && normalized != "desc" {
             return Err(async_graphql::Error::new(
                 "sort_order must be 'asc' or 'desc'",
             ));
@@ -768,20 +786,24 @@ fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
 
     // Validate each rule
     for rule in &rules.rules {
+        // Normalize field and operator for validation (matches From trait behavior)
+        let field = normalize_input(&rule.field);
+        let operator = normalize_input(&rule.operator);
+
         // Validate field
-        if !VALID_FIELDS.contains(&rule.field.as_str()) {
+        if !VALID_FIELDS.contains(&field.as_str()) {
             return Err(async_graphql::Error::new(format!(
                 "Invalid field '{}'. Valid fields: {}",
-                rule.field,
+                field,
                 VALID_FIELDS.join(", ")
             )));
         }
 
         // Validate operator
-        if !VALID_OPERATORS.contains(&rule.operator.as_str()) {
+        if !VALID_OPERATORS.contains(&operator.as_str()) {
             return Err(async_graphql::Error::new(format!(
                 "Invalid operator '{}'. Valid operators: {}",
-                rule.operator,
+                operator,
                 VALID_OPERATORS.join(", ")
             )));
         }
@@ -790,22 +812,22 @@ fn validate_smart_rules(rules: &SmartPlaylistRulesInput) -> Result<()> {
         const SIMILARITY_OPERATORS: &[&str] = &["combined", "semantic", "acoustic", "categorical"];
 
         // Validate similar_to rules have proper structure
-        if rule.field == "similar_to" {
-            if !SIMILARITY_OPERATORS.contains(&rule.operator.as_str()) {
+        if field == "similar_to" {
+            if !SIMILARITY_OPERATORS.contains(&operator.as_str()) {
                 return Err(async_graphql::Error::new(
                     "similar_to field requires operator: combined, semantic, acoustic, or categorical",
                 ));
             }
-        } else if SIMILARITY_OPERATORS.contains(&rule.operator.as_str()) {
+        } else if SIMILARITY_OPERATORS.contains(&operator.as_str()) {
             // Similarity operators can ONLY be used with similar_to field
             return Err(async_graphql::Error::new(format!(
                 "Operator '{}' can only be used with the 'similar_to' field",
-                rule.operator
+                operator
             )));
         }
 
         // Continue validation for similar_to rules
-        if rule.field == "similar_to" {
+        if field == "similar_to" {
             // Check for track_ids in value
             let track_ids = rule.value.get("track_ids").ok_or_else(|| {
                 async_graphql::Error::new("similar_to rule requires 'track_ids' in value")
