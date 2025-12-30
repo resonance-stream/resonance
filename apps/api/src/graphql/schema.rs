@@ -12,6 +12,7 @@ use crate::repositories::{
 use crate::services::auth::AuthService;
 use crate::services::lastfm::LastfmService;
 use crate::services::listenbrainz::ListenBrainzService;
+use crate::services::playlist::PlaylistService;
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
 
@@ -36,7 +37,9 @@ pub struct SchemaBuilder {
     track_repository: Option<TrackRepository>,
     playlist_repository: Option<PlaylistRepository>,
     user_repository: Option<UserRepository>,
-    // AI/Search services (optional - gracefully degrade if not configured)
+    // Core services - auto-created from pool if not provided (like repositories)
+    playlist_service: Option<PlaylistService>,
+    // Optional AI/Integration services - only registered if explicitly provided
     search_service: Option<SearchService>,
     similarity_service: Option<SimilarityService>,
     lastfm_service: Option<LastfmService>,
@@ -56,6 +59,7 @@ impl SchemaBuilder {
             track_repository: None,
             playlist_repository: None,
             user_repository: None,
+            playlist_service: None,
             search_service: None,
             similarity_service: None,
             lastfm_service: None,
@@ -154,6 +158,13 @@ impl SchemaBuilder {
         self
     }
 
+    /// Set the playlist service for smart playlist evaluation
+    #[allow(dead_code)] // Public API for external callers
+    pub fn playlist_service(mut self, service: PlaylistService) -> Self {
+        self.playlist_service = Some(service);
+        self
+    }
+
     /// Build the schema with all configured services
     ///
     /// # Panics
@@ -178,6 +189,11 @@ impl SchemaBuilder {
         let user_repo = self
             .user_repository
             .unwrap_or_else(|| UserRepository::new(pool.clone()));
+
+        // Create PlaylistService from pool if not explicitly provided
+        let playlist_service = self
+            .playlist_service
+            .unwrap_or_else(|| PlaylistService::new(pool.clone()));
 
         // Create DataLoaders for batched fetching
         // Note: DataLoaders already batch requests within a single query execution.
@@ -211,7 +227,8 @@ impl SchemaBuilder {
             .data(track_loader)
             .data(albums_by_artist_loader)
             .data(tracks_by_album_loader)
-            .data(tracks_by_artist_loader);
+            .data(tracks_by_artist_loader)
+            .data(playlist_service);
 
         // Add rate limiter if configured
         if let Some(rate_limiter) = self.rate_limiter {
@@ -295,6 +312,7 @@ mod tests {
         assert!(builder.user_repository.is_none());
         assert!(builder.search_service.is_none());
         assert!(builder.similarity_service.is_none());
+        assert!(builder.playlist_service.is_none());
         assert!(builder.lastfm_service.is_none());
         assert!(builder.listenbrainz_service.is_none());
         assert!(builder.ollama_client.is_none());

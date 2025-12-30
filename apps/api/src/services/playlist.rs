@@ -27,15 +27,18 @@ enum SqlParam {
 }
 
 /// Maximum tracks to fetch when evaluating similarity rules
-#[allow(dead_code)] // Used within PlaylistService which isn't integrated yet
 const MAX_SIMILAR_TRACKS: i32 = 100;
 
 /// Default minimum similarity score threshold
-#[allow(dead_code)] // Used within PlaylistService which isn't integrated yet
 const DEFAULT_MIN_SCORE: f64 = 0.5;
 
 /// Service for playlist operations including smart rule evaluation
-#[allow(dead_code)] // Will be used by playlist mutations once integrated
+///
+/// NOTE: This service creates its own instances of PlaylistRepository and SimilarityService
+/// internally. While this results in duplicate instances when used alongside the schema-level
+/// services, all instances are stateless (they only hold Arc-based pool references) so this
+/// is not a correctness issue. A future optimization could use constructor injection to
+/// share instances: `new(pool, playlist_repo, similarity_service)`.
 #[derive(Clone)]
 pub struct PlaylistService {
     pool: PgPool,
@@ -43,7 +46,6 @@ pub struct PlaylistService {
     similarity_service: SimilarityService,
 }
 
-#[allow(dead_code)] // Methods will be used once integrated into playlist mutations
 impl PlaylistService {
     /// Create a new PlaylistService
     pub fn new(pool: PgPool) -> Self {
