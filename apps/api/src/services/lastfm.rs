@@ -3,19 +3,15 @@
 //! Provides similar artist discovery and genre enrichment via Last.fm API.
 //! Integrates with the local library to indicate which similar artists
 //! are already in the user's collection.
-
-// Service will be wired to GraphQL in Phase 6: Semantic Search API
-#![allow(dead_code)]
-#![allow(unused_imports)]
+//!
+//! Used by GraphQL SearchQuery for `similarArtists` and `artistTags` queries.
 
 use sqlx::PgPool;
 use tracing::instrument;
 
 use crate::error::{ApiError, ApiResult};
 
-pub use resonance_lastfm_client::{
-    ApiKeyStatus, ArtistTag, LastfmClient, LastfmError, SimilarArtist,
-};
+pub use resonance_lastfm_client::{ApiKeyStatus, ArtistTag, LastfmClient, LastfmError};
 
 /// Similar artist with library status
 #[derive(Debug, Clone, serde::Serialize)]
@@ -64,6 +60,7 @@ impl LastfmService {
     ///
     /// # Errors
     /// Returns an error if the Last.fm API key is missing or invalid
+    #[allow(dead_code)] // Public API for direct instantiation/testing
     pub fn new(client: LastfmClient, db: PgPool) -> Self {
         Self { client, db }
     }
@@ -170,6 +167,7 @@ impl LastfmService {
     }
 
     /// Validate that the API key is working
+    #[allow(dead_code)] // Public API for health checks
     pub async fn validate(&self) -> bool {
         matches!(self.client.validate_api_key().await, ApiKeyStatus::Valid)
     }
