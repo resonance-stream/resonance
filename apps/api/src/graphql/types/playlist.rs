@@ -9,12 +9,107 @@ use uuid::Uuid;
 
 use crate::graphql::loaders::TrackLoader;
 use crate::graphql::pagination::{clamp_limit, clamp_offset, MAX_PLAYLIST_TRACKS};
+use crate::models::playlist::{
+    SmartPlaylistRule as DbSmartPlaylistRule, SmartPlaylistRules as DbSmartPlaylistRules,
+};
 use crate::models::Playlist as DbPlaylist;
 use crate::models::PlaylistTrack as DbPlaylistTrack;
 use crate::repositories::PlaylistRepository;
 
 use super::library::PlaylistType;
 use super::track::Track;
+
+// =============================================================================
+// Smart Playlist GraphQL Types
+// =============================================================================
+
+/// Match mode for smart playlist rules
+#[derive(Debug, Clone, Copy, PartialEq, Eq, async_graphql::Enum)]
+pub enum SmartPlaylistMatchMode {
+    /// All rules must match (AND logic)
+    All,
+    /// Any rule can match (OR logic)
+    Any,
+}
+
+impl From<&str> for SmartPlaylistMatchMode {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "any" => Self::Any,
+            _ => Self::All, // Default to All for unknown values
+        }
+    }
+}
+
+/// Sort order for smart playlist results
+#[derive(Debug, Clone, Copy, PartialEq, Eq, async_graphql::Enum)]
+pub enum SortOrder {
+    /// Ascending order
+    Asc,
+    /// Descending order
+    Desc,
+}
+
+impl From<&str> for SortOrder {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "desc" => Self::Desc,
+            _ => Self::Asc, // Default to Asc for unknown values
+        }
+    }
+}
+
+/// A single rule for smart playlist evaluation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct SmartPlaylistRule {
+    /// Field to match (genre, artist, mood, energy, similar_to, etc.)
+    pub field: String,
+    /// Operator (equals, contains, greater_than, combined, semantic, etc.)
+    pub operator: String,
+    /// Value to match against (can be string, number, array, or object)
+    pub value: serde_json::Value,
+}
+
+impl From<DbSmartPlaylistRule> for SmartPlaylistRule {
+    fn from(rule: DbSmartPlaylistRule) -> Self {
+        Self {
+            field: rule.field,
+            operator: rule.operator,
+            value: rule.value,
+        }
+    }
+}
+
+/// Smart playlist rules configuration
+#[derive(Debug, Clone, SimpleObject)]
+pub struct SmartPlaylistRules {
+    /// Match mode: All (AND) or Any (OR)
+    pub match_mode: SmartPlaylistMatchMode,
+    /// List of rules to apply
+    pub rules: Vec<SmartPlaylistRule>,
+    /// Maximum number of tracks (optional)
+    pub limit: Option<i32>,
+    /// Field to sort by (optional)
+    pub sort_by: Option<String>,
+    /// Sort direction (optional)
+    pub sort_order: Option<SortOrder>,
+}
+
+impl From<DbSmartPlaylistRules> for SmartPlaylistRules {
+    fn from(rules: DbSmartPlaylistRules) -> Self {
+        Self {
+            match_mode: SmartPlaylistMatchMode::from(rules.match_mode.as_str()),
+            rules: rules.rules.into_iter().map(Into::into).collect(),
+            limit: rules.limit,
+            sort_by: rules.sort_by,
+            sort_order: rules.sort_order.as_deref().map(SortOrder::from),
+        }
+    }
+}
+
+// =============================================================================
+// Playlist GraphQL Type
+// =============================================================================
 
 /// Playlist information exposed via GraphQL
 pub struct Playlist {
@@ -74,6 +169,11 @@ impl Playlist {
     /// Type of playlist
     async fn playlist_type(&self) -> PlaylistType {
         self.inner.playlist_type.into()
+    }
+
+    /// Smart playlist rules (only present for smart playlists)
+    async fn smart_rules(&self) -> Option<SmartPlaylistRules> {
+        self.inner.smart_rules.clone().map(Into::into)
     }
 
     /// Number of tracks in playlist

@@ -11,12 +11,15 @@
 pub mod auth;
 pub mod health;
 pub mod lastfm;
+pub mod playlist;
 pub mod search;
 pub mod similarity;
 pub mod transcoder;
 
 pub use auth::AuthService;
 pub use health::HealthService;
+#[allow(unused_imports)] // Will be used once integrated into mutations
+pub use playlist::PlaylistService;
 pub use transcoder::{TranscodeFormat, TranscodeOptions, TranscoderService};
 
 // AI/Search services - re-exported for schema builder and external use
