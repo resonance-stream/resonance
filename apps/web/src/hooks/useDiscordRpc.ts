@@ -110,6 +110,8 @@ export function useDiscordRpc(options: UseDiscordRpcOptions = {}): UseDiscordRpc
       // Build state now to capture current values
       const stateToSend = buildPresenceState()
       updateTimeoutRef.current = setTimeout(() => {
+        // Check current enabled state via refs to avoid stale closures
+        if (!discordRpcEnabledRef.current || !availabilityRef.current.available) return
         if (!service.isEnabled()) return
         lastUpdateRef.current = Date.now()
         if (debug) {

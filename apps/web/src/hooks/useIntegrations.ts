@@ -65,7 +65,7 @@ export function useIntegrations(
  * Automatically invalidates the integrations query on success.
  */
 export function useUpdateIntegrations(
-  options?: Omit<UseMutationOptions<IntegrationsPayload, Error, UpdateIntegrationsInput>, 'mutationFn'>
+  options?: Omit<UseMutationOptions<IntegrationsPayload, Error, UpdateIntegrationsInput, unknown>, 'mutationFn'>
 ) {
   const queryClient = useQueryClient()
 
@@ -77,11 +77,16 @@ export function useUpdateIntegrations(
       )
       return response.updateIntegrations
     },
-    onSuccess: (data) => {
+    ...options,
+    // Compose onSuccess to ensure cache update always runs
+    onSuccess: (data, variables, context) => {
       // Update the cache with new data
       queryClient.setQueryData(integrationKeys.settings(), data)
+      // Call user's onSuccess if provided
+      if (options?.onSuccess) {
+        ;(options.onSuccess as (data: IntegrationsPayload, variables: UpdateIntegrationsInput, context: unknown) => void)(data, variables, context)
+      }
     },
-    ...options,
   })
 }
 

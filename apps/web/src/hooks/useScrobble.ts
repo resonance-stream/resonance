@@ -214,9 +214,9 @@ export function useScrobble(options: UseScrobbleOptions = {}): UseScrobbleReturn
     lastUpdateTimeRef.current = currentTime
 
     // Only accumulate positive deltas (ignore minor seeks backwards)
-    // Cap at 5 seconds to ignore large jumps (seeks forward)
-    if (timeDelta > 0 && timeDelta < 5) {
-      accumulatedTimeRef.current += timeDelta
+    // Cap at 5 seconds to handle large jumps (seeks forward) or throttled updates
+    if (timeDelta > 0) {
+      accumulatedTimeRef.current += Math.min(timeDelta, 5)
     }
 
     // Check if we've reached the scrobble threshold

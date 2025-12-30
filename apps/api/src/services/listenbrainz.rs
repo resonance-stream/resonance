@@ -178,9 +178,11 @@ impl ListenBrainzService {
             // Service error (outage, rate limit, etc.) - report as error
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            // Truncate body to avoid leaking large upstream responses
+            let truncated_body: String = body.chars().take(200).collect();
             Err(ApiError::ListenBrainz(format!(
                 "Token validation failed with status {}: {}",
-                status, body
+                status, truncated_body
             )))
         }
     }
