@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::WorkerResult;
+use crate::error::{WorkerError, WorkerResult};
 use crate::AppState;
 
 // =============================================================================
@@ -189,11 +189,15 @@ async fn get_seed_tracks(state: &AppState, user_id: Uuid) -> WorkerResult<Vec<Uu
         r#"
         SELECT lh.track_id as id
         FROM listening_history lh
-        JOIN track_embeddings te ON te.track_id = lh.track_id
         WHERE lh.user_id = $1
           AND lh.played_at > NOW() - make_interval(days => $2)
           AND lh.completed = true
-          AND te.description_embedding IS NOT NULL
+          AND EXISTS (
+              SELECT 1
+              FROM track_embeddings te
+              WHERE te.track_id = lh.track_id
+                AND te.description_embedding IS NOT NULL
+          )
         GROUP BY lh.track_id
         HAVING COUNT(*) >= $3
         ORDER BY COUNT(*) DESC, MAX(lh.played_at) DESC
@@ -338,6 +342,30 @@ async fn replace_playlist_tracks(
     track_ids: &[Uuid],
 ) -> WorkerResult<()> {
     let mut tx = state.db.begin().await?;
+
+    // Ensure we only ever mutate the requesting user's Discover Weekly playlist.
+    // Locks the playlist row for the duration of the replacement (FOR UPDATE).
+    let authorized: Option<(Uuid,)> = sqlx::query_as(
+        r#"
+        SELECT id
+        FROM playlists
+        WHERE id = $1
+          AND user_id = $2
+          AND playlist_type = 'discover'
+        FOR UPDATE
+        "#,
+    )
+    .bind(playlist_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if authorized.is_none() {
+        return Err(WorkerError::Internal(format!(
+            "Refusing to update playlist {} for user {} (not found/unauthorized)",
+            playlist_id, user_id
+        )));
+    }
 
     // Delete existing tracks
     sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = $1")

@@ -147,6 +147,16 @@ async fn predict_next_tracks(
     current_track_id: Uuid,
     count: usize,
 ) -> WorkerResult<Vec<Uuid>> {
+    // Ensure the source track exists; otherwise similarity CTEs return zero rows silently
+    let track_exists: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM tracks WHERE id = $1)")
+        .bind(current_track_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    if !track_exists.0 {
+        return Err(WorkerError::TrackNotFound(current_track_id));
+    }
+
     // Check if current track has embeddings
     let has_embedding: (bool,) = sqlx::query_as(
         "SELECT EXISTS(SELECT 1 FROM track_embeddings WHERE track_id = $1 AND description_embedding IS NOT NULL)",
@@ -315,13 +325,14 @@ async fn predict_by_features(
             SELECT
                 t.id,
                 -- Euclidean distance on normalized features, clamped to [0, 1]
+                -- No COALESCE needed since WHERE clause ensures all features are non-NULL
                 GREATEST(0.0, LEAST(1.0, 1.0 - (
                     SQRT(
-                        COALESCE(POWER((t.audio_features->>'energy')::float - src.energy, 2), 0) +
-                        COALESCE(POWER(((t.audio_features->>'loudness')::float + $4) / $4 - (src.loudness + $4) / $4, 2), 0) +
-                        COALESCE(POWER((t.audio_features->>'valence')::float - src.valence, 2), 0) +
-                        COALESCE(POWER((t.audio_features->>'danceability')::float - src.danceability, 2), 0) +
-                        COALESCE(POWER(((t.audio_features->>'bpm')::float - src.bpm) / $5, 2), 0)
+                        POWER((t.audio_features->>'energy')::float - src.energy, 2) +
+                        POWER(((t.audio_features->>'loudness')::float + $4) / $4 - (src.loudness + $4) / $4, 2) +
+                        POWER((t.audio_features->>'valence')::float - src.valence, 2) +
+                        POWER((t.audio_features->>'danceability')::float - src.danceability, 2) +
+                        POWER(((t.audio_features->>'bpm')::float - src.bpm) / $5, 2)
                     ) / 2.0
                 ))) as feature_score,
                 -- Weighted Jaccard similarity including ai_tags
@@ -337,7 +348,18 @@ async fn predict_by_features(
             FROM tracks t
             CROSS JOIN source_track src
             WHERE t.id != $1
+              -- Ensure source track has complete audio features
+              AND src.energy IS NOT NULL
+              AND src.loudness IS NOT NULL
+              AND src.valence IS NOT NULL
+              AND src.danceability IS NOT NULL
+              AND src.bpm IS NOT NULL
+              -- Ensure candidate track has complete audio features
               AND t.audio_features->>'energy' IS NOT NULL
+              AND t.audio_features->>'loudness' IS NOT NULL
+              AND t.audio_features->>'valence' IS NOT NULL
+              AND t.audio_features->>'danceability' IS NOT NULL
+              AND t.audio_features->>'bpm' IS NOT NULL
         )
         SELECT fs.id
         FROM feature_scores fs
