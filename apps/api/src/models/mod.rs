@@ -14,6 +14,7 @@ pub mod album;
 pub mod artist;
 pub mod device;
 pub mod playlist;
+pub mod queue;
 pub mod track;
 pub mod user;
 
@@ -27,6 +28,10 @@ pub use device::{
 pub use playlist::{
     CreatePlaylist, Playlist, PlaylistCollaborator, PlaylistTrack, PlaylistType,
     SmartPlaylistRules, UpdatePlaylist,
+};
+pub use queue::{
+    ContextType, QueueItem, QueuePlaybackState, QueueTrackId, QueueValidationError, SetQueue,
+    MAX_QUEUE_SIZE,
 };
 pub use track::{AudioFeatures, AudioFormat, CreateTrack, SyncedLyricLine, Track};
 pub use user::{

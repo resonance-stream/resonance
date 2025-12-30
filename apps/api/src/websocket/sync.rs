@@ -4,6 +4,11 @@
 //! between devices, including playback state, seek, queue, and
 //! device transfer operations.
 
+use once_cell::sync::Lazy;
+use sqlx::PgPool;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
 
 use super::connection::ConnectionManager;
@@ -12,6 +17,17 @@ use super::messages::{
     SyncEvent, SyncedSettings,
 };
 use super::pubsub::SyncPubSub;
+use crate::models::queue::SetQueue;
+use crate::repositories::QueueRepository;
+
+/// Global semaphore to limit concurrent queue persistence tasks.
+/// This prevents database connection pool exhaustion under burst load.
+static PERSIST_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(50)));
+
+/// Per-user persistence tracking to prevent duplicate concurrent writes.
+/// Tracks user IDs that have a persistence task currently running.
+static USER_PERSIST_LOCKS: Lazy<Arc<Mutex<HashSet<Uuid>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
 /// Handles synchronization messages for a single device connection
 pub struct SyncHandler {
@@ -19,6 +35,7 @@ pub struct SyncHandler {
     device_id: String,
     connection_manager: ConnectionManager,
     pubsub: SyncPubSub,
+    pool: Option<PgPool>,
 }
 
 impl SyncHandler {
@@ -34,6 +51,24 @@ impl SyncHandler {
             device_id,
             connection_manager,
             pubsub,
+            pool: None,
+        }
+    }
+
+    /// Create a new sync handler with database persistence
+    pub fn with_pool(
+        user_id: Uuid,
+        device_id: String,
+        connection_manager: ConnectionManager,
+        pubsub: SyncPubSub,
+        pool: PgPool,
+    ) -> Self {
+        Self {
+            user_id,
+            device_id,
+            connection_manager,
+            pubsub,
+            pool: Some(pool),
         }
     }
 
@@ -113,6 +148,59 @@ impl SyncHandler {
         if !self.is_active_device() {
             self.send_error(ErrorPayload::not_active_device());
             return Ok(());
+        }
+
+        // Persist queue to database (fire-and-forget to avoid blocking WebSocket)
+        // Uses semaphore to limit concurrent tasks and per-user lock to prevent duplicate writes
+        if let Some(pool) = &self.pool {
+            let user_id = self.user_id;
+
+            // Check if a persistence is already in progress for this user
+            let should_persist = {
+                let mut locks = USER_PERSIST_LOCKS.lock().await;
+                if locks.contains(&user_id) {
+                    // Already persisting for this user, skip this update
+                    // (the most recent queue state will be picked up by the next persist)
+                    tracing::debug!(user_id = %user_id, "Skipping queue persist - already in progress");
+                    false
+                } else {
+                    locks.insert(user_id);
+                    true
+                }
+            };
+
+            if should_persist {
+                let pool = pool.clone();
+                let queue_clone = queue.clone();
+                let semaphore = PERSIST_SEMAPHORE.clone();
+
+                tokio::spawn(async move {
+                    // Acquire semaphore permit (limits concurrent DB operations)
+                    let _permit = match semaphore.acquire().await {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            tracing::warn!(user_id = %user_id, "Semaphore closed, skipping persist");
+                            // Release user lock
+                            let mut locks = USER_PERSIST_LOCKS.lock().await;
+                            locks.remove(&user_id);
+                            return;
+                        }
+                    };
+
+                    // Perform the persistence
+                    if let Err(e) = persist_queue_to_db(pool, user_id, &queue_clone).await {
+                        tracing::warn!(
+                            user_id = %user_id,
+                            error = %e,
+                            "Failed to persist queue to database"
+                        );
+                    }
+
+                    // Release user lock
+                    let mut locks = USER_PERSIST_LOCKS.lock().await;
+                    locks.remove(&user_id);
+                });
+            }
         }
 
         // Broadcast queue to other devices
@@ -415,6 +503,58 @@ pub enum SyncError {
 
     #[error("internal error: {0}")]
     Internal(String),
+}
+
+/// Persist queue state to database
+///
+/// Converts the WebSocket QueueState (with full track metadata) to a
+/// SetQueue (track IDs only) and persists it via QueueRepository.
+/// This runs in a spawned task to avoid blocking WebSocket handling.
+///
+/// # Errors
+/// Returns an error if:
+/// - Any track ID fails to parse as a valid UUID (atomic failure)
+/// - The current_index exceeds i32::MAX
+/// - Database operations fail
+async fn persist_queue_to_db(
+    pool: PgPool,
+    user_id: Uuid,
+    queue: &QueueState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Convert WebSocket QueueState to repository SetQueue
+    // Use collect with Result to fail atomically if ANY UUID is invalid
+    let track_ids: Vec<Uuid> = queue
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(idx, t)| {
+            Uuid::parse_str(&t.id)
+                .map_err(|e| format!("Invalid UUID at position {}: '{}' - {}", idx, t.id, e))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Bounds check for current_index (usize to i32 conversion)
+    let current_index: i32 = queue.current_index.try_into().map_err(|_| {
+        format!(
+            "current_index {} exceeds maximum i32 value",
+            queue.current_index
+        )
+    })?;
+
+    let set_queue = SetQueue::new(track_ids, current_index);
+
+    // Persist to database
+    let repo = QueueRepository::new(pool);
+    repo.set_queue(user_id, &set_queue).await?;
+
+    tracing::debug!(
+        user_id = %user_id,
+        track_count = queue.tracks.len(),
+        current_index = queue.current_index,
+        "Queue persisted to database"
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

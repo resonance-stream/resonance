@@ -37,6 +37,20 @@ impl PrefetchJob {
             is_autoplay: true,
         }
     }
+
+    /// Create a prefetch job for explicit queue (not autoplay)
+    ///
+    /// This prefetches tracks from the user's explicit play queue stored
+    /// in the queue_items table, rather than AI-predicted tracks.
+    #[allow(dead_code)]
+    pub fn for_queue(user_id: Uuid, current_track_id: Uuid) -> Self {
+        Self {
+            user_id,
+            current_track_id,
+            prefetch_count: Some(5),
+            is_autoplay: false,
+        }
+    }
 }
 
 /// Track ID record for UUID-based queries
@@ -116,17 +130,36 @@ pub async fn execute(state: &AppState, job: &PrefetchJob) -> WorkerResult<()> {
         "Starting prefetch job"
     );
 
-    // For now, always use autoplay prediction
-    // Queue-based prefetch requires queue_items table which is not yet implemented
-    let tracks =
-        predict_next_tracks(state, job.user_id, job.current_track_id, prefetch_count).await?;
+    // Branch based on prefetch mode
+    let tracks = if job.is_autoplay {
+        // AI-predicted autoplay: find similar tracks
+        predict_next_tracks(state, job.user_id, job.current_track_id, prefetch_count).await?
+    } else {
+        // Explicit queue: fetch upcoming tracks from queue_items table
+        fetch_queue_tracks(state, job.user_id, prefetch_count).await?
+    };
+
+    if tracks.is_empty() {
+        tracing::debug!(
+            user_id = %job.user_id,
+            is_autoplay = job.is_autoplay,
+            "No tracks to prefetch"
+        );
+        return Ok(());
+    }
 
     // Cache track metadata in Redis for quick access
     cache_tracks(state, job.user_id, &tracks).await?;
 
+    // For queue-based prefetch, mark tracks as prefetched in the database
+    if !job.is_autoplay {
+        mark_queue_prefetched(state, job.user_id, &tracks).await?;
+    }
+
     tracing::info!(
         user_id = %job.user_id,
         track_count = tracks.len(),
+        is_autoplay = job.is_autoplay,
         "Prefetch job completed"
     );
 
@@ -466,6 +499,94 @@ async fn cache_tracks(state: &AppState, user_id: Uuid, track_ids: &[Uuid]) -> Wo
     Ok(())
 }
 
+// =============================================================================
+// Queue-Based Prefetch Functions
+// =============================================================================
+
+/// Fetch upcoming tracks from the user's explicit queue.
+///
+/// Queries the queue_items table for tracks that:
+/// 1. Are after the current index (upcoming)
+/// 2. Haven't been prefetched yet (metadata->'prefetched' IS NOT 'true')
+///
+/// Uses the partial index `idx_queue_items_unprefetched` for efficient queries.
+async fn fetch_queue_tracks(
+    state: &AppState,
+    user_id: Uuid,
+    count: usize,
+) -> WorkerResult<Vec<Uuid>> {
+    // Query upcoming unprefetched tracks from queue_items
+    // Join with queue_state to get current_index
+    let tracks: Vec<TrackIdRecord> = sqlx::query_as(
+        r#"
+        SELECT qi.track_id as id
+        FROM queue_items qi
+        JOIN queue_state qs ON qs.user_id = qi.user_id
+        WHERE qi.user_id = $1
+          AND qi.position > qs.current_index
+          AND qi.metadata->>'prefetched' IS DISTINCT FROM 'true'
+        ORDER BY qi.position ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(count as i64)
+    .fetch_all(&state.db)
+    .await?;
+
+    tracing::debug!(
+        user_id = %user_id,
+        track_count = tracks.len(),
+        "Fetched queue tracks for prefetch"
+    );
+
+    Ok(tracks.into_iter().map(|t| t.id).collect())
+}
+
+/// Mark tracks as prefetched in the queue_items metadata.
+///
+/// Updates the metadata JSONB column to set prefetched = true for the given tracks.
+/// This prevents re-prefetching tracks that have already been cached.
+async fn mark_queue_prefetched(
+    state: &AppState,
+    user_id: Uuid,
+    track_ids: &[Uuid],
+) -> WorkerResult<()> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+
+    // Update metadata to mark tracks as prefetched
+    // Using jsonb_set to precisely update only the 'prefetched' key
+    // Only update tracks ahead of current playback position to avoid marking
+    // already-played duplicate tracks. Skip already-prefetched tracks for efficiency.
+    let result = sqlx::query(
+        r#"
+        UPDATE queue_items qi
+        SET metadata = jsonb_set(COALESCE(qi.metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb)
+        FROM queue_state qs
+        WHERE qs.user_id = $1
+          AND qi.user_id = qs.user_id
+          AND qi.position > qs.current_index
+          AND qi.metadata->>'prefetched' IS DISTINCT FROM 'true'
+          AND qi.track_id = ANY($2)
+        "#,
+    )
+    .bind(user_id)
+    .bind(track_ids)
+    .execute(&state.db)
+    .await?;
+
+    tracing::debug!(
+        user_id = %user_id,
+        updated_count = result.rows_affected(),
+        track_count = track_ids.len(),
+        "Marked queue tracks as prefetched"
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +621,18 @@ mod tests {
         assert_eq!(job.current_track_id, track_id);
         assert_eq!(job.prefetch_count, Some(5));
         assert!(job.is_autoplay);
+    }
+
+    #[test]
+    fn test_prefetch_job_for_queue() {
+        let user_id = Uuid::new_v4();
+        let track_id = Uuid::new_v4();
+        let job = PrefetchJob::for_queue(user_id, track_id);
+
+        assert_eq!(job.user_id, user_id);
+        assert_eq!(job.current_track_id, track_id);
+        assert_eq!(job.prefetch_count, Some(5));
+        assert!(!job.is_autoplay); // Queue-based prefetch is NOT autoplay
     }
 
     #[test]
