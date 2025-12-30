@@ -558,12 +558,17 @@ async fn mark_queue_prefetched(
 
     // Update metadata to mark tracks as prefetched
     // Using jsonb_set to precisely update only the 'prefetched' key
+    // Only update tracks ahead of current playback position to avoid marking
+    // already-played duplicate tracks
     let result = sqlx::query(
         r#"
-        UPDATE queue_items
-        SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb)
-        WHERE user_id = $1
-          AND track_id = ANY($2)
+        UPDATE queue_items qi
+        SET metadata = jsonb_set(COALESCE(qi.metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb)
+        FROM queue_state qs
+        WHERE qs.user_id = $1
+          AND qi.user_id = qs.user_id
+          AND qi.position > qs.current_index
+          AND qi.track_id = ANY($2)
         "#,
     )
     .bind(user_id)

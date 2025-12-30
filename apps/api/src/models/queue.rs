@@ -187,8 +187,16 @@ impl SetQueue {
             return Err(QueueValidationError::NegativeIndex(self.current_index));
         }
 
-        // Check index bounds (only if queue is not empty)
-        if !self.track_ids.is_empty() && self.current_index as usize >= self.track_ids.len() {
+        // Check index bounds
+        if self.track_ids.is_empty() {
+            // Empty queue must have index 0 (no valid position otherwise)
+            if self.current_index != 0 {
+                return Err(QueueValidationError::IndexOutOfBounds {
+                    index: self.current_index,
+                    len: 0,
+                });
+            }
+        } else if self.current_index as usize >= self.track_ids.len() {
             return Err(QueueValidationError::IndexOutOfBounds {
                 index: self.current_index,
                 len: self.track_ids.len(),
@@ -325,6 +333,17 @@ mod tests {
         assert!(matches!(
             set_queue.validate(),
             Err(QueueValidationError::TooManyTracks(_))
+        ));
+    }
+
+    #[test]
+    fn test_set_queue_validation_empty_with_nonzero_index() {
+        // Empty queue must have index 0 - any other index is invalid
+        let set_queue = SetQueue::new(vec![], 5);
+
+        assert!(matches!(
+            set_queue.validate(),
+            Err(QueueValidationError::IndexOutOfBounds { index: 5, len: 0 })
         ));
     }
 

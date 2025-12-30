@@ -257,6 +257,9 @@ impl QueueRepository {
     /// Updates the metadata JSON to set `prefetched: true` and optionally
     /// a `prefetch_priority` score. This prevents re-prefetching tracks
     /// that are already cached.
+    ///
+    /// Only marks tracks that are **upcoming** (position > current_index) to
+    /// avoid incorrectly marking already-played tracks when duplicates exist.
     #[tracing::instrument(skip(self, track_ids), fields(track_count = track_ids.len()))]
     pub async fn mark_prefetched(
         &self,
@@ -270,15 +273,21 @@ impl QueueRepository {
 
         let priority_json = priority.unwrap_or(1.0);
 
+        // Only update tracks that are ahead of current playback position
+        // This prevents marking already-played duplicate tracks as prefetched
         let result = sqlx::query(
             r#"
-            UPDATE queue_items
+            UPDATE queue_items qi
             SET metadata = jsonb_set(
-                jsonb_set(COALESCE(metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb),
+                jsonb_set(COALESCE(qi.metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb),
                 '{prefetch_priority}',
                 $3::text::jsonb
             )
-            WHERE user_id = $1 AND track_id = ANY($2)
+            FROM queue_state qs
+            WHERE qs.user_id = $1
+              AND qi.user_id = qs.user_id
+              AND qi.position > qs.current_index
+              AND qi.track_id = ANY($2)
             "#,
         )
         .bind(user_id)
