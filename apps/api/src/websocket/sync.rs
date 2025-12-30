@@ -6,7 +6,7 @@
 
 use once_cell::sync::Lazy;
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
@@ -25,9 +25,9 @@ use crate::repositories::QueueRepository;
 static PERSIST_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(50)));
 
 /// Per-user persistence tracking to prevent duplicate concurrent writes.
-/// Maps user_id to whether a persistence task is currently running.
-static USER_PERSIST_LOCKS: Lazy<Arc<Mutex<HashMap<Uuid, bool>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+/// Tracks user IDs that have a persistence task currently running.
+static USER_PERSIST_LOCKS: Lazy<Arc<Mutex<HashSet<Uuid>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
 /// Handles synchronization messages for a single device connection
 pub struct SyncHandler {
@@ -158,13 +158,13 @@ impl SyncHandler {
             // Check if a persistence is already in progress for this user
             let should_persist = {
                 let mut locks = USER_PERSIST_LOCKS.lock().await;
-                if locks.get(&user_id).copied().unwrap_or(false) {
+                if locks.contains(&user_id) {
                     // Already persisting for this user, skip this update
                     // (the most recent queue state will be picked up by the next persist)
                     tracing::debug!(user_id = %user_id, "Skipping queue persist - already in progress");
                     false
                 } else {
-                    locks.insert(user_id, true);
+                    locks.insert(user_id);
                     true
                 }
             };

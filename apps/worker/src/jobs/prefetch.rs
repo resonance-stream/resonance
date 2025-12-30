@@ -557,11 +557,11 @@ async fn mark_queue_prefetched(
     }
 
     // Update metadata to mark tracks as prefetched
-    // Using jsonb_set to preserve any existing metadata
+    // Using jsonb_set to precisely update only the 'prefetched' key
     let result = sqlx::query(
         r#"
         UPDATE queue_items
-        SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"prefetched": true}'::jsonb
+        SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb)
         WHERE user_id = $1
           AND track_id = ANY($2)
         "#,

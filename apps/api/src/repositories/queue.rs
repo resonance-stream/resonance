@@ -207,7 +207,7 @@ impl QueueRepository {
             JOIN queue_state qs ON qi.user_id = qs.user_id
             WHERE qi.user_id = $1
               AND qi.position > qs.current_index
-              AND (qi.metadata->>'prefetched' IS NULL OR qi.metadata->>'prefetched' = 'false')
+              AND qi.metadata->>'prefetched' IS DISTINCT FROM 'true'
             ORDER BY qi.position ASC
             LIMIT $2
             "#,
@@ -239,7 +239,7 @@ impl QueueRepository {
             JOIN queue_state qs ON qi.user_id = qs.user_id
             WHERE qi.user_id = $1
               AND qi.position > qs.current_index
-              AND (qi.metadata->>'prefetched' IS NULL OR qi.metadata->>'prefetched' = 'false')
+              AND qi.metadata->>'prefetched' IS DISTINCT FROM 'true'
             ORDER BY qi.position ASC
             LIMIT $2
             "#,
@@ -274,7 +274,7 @@ impl QueueRepository {
             r#"
             UPDATE queue_items
             SET metadata = jsonb_set(
-                jsonb_set(metadata, '{prefetched}', 'true'::jsonb),
+                jsonb_set(COALESCE(metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb),
                 '{prefetch_priority}',
                 $3::text::jsonb
             )
