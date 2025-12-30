@@ -67,14 +67,17 @@ export function useSimilarArtists(
   limit = 10,
   options?: Omit<UseQueryOptions<SimilarArtist[], Error>, 'queryKey' | 'queryFn'>
 ) {
+  // Clamp limit to valid range (1-50, matching Last.fm API constraints)
+  const clampedLimit = Math.min(Math.max(limit, 1), 50)
+
   return useQuery({
-    queryKey: libraryKeys.discovery.similarArtists(artistName, limit),
+    queryKey: libraryKeys.discovery.similarArtists(artistName, clampedLimit),
     queryFn: async (): Promise<SimilarArtist[]> => {
       const response = await graphqlClient.request<SimilarArtistsResponse>(
         SIMILAR_ARTISTS_QUERY,
-        { artistName, limit }
+        { artistName, limit: clampedLimit }
       )
-      return response.similarArtists
+      return response.similarArtists ?? []
     },
     enabled: !!artistName.trim(),
     staleTime: 5 * 60 * 1000, // 5 minutes - Last.fm data doesn't change often
@@ -118,7 +121,7 @@ export function useArtistTags(
         ARTIST_TAGS_QUERY,
         { artistName }
       )
-      return response.artistTags
+      return response.artistTags ?? []
     },
     enabled: !!artistName.trim(),
     staleTime: 10 * 60 * 1000, // 10 minutes - tags are very stable
