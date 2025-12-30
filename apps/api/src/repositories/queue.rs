@@ -200,6 +200,11 @@ impl QueueRepository {
         user_id: Uuid,
         count: i32,
     ) -> QueueResult<Vec<QueueTrackId>> {
+        // Guard against invalid limits (negative values would fetch all rows)
+        if count <= 0 {
+            return Ok(vec![]);
+        }
+
         let tracks = sqlx::query_as::<_, QueueTrackId>(
             r#"
             SELECT qi.track_id
@@ -231,6 +236,11 @@ impl QueueRepository {
         user_id: Uuid,
         count: i32,
     ) -> QueueResult<Vec<QueueItem>> {
+        // Guard against invalid limits (negative values would fetch all rows)
+        if count <= 0 {
+            return Ok(vec![]);
+        }
+
         let items = sqlx::query_as::<_, QueueItem>(
             r#"
             SELECT qi.id, qi.user_id, qi.track_id, qi.position, qi.source_type,
@@ -271,7 +281,8 @@ impl QueueRepository {
             return Ok(0);
         }
 
-        let priority_json = priority.unwrap_or(1.0);
+        // Filter non-finite values to prevent JSON errors
+        let priority_value = priority.filter(|p| p.is_finite()).unwrap_or(1.0);
 
         // Only update tracks that are ahead of current playback position
         // This prevents marking already-played duplicate tracks as prefetched
@@ -281,7 +292,7 @@ impl QueueRepository {
             SET metadata = jsonb_set(
                 jsonb_set(COALESCE(qi.metadata, '{}'::jsonb), '{prefetched}', 'true'::jsonb),
                 '{prefetch_priority}',
-                $3::text::jsonb
+                to_jsonb($3::float8)
             )
             FROM queue_state qs
             WHERE qs.user_id = $1
@@ -292,7 +303,7 @@ impl QueueRepository {
         )
         .bind(user_id)
         .bind(track_ids)
-        .bind(priority_json.to_string())
+        .bind(priority_value)
         .execute(&self.pool)
         .await?;
 
@@ -363,6 +374,18 @@ impl QueueRepository {
             )));
         }
 
+        // Ensure queue_state exists for this user (required by prefetch JOINs)
+        sqlx::query(
+            r#"
+            INSERT INTO queue_state (user_id, current_index, updated_at)
+            VALUES ($1, 0, NOW())
+            ON CONFLICT (user_id) DO NOTHING
+            "#,
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
         let start_position = stats.1.unwrap_or(-1) + 1;
 
         // Batch insert using UNNEST
@@ -427,6 +450,18 @@ impl QueueRepository {
                 current_size + 1,
             )));
         }
+
+        // Ensure queue_state exists for this user (required by prefetch JOINs)
+        sqlx::query(
+            r#"
+            INSERT INTO queue_state (user_id, current_index, updated_at)
+            VALUES ($1, 0, NOW())
+            ON CONFLICT (user_id) DO NOTHING
+            "#,
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
 
         // Clamp position to max + 1 (append if beyond end)
         let max_position = stats.1.unwrap_or(-1);
