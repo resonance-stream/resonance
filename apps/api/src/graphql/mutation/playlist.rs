@@ -110,8 +110,9 @@ impl From<PlaylistTypeInput> for DbPlaylistType {
 impl From<SmartPlaylistRuleInput> for SmartPlaylistRule {
     fn from(input: SmartPlaylistRuleInput) -> Self {
         Self {
-            field: input.field,
-            operator: input.operator,
+            // Normalize field and operator to lowercase for consistent comparison
+            field: input.field.to_ascii_lowercase(),
+            operator: input.operator.to_ascii_lowercase(),
             value: input.value,
         }
     }
@@ -120,12 +121,12 @@ impl From<SmartPlaylistRuleInput> for SmartPlaylistRule {
 impl From<SmartPlaylistRulesInput> for SmartPlaylistRules {
     fn from(input: SmartPlaylistRulesInput) -> Self {
         Self {
-            // Normalize match_mode to lowercase for consistent comparison
+            // Normalize all string fields to lowercase for consistent comparison
             match_mode: input.match_mode.to_ascii_lowercase(),
             rules: input.rules.into_iter().map(Into::into).collect(),
             limit: input.limit,
-            sort_by: input.sort_by,
-            sort_order: input.sort_order,
+            sort_by: input.sort_by.map(|s| s.to_ascii_lowercase()),
+            sort_order: input.sort_order.map(|s| s.to_ascii_lowercase()),
         }
     }
 }

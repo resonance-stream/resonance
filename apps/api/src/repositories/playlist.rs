@@ -203,11 +203,8 @@ impl PlaylistRepository {
         smart_rules: Option<SmartPlaylistRules>,
     ) -> Result<Playlist, sqlx::Error> {
         let id = Uuid::new_v4();
-        let smart_rules_json = smart_rules
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+        // Use sqlx::types::Json for proper JSON binding without manual serialization
+        let smart_rules_json = smart_rules.as_ref().map(sqlx::types::Json);
 
         let sql = format!(
             r#"
@@ -284,11 +281,8 @@ impl PlaylistRepository {
             PLAYLIST_COLUMNS
         );
 
-        let smart_rules_json = smart_rules
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+        // Use sqlx::types::Json for proper JSON binding without manual serialization
+        let smart_rules_json = smart_rules.as_ref().map(sqlx::types::Json);
 
         // Build the query dynamically
         let mut query = sqlx::query_as::<_, Playlist>(&sql).bind(playlist_id);
@@ -305,8 +299,8 @@ impl PlaylistRepository {
         if let Some(p) = is_public {
             query = query.bind(p);
         }
-        if smart_rules_json.is_some() {
-            query = query.bind(smart_rules_json);
+        if let Some(json) = smart_rules_json {
+            query = query.bind(json);
         }
 
         query.fetch_one(&self.pool).await
@@ -371,8 +365,27 @@ impl PlaylistRepository {
 
         let start_position = position.unwrap_or(max_position.unwrap_or(-1) + 1);
 
-        // If inserting at a specific position, shift existing tracks
-        if position.is_some() {
+        // Filter out tracks that already exist to prevent gaps when using position shifts
+        // This is important because ON CONFLICT DO NOTHING would skip existing tracks,
+        // but we'd have already shifted positions by the full track_ids count
+        let new_track_ids: Vec<Uuid> = sqlx::query_scalar(
+            r#"
+            SELECT x.track_id
+            FROM UNNEST($1::uuid[]) AS x(track_id)
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM playlist_tracks pt
+                WHERE pt.playlist_id = $2 AND pt.track_id = x.track_id
+            )
+            "#,
+        )
+        .bind(track_ids)
+        .bind(playlist_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        // If inserting at a specific position, shift existing tracks by new track count only
+        if position.is_some() && !new_track_ids.is_empty() {
             sqlx::query(
                 r#"
                 UPDATE playlist_tracks
@@ -380,20 +393,19 @@ impl PlaylistRepository {
                 WHERE playlist_id = $2 AND position >= $3
                 "#,
             )
-            .bind(track_ids.len() as i32)
+            .bind(new_track_ids.len() as i32)
             .bind(playlist_id)
             .bind(start_position)
             .execute(&mut *tx)
             .await?;
         }
 
-        // Insert new tracks
-        for (i, track_id) in track_ids.iter().enumerate() {
+        // Insert new tracks (no conflicts expected due to pre-filter)
+        for (i, track_id) in new_track_ids.iter().enumerate() {
             sqlx::query(
                 r#"
                 INSERT INTO playlist_tracks (id, playlist_id, track_id, added_by, position)
                 VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (playlist_id, track_id) DO NOTHING
                 "#,
             )
             .bind(Uuid::new_v4())

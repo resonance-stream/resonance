@@ -77,23 +77,33 @@ impl PlaylistService {
         }
 
         // Combine results based on match mode (optimized to avoid unnecessary allocations)
-        let combined = if rules.match_mode.eq_ignore_ascii_case("any") {
-            // Union of all results (OR logic) - extend in-place
-            let mut result = all_results.pop().unwrap_or_default();
-            for set in all_results {
-                result.extend(set);
-            }
-            result
-        } else {
-            // Intersection of all results (AND logic) - use retain for efficiency
-            if all_results.is_empty() {
-                HashSet::new()
-            } else {
-                let mut result = all_results.remove(0);
+        // Use explicit match to fail on invalid match_mode rather than silently defaulting
+        let match_mode = rules.match_mode.to_ascii_lowercase();
+        let combined = match match_mode.as_str() {
+            "any" => {
+                // Union of all results (OR logic) - extend in-place
+                let mut result = all_results.pop().unwrap_or_default();
                 for set in all_results {
-                    result.retain(|item| set.contains(item));
+                    result.extend(set);
                 }
                 result
+            }
+            "all" => {
+                // Intersection of all results (AND logic) - use retain for efficiency
+                if all_results.is_empty() {
+                    HashSet::new()
+                } else {
+                    let mut result = all_results.remove(0);
+                    for set in all_results {
+                        result.retain(|item| set.contains(item));
+                    }
+                    result
+                }
+            }
+            _ => {
+                return Err(ApiError::ValidationError(
+                    "match_mode must be 'all' or 'any'".to_string(),
+                ));
             }
         };
 
@@ -278,8 +288,9 @@ impl PlaylistService {
             }
             "is_empty" => {
                 if is_array_field {
+                    // COALESCE handles both NULL and empty arrays correctly
                     (
-                        format!("{} IS NULL OR array_length({}, 1) IS NULL", field, field),
+                        format!("COALESCE(array_length({}, 1), 0) = 0", field),
                         vec![],
                     )
                 } else {
