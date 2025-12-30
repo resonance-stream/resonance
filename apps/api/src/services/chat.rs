@@ -679,23 +679,23 @@ You can help users with their music library by:
                 tool_type: "function".to_string(),
                 function: OllamaToolFunction {
                     name: "search_library".to_string(),
-                    description: "Search the user's music library for tracks, albums, or artists"
+                    description: "Search the user's music library. Use search_type 'track' for finding specific songs/artists/albums by name, or 'mood' for finding tracks matching a mood or vibe."
                         .to_string(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query (song title, artist name, or album)"
+                                "description": "Search query - song/artist/album name for 'track' search, or mood descriptors (e.g., 'upbeat', 'relaxing', 'energetic') for 'mood' search"
                             },
                             "search_type": {
                                 "type": "string",
-                                "enum": ["track", "album", "artist"],
-                                "description": "Type of content to search for"
+                                "enum": ["track", "mood"],
+                                "description": "Search mode: 'track' (default) for semantic search using AI embeddings, 'mood' for finding tracks by mood tags like 'happy' or 'energetic'"
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "Maximum number of results (default: 5)"
+                                "description": "Maximum number of results (default: 5, max: 20)"
                             }
                         },
                         "required": ["query"]
@@ -767,24 +767,21 @@ You can help users with their music library by:
                 tool_type: "function".to_string(),
                 function: OllamaToolFunction {
                     name: "get_recommendations".to_string(),
-                    description: "Get music recommendations based on mood or similar tracks"
+                    description: "Get track recommendations similar to a given track. For mood-based search, use search_library with search_type 'mood' instead."
                         .to_string(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
-                            "mood": {
-                                "type": "string",
-                                "description": "Mood/vibe to base recommendations on (e.g., 'energetic', 'chill', 'melancholic')"
-                            },
                             "similar_to_track_id": {
                                 "type": "string",
-                                "description": "Track ID to find similar tracks to"
+                                "description": "Track ID to find similar tracks to (required)"
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "Maximum number of recommendations (default: 5)"
+                                "description": "Maximum number of recommendations (default: 5, max: 20)"
                             }
-                        }
+                        },
+                        "required": ["similar_to_track_id"]
                     }),
                 },
             },
@@ -922,7 +919,7 @@ You can help users with their music library by:
             );
         }
 
-        let limit = args.limit.unwrap_or(5).min(20); // Cap at 20 results
+        let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
         let search_type = args.search_type.unwrap_or_else(|| "track".to_string());
 
         // Use mood-based search if search_type is "mood"
@@ -1205,15 +1202,13 @@ You can help users with their music library by:
 
     /// Get recommendations tool implementation
     ///
-    /// Supports two recommendation modes:
-    /// - `similar_to_track_id`: Find tracks similar to a given track using combined similarity
-    /// - `mood`: Find tracks matching the given mood using mood-based search
+    /// Finds tracks similar to a given track using combined similarity (semantic, acoustic, categorical).
+    /// For mood-based searches, use `search_library` with `search_type: "mood"` instead.
     #[instrument(skip(self))]
     async fn tool_get_recommendations(&self, arguments: &str) -> (String, Option<ChatAction>) {
         #[derive(Deserialize)]
         struct Args {
-            mood: Option<String>,
-            similar_to_track_id: Option<String>,
+            similar_to_track_id: String,
             limit: Option<i32>,
         }
 
@@ -1221,120 +1216,64 @@ You can help users with their music library by:
             Ok(a) => a,
             Err(e) => {
                 return (
-                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    serde_json::json!({
+                        "error": format!("Invalid arguments: {}", e),
+                        "hint": "Provide similar_to_track_id (required). For mood-based search, use search_library with search_type: 'mood'"
+                    })
+                    .to_string(),
                     None,
                 )
             }
         };
 
-        let limit = args.limit.unwrap_or(5).min(20); // Cap at 20 results
+        let limit = args.limit.unwrap_or(5).clamp(1, 20); // Clamp between 1 and 20
 
-        // Validate similar_to_track_id if provided
-        let validated_track_uuid = if let Some(ref track_id) = args.similar_to_track_id {
-            match Uuid::parse_str(track_id) {
-                Ok(uuid) => Some(uuid),
-                Err(_) => {
-                    return (
-                        serde_json::json!({
-                            "error": "Invalid similar_to_track_id - must be a valid UUID"
-                        })
-                        .to_string(),
-                        None,
-                    )
-                }
-            }
-        } else {
-            None
-        };
-
-        // If similar_to_track_id is provided, use similarity-based recommendations
-        if let Some(track_uuid) = validated_track_uuid {
-            match self
-                .similarity_service
-                .find_similar_combined(track_uuid, limit)
-                .await
-            {
-                Ok(similar_tracks) => {
-                    let results = Self::format_similar_tracks(&similar_tracks);
-                    let mut result = serde_json::json!({
-                        "recommendations": results,
-                        "similar_to": track_uuid.to_string(),
-                        "recommendation_type": "similar_tracks",
-                        "count": similar_tracks.len()
-                    });
-                    if similar_tracks.is_empty() {
-                        result["message"] =
-                            serde_json::json!("No similar tracks found in your library");
-                    }
-                    return (result.to_string(), None);
-                }
-                Err(e) => {
-                    warn!(error = %e, track_id = %track_uuid, "Similarity recommendations failed");
-                    return (
-                        serde_json::json!({
-                            "error": format!("Failed to get similar tracks: {}", e),
-                            "similar_to": track_uuid.to_string()
-                        })
-                        .to_string(),
-                        None,
-                    );
-                }
-            }
-        }
-
-        // If mood is provided, use mood-based recommendations
-        if let Some(ref mood) = args.mood {
-            let moods = Self::parse_mood_tags(mood);
-
-            if moods.is_empty() {
+        // Validate similar_to_track_id UUID format
+        let track_uuid = match Uuid::parse_str(&args.similar_to_track_id) {
+            Ok(uuid) => uuid,
+            Err(_) => {
                 return (
                     serde_json::json!({
-                        "error": "No valid mood tags provided",
-                        "hint": "Provide moods like 'happy', 'energetic', 'melancholic'"
+                        "error": "Invalid similar_to_track_id - must be a valid UUID"
                     })
                     .to_string(),
                     None,
-                );
+                )
             }
+        };
 
-            match self.search_service.search_by_mood(&moods, limit).await {
-                Ok(tracks) => {
-                    let results = Self::format_search_results(&tracks);
-                    let mut result = serde_json::json!({
-                        "recommendations": results,
-                        "mood": mood,
-                        "recommendation_type": "mood_based",
-                        "count": tracks.len()
-                    });
-                    if tracks.is_empty() {
-                        result["message"] =
-                            serde_json::json!("No tracks found matching the specified mood");
-                    }
-                    return (result.to_string(), None);
+        // Find similar tracks using combined similarity
+        match self
+            .similarity_service
+            .find_similar_combined(track_uuid, limit)
+            .await
+        {
+            Ok(similar_tracks) => {
+                let results = Self::format_similar_tracks(&similar_tracks);
+                let mut result = serde_json::json!({
+                    "recommendations": results,
+                    "similar_to": track_uuid.to_string(),
+                    "recommendation_type": "similar_tracks",
+                    "count": similar_tracks.len()
+                });
+                if similar_tracks.is_empty() {
+                    result["message"] =
+                        serde_json::json!("No similar tracks found in your library");
                 }
-                Err(e) => {
-                    warn!(error = %e, "Mood-based recommendations failed");
-                    return (
-                        serde_json::json!({
-                            "error": format!("Failed to get mood recommendations: {}", e),
-                            "mood": mood
-                        })
-                        .to_string(),
-                        None,
-                    );
-                }
+                (result.to_string(), None)
+            }
+            Err(e) => {
+                warn!(error = %e, track_id = %track_uuid, "Similarity recommendations failed");
+                (
+                    serde_json::json!({
+                        "error": format!("Failed to get similar tracks: {}", e),
+                        "similar_to": track_uuid.to_string()
+                    })
+                    .to_string(),
+                    None,
+                )
             }
         }
-
-        // Neither similar_to_track_id nor mood provided
-        (
-            serde_json::json!({
-                "error": "Either 'similar_to_track_id' or 'mood' must be provided",
-                "hint": "Provide a track_id to find similar tracks, or a mood like 'happy', 'energetic'"
-            })
-            .to_string(),
-            None,
-        )
     }
 }
 
