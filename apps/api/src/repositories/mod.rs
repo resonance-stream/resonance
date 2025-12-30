@@ -12,6 +12,7 @@
 
 pub mod album;
 pub mod artist;
+pub mod chat;
 pub mod device;
 pub mod playlist;
 pub mod queue;
@@ -22,6 +23,7 @@ pub mod utils;
 
 pub use album::AlbumRepository;
 pub use artist::ArtistRepository;
+pub use chat::ChatRepository;
 pub use device::DeviceRepository;
 pub use playlist::PlaylistRepository;
 pub use queue::{QueueError, QueueRepository, QueueResult};

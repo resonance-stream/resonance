@@ -34,6 +34,9 @@ pub enum ClientMessage {
 
     /// Update synced settings
     SettingsUpdate(SyncedSettings),
+
+    /// Send a chat message to the AI assistant
+    ChatSend(ChatSendPayload),
 }
 
 // =============================================================================
@@ -85,6 +88,15 @@ pub enum ServerMessage {
 
     /// Settings sync
     SettingsSync(SyncedSettings),
+
+    /// Chat: Streaming token from AI assistant
+    ChatToken(ChatTokenPayload),
+
+    /// Chat: Complete response from AI assistant
+    ChatComplete(ChatCompletePayload),
+
+    /// Chat: Error from AI assistant
+    ChatError(ChatErrorPayload),
 }
 
 // =============================================================================
@@ -326,6 +338,125 @@ pub struct SyncedSettings {
 }
 
 // =============================================================================
+// Chat Message Payloads
+// =============================================================================
+
+/// Payload for ChatSend client message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSendPayload {
+    /// Conversation ID (None to start new conversation)
+    pub conversation_id: Option<Uuid>,
+
+    /// User message content
+    pub message: String,
+}
+
+/// Payload for ChatToken server message (streaming)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatTokenPayload {
+    /// Conversation ID
+    pub conversation_id: Uuid,
+
+    /// Token fragment from AI response
+    pub token: String,
+
+    /// Whether this is the final token
+    pub is_final: bool,
+}
+
+/// Action that can be executed from a chat response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action_type", content = "data")]
+pub enum ChatAction {
+    /// Play a specific track
+    PlayTrack { track_id: Uuid },
+
+    /// Add tracks to queue
+    AddToQueue { track_ids: Vec<Uuid> },
+
+    /// Create a playlist
+    CreatePlaylist {
+        name: String,
+        description: Option<String>,
+        track_ids: Vec<Uuid>,
+    },
+
+    /// Navigate to search results
+    ShowSearch { query: String, result_type: String },
+}
+
+/// Payload for ChatComplete server message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatCompletePayload {
+    /// Conversation ID
+    pub conversation_id: Uuid,
+
+    /// Message ID of the assistant response
+    pub message_id: Uuid,
+
+    /// Full assistant response text
+    pub full_response: String,
+
+    /// Actions that can be executed
+    pub actions: Vec<ChatAction>,
+}
+
+/// Payload for ChatError server message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatErrorPayload {
+    /// Conversation ID (None if error occurred before conversation was created)
+    pub conversation_id: Option<Uuid>,
+
+    /// Error message
+    pub error: String,
+
+    /// Error code for client handling
+    pub code: String,
+}
+
+impl ChatErrorPayload {
+    pub fn new(
+        conversation_id: Option<Uuid>,
+        code: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
+        Self {
+            conversation_id,
+            code: code.into(),
+            error: error.into(),
+        }
+    }
+
+    pub fn conversation_not_found(conversation_id: Uuid) -> Self {
+        Self::new(
+            Some(conversation_id),
+            "CONVERSATION_NOT_FOUND",
+            "Conversation not found",
+        )
+    }
+
+    pub fn ai_unavailable(conversation_id: Option<Uuid>) -> Self {
+        Self::new(
+            conversation_id,
+            "AI_UNAVAILABLE",
+            "AI service is unavailable",
+        )
+    }
+
+    pub fn rate_limited(conversation_id: Option<Uuid>, retry_after: u64) -> Self {
+        Self::new(
+            conversation_id,
+            "RATE_LIMITED",
+            format!("Rate limited. Retry after {} seconds", retry_after),
+        )
+    }
+
+    pub fn invalid_message(conversation_id: Option<Uuid>, reason: impl Into<String>) -> Self {
+        Self::new(conversation_id, "INVALID_MESSAGE", reason)
+    }
+}
+
+// =============================================================================
 // Internal Sync Events (for Redis pub/sub)
 // =============================================================================
 
@@ -479,5 +610,106 @@ mod tests {
 
         let parsed: SyncEvent = serde_json::from_str(&json).unwrap();
         assert!(matches!(parsed, SyncEvent::PlaybackUpdate { .. }));
+    }
+
+    #[test]
+    fn test_chat_send_serialization() {
+        let msg = ClientMessage::ChatSend(ChatSendPayload {
+            conversation_id: Some(Uuid::nil()),
+            message: "Hello AI".into(),
+        });
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("ChatSend"));
+        assert!(json.contains("Hello AI"));
+
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ClientMessage::ChatSend(_)));
+    }
+
+    #[test]
+    fn test_chat_token_serialization() {
+        let msg = ServerMessage::ChatToken(ChatTokenPayload {
+            conversation_id: Uuid::nil(),
+            token: "Hello".into(),
+            is_final: false,
+        });
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("ChatToken"));
+        assert!(json.contains("Hello"));
+        assert!(json.contains("is_final"));
+
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::ChatToken(_)));
+    }
+
+    #[test]
+    fn test_chat_complete_serialization() {
+        let msg = ServerMessage::ChatComplete(ChatCompletePayload {
+            conversation_id: Uuid::nil(),
+            message_id: Uuid::nil(),
+            full_response: "Complete response".into(),
+            actions: vec![ChatAction::PlayTrack {
+                track_id: Uuid::nil(),
+            }],
+        });
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("ChatComplete"));
+        assert!(json.contains("Complete response"));
+        assert!(json.contains("PlayTrack"));
+
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::ChatComplete(_)));
+    }
+
+    #[test]
+    fn test_chat_error_serialization() {
+        let msg = ServerMessage::ChatError(ChatErrorPayload::ai_unavailable(Some(Uuid::nil())));
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("ChatError"));
+        assert!(json.contains("AI_UNAVAILABLE"));
+
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::ChatError(_)));
+    }
+
+    #[test]
+    fn test_chat_action_serialization() {
+        let action = ChatAction::CreatePlaylist {
+            name: "My Playlist".into(),
+            description: Some("A great playlist".into()),
+            track_ids: vec![Uuid::nil()],
+        };
+
+        let json = serde_json::to_string(&action).unwrap();
+        assert!(json.contains("CreatePlaylist"));
+        assert!(json.contains("My Playlist"));
+
+        let parsed: ChatAction = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ChatAction::CreatePlaylist { .. }));
+    }
+
+    #[test]
+    fn test_chat_error_payload_constructors() {
+        let conv_id = Uuid::new_v4();
+
+        let not_found = ChatErrorPayload::conversation_not_found(conv_id);
+        assert_eq!(not_found.code, "CONVERSATION_NOT_FOUND");
+        assert_eq!(not_found.conversation_id, Some(conv_id));
+
+        let unavailable = ChatErrorPayload::ai_unavailable(None);
+        assert_eq!(unavailable.code, "AI_UNAVAILABLE");
+        assert!(unavailable.conversation_id.is_none());
+
+        let rate = ChatErrorPayload::rate_limited(Some(conv_id), 60);
+        assert_eq!(rate.code, "RATE_LIMITED");
+        assert!(rate.error.contains("60"));
+
+        let invalid = ChatErrorPayload::invalid_message(None, "Too long");
+        assert_eq!(invalid.code, "INVALID_MESSAGE");
+        assert!(invalid.error.contains("Too long"));
     }
 }

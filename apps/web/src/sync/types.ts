@@ -16,7 +16,9 @@ export type ClientMessage =
   | { type: 'TransferPlayback'; payload: { target_device_id: string } }
   | { type: 'RequestDeviceList' }
   | { type: 'Heartbeat' }
-  | { type: 'SettingsUpdate'; payload: SyncedSettings };
+  | { type: 'SettingsUpdate'; payload: SyncedSettings }
+  | { type: 'ChatSend'; payload: ChatSendPayload }
+  | { type: 'ChatHistory'; payload: ChatHistoryPayload };
 
 // =============================================================================
 // Server -> Client Messages
@@ -35,7 +37,11 @@ export type ServerMessage =
   | { type: 'TransferAccepted'; payload: { to_device_id: string } }
   | { type: 'ActiveDeviceChanged'; payload: { previous_device_id: string | null; new_device_id: string | null } }
   | { type: 'Pong'; payload: { server_time: number } }
-  | { type: 'SettingsSync'; payload: SyncedSettings };
+  | { type: 'SettingsSync'; payload: SyncedSettings }
+  | { type: 'ChatToken'; payload: ChatTokenPayload }
+  | { type: 'ChatComplete'; payload: ChatCompletePayload }
+  | { type: 'ChatError'; payload: ChatErrorPayload }
+  | { type: 'ChatHistorySync'; payload: ChatHistorySyncPayload };
 
 // =============================================================================
 // Payload Types
@@ -138,6 +144,117 @@ export interface SyncedSettings {
   crossfade_duration?: number;
   gapless_enabled?: boolean;
   normalize_volume?: boolean;
+}
+
+// =============================================================================
+// Chat Payload Types
+// =============================================================================
+
+/** Role of a chat message sender */
+export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
+
+/** Payload for sending a chat message */
+export interface ChatSendPayload {
+  /** Optional conversation ID (null for new conversation) */
+  conversation_id: string | null;
+  /** Message content */
+  message: string;
+}
+
+/** Payload for requesting chat history */
+export interface ChatHistoryPayload {
+  /** Conversation ID to fetch */
+  conversation_id: string;
+  /** Maximum messages to retrieve */
+  limit?: number;
+}
+
+/** Streaming token from AI response */
+export interface ChatTokenPayload {
+  /** Conversation ID */
+  conversation_id: string;
+  /** Token content */
+  token: string;
+  /** Whether this is the final token */
+  is_final: boolean;
+}
+
+/** Tool call from AI */
+export interface ChatToolCall {
+  /** Tool call ID */
+  id: string;
+  /** Tool name */
+  name: string;
+  /** Tool arguments as JSON string */
+  arguments: string;
+}
+
+/** Tool result for execution */
+export interface ChatToolResult {
+  /** Tool call ID this result corresponds to */
+  tool_call_id: string;
+  /** Result content */
+  content: string;
+  /** Whether the tool execution succeeded */
+  success: boolean;
+}
+
+/** Action the UI should execute */
+export interface ChatAction {
+  /** Action type */
+  type: 'play_track' | 'add_to_queue' | 'create_playlist' | 'search_library' | 'get_recommendations';
+  /** Action payload (varies by type) */
+  payload: Record<string, unknown>;
+}
+
+/** Complete AI response */
+export interface ChatCompletePayload {
+  /** Conversation ID */
+  conversation_id: string;
+  /** Message ID of the saved response */
+  message_id: string;
+  /** Full response text */
+  full_response: string;
+  /** Actions for the UI to execute */
+  actions: ChatAction[];
+  /** Tool calls that were made */
+  tool_calls?: ChatToolCall[];
+}
+
+/** Chat error */
+export interface ChatErrorPayload {
+  /** Conversation ID (null if error occurred before conversation) */
+  conversation_id: string | null;
+  /** Error message */
+  error: string;
+  /** Error code */
+  code?: string;
+}
+
+/** Chat history sync */
+export interface ChatHistorySyncPayload {
+  /** Conversation ID */
+  conversation_id: string;
+  /** Messages in the conversation */
+  messages: ChatMessageData[];
+}
+
+/** Chat message data from server */
+export interface ChatMessageData {
+  /** Message ID */
+  id: string;
+  /** Conversation ID */
+  conversation_id: string;
+  /** Message role */
+  role: ChatRole;
+  /** Message content */
+  content: string | null;
+  /** Model used (for assistant messages) */
+  model_used?: string;
+  /** Token count */
+  token_count?: number;
+  /** Creation timestamp */
+  created_at: string;
 }
 
 // =============================================================================

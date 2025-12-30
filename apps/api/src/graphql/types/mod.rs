@@ -8,6 +8,7 @@
 
 mod album;
 mod artist;
+pub mod chat;
 mod library;
 mod playlist;
 mod search;
@@ -16,6 +17,7 @@ mod user;
 
 pub use album::{Album, CoverArtColors};
 pub use artist::Artist;
+pub use chat::{ChatConversation, ChatConversationWithMessages, ChatMessage, ChatRole};
 pub use library::{AlbumType, AudioFormat, PlaylistType};
 pub use playlist::{
     Playlist, PlaylistTrackEntry, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRules,

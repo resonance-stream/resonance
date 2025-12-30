@@ -18,9 +18,12 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use resonance_shared_config::OllamaConfig;
+
 use crate::middleware::extract_client_ip;
 use crate::services::auth::AuthService;
 
+use super::chat_handler::spawn_chat_handler;
 use super::connection::{ConnectionManager, DeviceInfo};
 use super::messages::{ClientMessage, ConnectedPayload, DeviceType, ErrorPayload, ServerMessage};
 use super::pubsub::SyncPubSub;
@@ -74,6 +77,7 @@ pub async fn ws_handler(
     Extension(connection_manager): Extension<ConnectionManager>,
     Extension(pubsub): Extension<SyncPubSub>,
     Extension(pool): Extension<PgPool>,
+    Extension(ollama_config): Extension<OllamaConfig>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
 ) -> Response {
@@ -149,11 +153,13 @@ pub async fn ws_handler(
             connection_manager,
             pubsub,
             pool,
+            ollama_config,
         )
     })
 }
 
 /// Handle an established WebSocket connection
+#[allow(clippy::too_many_arguments)]
 async fn handle_socket(
     socket: WebSocket,
     user_id: Uuid,
@@ -162,6 +168,7 @@ async fn handle_socket(
     connection_manager: ConnectionManager,
     pubsub: SyncPubSub,
     pool: PgPool,
+    ollama_config: OllamaConfig,
 ) {
     let device_id = device_info.device_id.clone();
     let device_name = device_info.device_name.clone();
@@ -174,6 +181,15 @@ async fn handle_socket(
 
     // Split the socket into sender and receiver
     let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    // Spawn chat handler for this connection
+    let (chat_tx, chat_handle) = spawn_chat_handler(
+        user_id,
+        device_id.clone(),
+        pool.clone(),
+        ollama_config,
+        connection_manager.clone(),
+    );
 
     // Create sync handler for processing messages with database persistence
     let sync_handler = SyncHandler::with_pool(
@@ -292,12 +308,42 @@ async fn handle_socket(
                 Ok(Message::Text(text)) => {
                     match serde_json::from_str::<ClientMessage>(&text) {
                         Ok(msg) => {
-                            if let Err(e) = sync_handler.handle_message(msg).await {
-                                tracing::warn!(
-                                    error = %e,
-                                    device_id = %device_id_recv,
-                                    "Error handling client message"
-                                );
+                            // Route ChatSend messages to the chat handler
+                            if let ClientMessage::ChatSend(payload) = msg {
+                                match chat_tx.try_send(payload) {
+                                    Ok(_) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        tracing::warn!(
+                                            device_id = %device_id_recv,
+                                            "Chat message queue full, message dropped"
+                                        );
+                                        // Send error back to client
+                                        let error_msg = super::messages::ChatErrorPayload::new(
+                                            None,
+                                            "QUEUE_FULL",
+                                            "Too many pending messages. Please wait.",
+                                        );
+                                        sync_handler.send_to_device(
+                                            &device_id_recv,
+                                            ServerMessage::ChatError(error_msg),
+                                        );
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        tracing::warn!(
+                                            device_id = %device_id_recv,
+                                            "Chat handler channel closed"
+                                        );
+                                    }
+                                }
+                            } else {
+                                // All other messages go to sync handler
+                                if let Err(e) = sync_handler.handle_message(msg).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        device_id = %device_id_recv,
+                                        "Error handling client message"
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -348,6 +394,10 @@ async fn handle_socket(
             send_task.abort();
         }
     }
+
+    // Abort the chat handler task to prevent resource leaks during active AI requests
+    chat_handle.abort();
+    tracing::debug!(device_id = %device_id, "Chat handler task aborted");
 
     // Check if this device was active BEFORE removing connection (to avoid race condition)
     let was_active = connection_manager.get_active_device(user_id) == Some(device_id.clone());

@@ -1,0 +1,1269 @@
+//! Chat service for AI assistant functionality
+//!
+//! This module provides the core AI chat functionality using Ollama with the Ministral model,
+//! supporting native function calling for music library operations.
+
+// Allow dead_code - WebSocket integration (Phase 4) will consume this service
+#![allow(dead_code)]
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use thiserror::Error;
+use tracing::{debug, error, info, instrument, warn};
+use uuid::Uuid;
+
+use crate::models::chat::{
+    ChatConversation, ChatMessage, ChatRole, ContextSnapshot, CreateChatMessage,
+    CreateConversation, ToolCall, ToolCallFunction,
+};
+use crate::repositories::ChatRepository;
+use resonance_shared_config::OllamaConfig;
+
+/// Chat service errors
+#[derive(Debug, Error)]
+pub enum ChatError {
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("conversation not found: {0}")]
+    ConversationNotFound(Uuid),
+
+    #[error("ollama request failed: {0}")]
+    OllamaRequest(#[from] reqwest::Error),
+
+    #[error("ollama response error: {0}")]
+    OllamaResponse(String),
+
+    #[error("json serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("tool execution failed: {tool_name}: {message}")]
+    ToolExecution { tool_name: String, message: String },
+
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("operation timeout")]
+    Timeout,
+}
+
+// ==================== ApiError Integration ====================
+
+impl From<ChatError> for crate::error::ApiError {
+    fn from(err: ChatError) -> Self {
+        match err {
+            ChatError::Database(e) => crate::error::ApiError::Database(e),
+            ChatError::ConversationNotFound(id) => crate::error::ApiError::NotFound {
+                resource_type: "conversation",
+                id: id.to_string(),
+            },
+            ChatError::OllamaRequest(e) => crate::error::ApiError::AiService(e.to_string()),
+            ChatError::OllamaResponse(msg) => crate::error::ApiError::AiService(msg),
+            ChatError::Serialization(e) => crate::error::ApiError::Serialization(e),
+            ChatError::ToolExecution { tool_name, message } => crate::error::ApiError::AiService(
+                format!("Tool '{}' failed: {}", tool_name, message),
+            ),
+            ChatError::InvalidInput(msg) => crate::error::ApiError::ValidationError(msg),
+            ChatError::Timeout => {
+                crate::error::ApiError::AiService("Operation timed out".to_string())
+            }
+        }
+    }
+}
+
+/// Result type for chat operations
+pub type ChatResult<T> = Result<T, ChatError>;
+
+// ==================== Ollama API Types ====================
+
+/// Request body for Ollama chat API
+#[derive(Debug, Clone, Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<OllamaMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OllamaTool>>,
+    stream: bool,
+    options: OllamaOptions,
+}
+
+/// Options for Ollama generation
+#[derive(Debug, Clone, Serialize)]
+struct OllamaOptions {
+    temperature: f32,
+    num_predict: i32,
+}
+
+/// Message format for Ollama API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OllamaMessage {
+    role: String,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+/// Tool definition for Ollama
+#[derive(Debug, Clone, Serialize)]
+struct OllamaTool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OllamaToolFunction,
+}
+
+/// Function definition for tool calling
+#[derive(Debug, Clone, Serialize)]
+struct OllamaToolFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+/// Tool call from Ollama response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OllamaToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: OllamaToolCallFunction,
+}
+
+/// Function call details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OllamaToolCallFunction {
+    name: String,
+    arguments: String,
+}
+
+/// Response from Ollama chat API
+#[derive(Debug, Clone, Deserialize)]
+struct OllamaChatResponse {
+    message: OllamaMessage,
+    done: bool,
+    #[serde(default)]
+    done_reason: Option<String>,
+}
+
+// ==================== User Context ====================
+
+/// User context for AI assistant
+#[derive(Debug, Clone)]
+pub struct UserContext {
+    pub user_id: Uuid,
+    pub track_count: i64,
+    pub artist_count: i64,
+    pub album_count: i64,
+    pub playlist_count: i64,
+    pub top_genres: Vec<String>,
+    pub current_track_id: Option<Uuid>,
+    pub current_track_title: Option<String>,
+}
+
+impl From<&UserContext> for ContextSnapshot {
+    fn from(ctx: &UserContext) -> Self {
+        ContextSnapshot {
+            track_count: ctx.track_count,
+            artist_count: ctx.artist_count,
+            album_count: ctx.album_count,
+            playlist_count: ctx.playlist_count,
+            top_genres: ctx.top_genres.clone(),
+            current_track_id: ctx.current_track_id,
+            current_track_title: ctx.current_track_title.clone(),
+        }
+    }
+}
+
+// ==================== Tool Execution Result ====================
+
+/// Result of executing a tool
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolResult {
+    /// The tool call ID this result corresponds to
+    pub tool_call_id: String,
+    /// The result content (JSON string)
+    pub content: String,
+    /// Whether this was an error
+    pub is_error: bool,
+}
+
+/// Action for the frontend to execute
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatAction {
+    /// Action type (play_track, add_to_queue, create_playlist, etc.)
+    pub action_type: String,
+    /// Action data
+    pub data: serde_json::Value,
+}
+
+// ==================== Constants ====================
+
+/// Maximum user message length in characters
+const MAX_MESSAGE_LENGTH: usize = 10_000;
+
+/// Maximum messages to include in AI context
+const MAX_CONTEXT_MESSAGES: i64 = 20;
+
+/// Maximum tool calling iterations to prevent infinite loops
+const MAX_TOOL_ITERATIONS: usize = 5;
+
+/// Total operation timeout multiplier (timeout_secs * this value)
+const TOTAL_TIMEOUT_MULTIPLIER: u64 = 2;
+
+// ==================== Chat Service ====================
+
+/// Service for AI chat functionality
+pub struct ChatService {
+    repository: ChatRepository,
+    http_client: Client,
+    config: OllamaConfig,
+}
+
+impl ChatService {
+    /// Create a new ChatService with configured HTTP client
+    pub fn new(pool: PgPool, config: OllamaConfig) -> Self {
+        let http_client = Client::builder()
+            .pool_max_idle_per_host(5)
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .build()
+            .expect("Failed to build HTTP client");
+
+        Self {
+            repository: ChatRepository::new(pool),
+            http_client,
+            config,
+        }
+    }
+
+    /// Create a new conversation
+    #[instrument(skip(self))]
+    pub async fn create_conversation(
+        &self,
+        user_id: Uuid,
+        title: Option<String>,
+    ) -> ChatResult<ChatConversation> {
+        let input = CreateConversation { user_id, title };
+        Ok(self.repository.create_conversation(input).await?)
+    }
+
+    /// Get a conversation by ID
+    #[instrument(skip(self))]
+    pub async fn get_conversation(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> ChatResult<ChatConversation> {
+        self.repository
+            .find_conversation_by_id(conversation_id, user_id)
+            .await?
+            .ok_or(ChatError::ConversationNotFound(conversation_id))
+    }
+
+    /// List conversations for a user
+    #[instrument(skip(self))]
+    pub async fn list_conversations(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> ChatResult<Vec<ChatConversation>> {
+        Ok(self
+            .repository
+            .find_conversations_by_user(user_id, limit, offset)
+            .await?)
+    }
+
+    /// Delete a conversation (soft delete)
+    #[instrument(skip(self))]
+    pub async fn delete_conversation(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> ChatResult<bool> {
+        Ok(self
+            .repository
+            .delete_conversation(conversation_id, user_id)
+            .await?)
+    }
+
+    /// Get messages for a conversation
+    #[instrument(skip(self))]
+    pub async fn get_messages(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+        limit: i64,
+    ) -> ChatResult<Vec<ChatMessage>> {
+        Ok(self
+            .repository
+            .get_messages(conversation_id, user_id, limit)
+            .await?)
+    }
+
+    /// Send a user message and get AI response
+    ///
+    /// This method:
+    /// 1. Validates the message input
+    /// 2. Creates/validates the conversation
+    /// 3. Saves the user message
+    /// 4. Builds context and sends to Ollama
+    /// 5. Handles tool calling loop if needed
+    /// 6. Saves and returns the assistant response
+    #[instrument(skip(self, context))]
+    pub async fn send_message(
+        &self,
+        conversation_id: Option<Uuid>,
+        user_id: Uuid,
+        message: String,
+        context: &UserContext,
+    ) -> ChatResult<(ChatConversation, ChatMessage, Vec<ChatAction>)> {
+        // Validate message input
+        if message.len() > MAX_MESSAGE_LENGTH {
+            return Err(ChatError::InvalidInput(format!(
+                "Message too long: {} characters (max {})",
+                message.len(),
+                MAX_MESSAGE_LENGTH
+            )));
+        }
+
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Err(ChatError::InvalidInput(
+                "Message cannot be empty".to_string(),
+            ));
+        }
+
+        // Create or get conversation
+        let conversation = match conversation_id {
+            Some(id) => self.get_conversation(id, user_id).await?,
+            None => {
+                // Generate title from first few words of message
+                let title = message
+                    .split_whitespace()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                self.create_conversation(user_id, Some(title)).await?
+            }
+        };
+
+        // Save user message
+        let user_message = self
+            .repository
+            .add_message(CreateChatMessage {
+                conversation_id: conversation.id,
+                user_id,
+                role: ChatRole::User,
+                content: Some(message.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+                context_snapshot: Some(context.into()),
+                model_used: None,
+                token_count: None,
+            })
+            .await?;
+
+        info!(
+            conversation_id = %conversation.id,
+            message_id = %user_message.id,
+            "User message saved"
+        );
+
+        // Get conversation history for context
+        let history = self
+            .repository
+            .get_recent_messages(conversation.id, user_id, MAX_CONTEXT_MESSAGES)
+            .await?;
+
+        // Send to Ollama and handle tool calling loop
+        let (response_content, tool_calls_made, actions) =
+            self.chat_with_ollama(&history, context).await?;
+
+        // Save assistant response
+        let assistant_message = self
+            .repository
+            .add_message(CreateChatMessage {
+                conversation_id: conversation.id,
+                user_id,
+                role: ChatRole::Assistant,
+                content: Some(response_content),
+                tool_calls: if tool_calls_made.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls_made)
+                },
+                tool_call_id: None,
+                context_snapshot: None,
+                model_used: Some(self.config.model.clone()),
+                token_count: None,
+            })
+            .await?;
+
+        info!(
+            conversation_id = %conversation.id,
+            message_id = %assistant_message.id,
+            actions_count = actions.len(),
+            "Assistant response saved"
+        );
+
+        Ok((conversation, assistant_message, actions))
+    }
+
+    /// Chat with Ollama, handling tool calling loop with total operation timeout
+    #[instrument(skip(self, history, context))]
+    async fn chat_with_ollama(
+        &self,
+        history: &[ChatMessage],
+        context: &UserContext,
+    ) -> ChatResult<(String, Vec<ToolCall>, Vec<ChatAction>)> {
+        let total_timeout =
+            std::time::Duration::from_secs(self.config.timeout_secs * TOTAL_TIMEOUT_MULTIPLIER);
+
+        tokio::time::timeout(total_timeout, self.chat_with_ollama_inner(history, context))
+            .await
+            .map_err(|_| ChatError::Timeout)?
+    }
+
+    /// Inner implementation of chat_with_ollama without timeout wrapper
+    async fn chat_with_ollama_inner(
+        &self,
+        history: &[ChatMessage],
+        context: &UserContext,
+    ) -> ChatResult<(String, Vec<ToolCall>, Vec<ChatAction>)> {
+        let system_prompt = self.build_system_prompt(context);
+        let tools = self.get_tools();
+
+        // Convert history to Ollama format
+        let mut messages: Vec<OllamaMessage> = vec![OllamaMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        for msg in history {
+            messages.push(OllamaMessage {
+                role: msg.role.as_str().to_string(),
+                content: msg.content.clone().unwrap_or_default(),
+                tool_calls: msg.tool_calls.as_ref().map(|tcs| {
+                    tcs.iter()
+                        .map(|tc| OllamaToolCall {
+                            id: tc.id.clone(),
+                            call_type: tc.call_type.clone(),
+                            function: OllamaToolCallFunction {
+                                name: tc.function.name.clone(),
+                                arguments: tc.function.arguments.clone(),
+                            },
+                        })
+                        .collect()
+                }),
+                tool_call_id: msg.tool_call_id.clone(),
+            });
+        }
+
+        let mut all_tool_calls = Vec::new();
+        let mut all_actions = Vec::new();
+        let mut iteration = 0;
+
+        // Tool calling loop
+        loop {
+            iteration += 1;
+            if iteration > MAX_TOOL_ITERATIONS {
+                warn!("Max tool calling iterations reached");
+                break;
+            }
+
+            let request = OllamaChatRequest {
+                model: self.config.model.clone(),
+                messages: messages.clone(),
+                tools: Some(tools.clone()),
+                stream: false,
+                options: OllamaOptions {
+                    temperature: self.config.temperature,
+                    num_predict: self.config.max_tokens as i32,
+                },
+            };
+
+            debug!("Sending request to Ollama");
+
+            let response = self
+                .http_client
+                .post(self.config.chat_url())
+                .json(&request)
+                .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                // Log full details internally
+                error!(status = %status, body = %body, "Ollama request failed");
+                // Return sanitized error to caller
+                return Err(ChatError::OllamaResponse(format!(
+                    "AI service unavailable (status {})",
+                    status.as_u16()
+                )));
+            }
+
+            let chat_response: OllamaChatResponse = response.json().await?;
+
+            // Check for tool calls
+            if let Some(ref tool_calls) = chat_response.message.tool_calls {
+                if !tool_calls.is_empty() {
+                    debug!(count = tool_calls.len(), "Processing tool calls");
+
+                    // Add assistant's tool call message
+                    messages.push(OllamaMessage {
+                        role: "assistant".to_string(),
+                        content: chat_response.message.content.clone(),
+                        tool_calls: Some(tool_calls.clone()),
+                        tool_call_id: None,
+                    });
+
+                    // Execute each tool and collect results
+                    for tool_call in tool_calls {
+                        let (result, action) = self.execute_tool(tool_call).await;
+
+                        // Add tool result message
+                        messages.push(OllamaMessage {
+                            role: "tool".to_string(),
+                            content: result.content,
+                            tool_calls: None,
+                            tool_call_id: Some(tool_call.id.clone()),
+                        });
+
+                        // Track for storage
+                        all_tool_calls.push(ToolCall {
+                            id: tool_call.id.clone(),
+                            call_type: tool_call.call_type.clone(),
+                            function: ToolCallFunction {
+                                name: tool_call.function.name.clone(),
+                                arguments: tool_call.function.arguments.clone(),
+                            },
+                        });
+
+                        if let Some(a) = action {
+                            all_actions.push(a);
+                        }
+                    }
+
+                    continue;
+                }
+            }
+
+            // No tool calls - this is the final response
+            return Ok((chat_response.message.content, all_tool_calls, all_actions));
+        }
+
+        // If we hit max iterations, return whatever we have
+        Ok((
+            "I apologize, but I'm having trouble completing this request. Please try again."
+                .to_string(),
+            all_tool_calls,
+            all_actions,
+        ))
+    }
+
+    /// Build the system prompt with user context
+    fn build_system_prompt(&self, context: &UserContext) -> String {
+        let current_track = context
+            .current_track_title
+            .as_ref()
+            .map(|t| format!("Currently playing: {}", t))
+            .unwrap_or_else(|| "Nothing currently playing".to_string());
+
+        let top_genres = if context.top_genres.is_empty() {
+            "No listening history yet".to_string()
+        } else {
+            context.top_genres.join(", ")
+        };
+
+        format!(
+            r#"You are Resonance AI, a friendly and knowledgeable music assistant for a personal music streaming library.
+
+## User's Library Stats
+- Tracks: {}
+- Artists: {}
+- Albums: {}
+- Playlists: {}
+
+## User's Top Genres
+{}
+
+## Current Status
+{}
+
+## Your Capabilities
+You can help users with their music library by:
+1. Searching for tracks, albums, and artists
+2. Playing music and adding to the queue
+3. Creating playlists based on preferences
+4. Getting personalized recommendations
+5. Answering questions about their music collection
+
+## Guidelines
+- Be conversational and helpful
+- When asked to play something, use the search function first if you don't have an exact ID
+- Suggest relevant music based on the user's tastes
+- If you're unsure what the user wants, ask clarifying questions
+- Keep responses concise but informative"#,
+            context.track_count,
+            context.artist_count,
+            context.album_count,
+            context.playlist_count,
+            top_genres,
+            current_track
+        )
+    }
+
+    /// Get tool definitions for function calling
+    fn get_tools(&self) -> Vec<OllamaTool> {
+        vec![
+            OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: "search_library".to_string(),
+                    description: "Search the user's music library for tracks, albums, or artists"
+                        .to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query (song title, artist name, or album)"
+                            },
+                            "search_type": {
+                                "type": "string",
+                                "enum": ["track", "album", "artist"],
+                                "description": "Type of content to search for"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results (default: 5)"
+                            }
+                        },
+                        "required": ["query"]
+                    }),
+                },
+            },
+            OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: "play_track".to_string(),
+                    description: "Play a specific track by its ID".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "track_id": {
+                                "type": "string",
+                                "description": "UUID of the track to play"
+                            }
+                        },
+                        "required": ["track_id"]
+                    }),
+                },
+            },
+            OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: "add_to_queue".to_string(),
+                    description: "Add one or more tracks to the playback queue".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "track_ids": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Array of track UUIDs to add to queue"
+                            }
+                        },
+                        "required": ["track_ids"]
+                    }),
+                },
+            },
+            OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: "create_playlist".to_string(),
+                    description: "Create a new playlist with optional initial tracks".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Name for the new playlist"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Optional description for the playlist"
+                            },
+                            "track_ids": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Optional array of track UUIDs to add"
+                            }
+                        },
+                        "required": ["name"]
+                    }),
+                },
+            },
+            OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: "get_recommendations".to_string(),
+                    description: "Get music recommendations based on mood or similar tracks"
+                        .to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "mood": {
+                                "type": "string",
+                                "description": "Mood/vibe to base recommendations on (e.g., 'energetic', 'chill', 'melancholic')"
+                            },
+                            "similar_to_track_id": {
+                                "type": "string",
+                                "description": "Track ID to find similar tracks to"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of recommendations (default: 5)"
+                            }
+                        }
+                    }),
+                },
+            },
+        ]
+    }
+
+    /// Execute a tool call and return the result
+    #[instrument(skip(self))]
+    async fn execute_tool(&self, tool_call: &OllamaToolCall) -> (ToolResult, Option<ChatAction>) {
+        let function_name = &tool_call.function.name;
+        let arguments = &tool_call.function.arguments;
+
+        debug!(
+            function = %function_name,
+            arguments = %arguments,
+            "Executing tool"
+        );
+
+        let (content, action, is_error) = match function_name.as_str() {
+            "search_library" => {
+                let (c, a) = self.tool_search_library(arguments).await;
+                let err = c.contains("\"error\"");
+                (c, a, err)
+            }
+            "play_track" => {
+                let (c, a) = self.tool_play_track(arguments);
+                let err = c.contains("\"error\"");
+                (c, a, err)
+            }
+            "add_to_queue" => {
+                let (c, a) = self.tool_add_to_queue(arguments);
+                let err = c.contains("\"error\"");
+                (c, a, err)
+            }
+            "create_playlist" => {
+                let (c, a) = self.tool_create_playlist(arguments);
+                let err = c.contains("\"error\"");
+                (c, a, err)
+            }
+            "get_recommendations" => {
+                let (c, a) = self.tool_get_recommendations(arguments).await;
+                let err = c.contains("\"error\"");
+                (c, a, err)
+            }
+            _ => (
+                serde_json::json!({
+                    "error": format!("Unknown function: {}", function_name)
+                })
+                .to_string(),
+                None,
+                true,
+            ),
+        };
+
+        (
+            ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content,
+                is_error,
+            },
+            action,
+        )
+    }
+
+    // ==================== Tool Implementations ====================
+
+    /// Search library tool implementation
+    /// Note: This returns mock data - real implementation will query the database
+    async fn tool_search_library(&self, arguments: &str) -> (String, Option<ChatAction>) {
+        #[derive(Deserialize)]
+        struct Args {
+            query: String,
+            search_type: Option<String>,
+            limit: Option<i32>,
+        }
+
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    None,
+                )
+            }
+        };
+
+        let _limit = args.limit.unwrap_or(5);
+        let _search_type = args.search_type.unwrap_or_else(|| "track".to_string());
+
+        // TODO: Implement actual search using SearchService/Meilisearch
+        // For now, return a placeholder that indicates the search was understood
+        let result = serde_json::json!({
+            "results": [],
+            "query": args.query,
+            "message": "Search functionality will be connected in Phase 4"
+        });
+
+        (result.to_string(), None)
+    }
+
+    /// Play track tool implementation
+    fn tool_play_track(&self, arguments: &str) -> (String, Option<ChatAction>) {
+        #[derive(Deserialize)]
+        struct Args {
+            track_id: String,
+        }
+
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    None,
+                )
+            }
+        };
+
+        // Validate UUID format
+        let track_uuid = match Uuid::parse_str(&args.track_id) {
+            Ok(uuid) => uuid,
+            Err(_) => return (
+                serde_json::json!({ "error": "Invalid track_id format - must be a valid UUID" })
+                    .to_string(),
+                None,
+            ),
+        };
+
+        // Create action for frontend with validated UUID
+        let action = ChatAction {
+            action_type: "play_track".to_string(),
+            data: serde_json::json!({ "track_id": track_uuid.to_string() }),
+        };
+
+        let result = serde_json::json!({
+            "success": true,
+            "action": "play_track",
+            "track_id": track_uuid.to_string()
+        });
+
+        (result.to_string(), Some(action))
+    }
+
+    /// Add to queue tool implementation
+    fn tool_add_to_queue(&self, arguments: &str) -> (String, Option<ChatAction>) {
+        #[derive(Deserialize)]
+        struct Args {
+            track_ids: Vec<String>,
+        }
+
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    None,
+                )
+            }
+        };
+
+        // Validate all UUIDs
+        let mut validated_ids = Vec::with_capacity(args.track_ids.len());
+        for (i, id) in args.track_ids.iter().enumerate() {
+            match Uuid::parse_str(id) {
+                Ok(uuid) => validated_ids.push(uuid.to_string()),
+                Err(_) => return (
+                    serde_json::json!({
+                        "error": format!("Invalid track_id at index {} - must be a valid UUID", i)
+                    })
+                    .to_string(),
+                    None,
+                ),
+            }
+        }
+
+        // Create action for frontend with validated UUIDs
+        let action = ChatAction {
+            action_type: "add_to_queue".to_string(),
+            data: serde_json::json!({ "track_ids": validated_ids }),
+        };
+
+        let result = serde_json::json!({
+            "success": true,
+            "action": "add_to_queue",
+            "count": validated_ids.len()
+        });
+
+        (result.to_string(), Some(action))
+    }
+
+    /// Create playlist tool implementation
+    fn tool_create_playlist(&self, arguments: &str) -> (String, Option<ChatAction>) {
+        #[derive(Deserialize)]
+        struct Args {
+            name: String,
+            description: Option<String>,
+            track_ids: Option<Vec<String>>,
+        }
+
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    None,
+                )
+            }
+        };
+
+        // Validate track IDs if provided
+        let validated_track_ids = if let Some(track_ids) = args.track_ids {
+            let mut validated = Vec::with_capacity(track_ids.len());
+            for (i, id) in track_ids.iter().enumerate() {
+                match Uuid::parse_str(id) {
+                    Ok(uuid) => validated.push(uuid.to_string()),
+                    Err(_) => {
+                        return (
+                            serde_json::json!({
+                                "error": format!("Invalid track_id at index {} - must be a valid UUID", i)
+                            })
+                            .to_string(),
+                            None,
+                        )
+                    }
+                }
+            }
+            validated
+        } else {
+            Vec::new()
+        };
+
+        // Create action for frontend with validated UUIDs
+        let action = ChatAction {
+            action_type: "create_playlist".to_string(),
+            data: serde_json::json!({
+                "name": args.name,
+                "description": args.description,
+                "track_ids": validated_track_ids
+            }),
+        };
+
+        let result = serde_json::json!({
+            "success": true,
+            "action": "create_playlist",
+            "name": args.name
+        });
+
+        (result.to_string(), Some(action))
+    }
+
+    /// Get recommendations tool implementation
+    async fn tool_get_recommendations(&self, arguments: &str) -> (String, Option<ChatAction>) {
+        #[derive(Deserialize)]
+        struct Args {
+            mood: Option<String>,
+            similar_to_track_id: Option<String>,
+            limit: Option<i32>,
+        }
+
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    serde_json::json!({ "error": format!("Invalid arguments: {}", e) }).to_string(),
+                    None,
+                )
+            }
+        };
+
+        // Validate similar_to_track_id if provided
+        let validated_similar_to = if let Some(ref track_id) = args.similar_to_track_id {
+            match Uuid::parse_str(track_id) {
+                Ok(uuid) => Some(uuid.to_string()),
+                Err(_) => {
+                    return (
+                        serde_json::json!({
+                            "error": "Invalid similar_to_track_id - must be a valid UUID"
+                        })
+                        .to_string(),
+                        None,
+                    )
+                }
+            }
+        } else {
+            None
+        };
+
+        let _limit = args.limit.unwrap_or(5);
+
+        // TODO: Implement actual recommendations using SimilarityService
+        // For now, return a placeholder
+        let result = serde_json::json!({
+            "recommendations": [],
+            "mood": args.mood,
+            "similar_to": validated_similar_to,
+            "message": "Recommendation functionality will be connected in Phase 4"
+        });
+
+        (result.to_string(), None)
+    }
+}
+
+// ==================== User Context Builder ====================
+
+/// Builder for creating user context from database
+pub struct UserContextBuilder {
+    pool: PgPool,
+}
+
+impl UserContextBuilder {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Build user context by querying the database
+    #[instrument(skip(self))]
+    pub async fn build(&self, user_id: Uuid) -> ChatResult<UserContext> {
+        // Get library stats
+        let stats: LibraryStats = sqlx::query_as(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM tracks) as track_count,
+                (SELECT COUNT(*) FROM artists) as artist_count,
+                (SELECT COUNT(*) FROM albums) as album_count,
+                (SELECT COUNT(*) FROM playlists WHERE user_id = $1 AND deleted_at IS NULL) as playlist_count
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Get top genres from user's listening history
+        // For now, use a simplified query - can be enhanced later
+        let top_genres: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT DISTINCT unnest(t.genres)
+            FROM tracks t
+            INNER JOIN queue_history qh ON qh.track_id = t.id AND qh.user_id = $1
+            WHERE t.genres IS NOT NULL
+            LIMIT 5
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(user_id = %user_id, error = %e, "Failed to fetch top genres");
+            Vec::new()
+        });
+
+        // Get current track from device presence
+        let current_track: Option<CurrentTrack> = sqlx::query_as(
+            r#"
+            SELECT dp.current_track_id, t.title
+            FROM device_presence dp
+            LEFT JOIN tracks t ON t.id = dp.current_track_id
+            WHERE dp.user_id = $1 AND dp.is_online = true
+            ORDER BY dp.last_heartbeat DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(UserContext {
+            user_id,
+            track_count: stats.track_count.unwrap_or(0),
+            artist_count: stats.artist_count.unwrap_or(0),
+            album_count: stats.album_count.unwrap_or(0),
+            playlist_count: stats.playlist_count.unwrap_or(0),
+            top_genres,
+            current_track_id: current_track.as_ref().and_then(|ct| ct.current_track_id),
+            current_track_title: current_track.and_then(|ct| ct.title),
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct LibraryStats {
+    track_count: Option<i64>,
+    artist_count: Option<i64>,
+    album_count: Option<i64>,
+    playlist_count: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CurrentTrack {
+    current_track_id: Option<Uuid>,
+    title: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a test ChatService with a lazy pool
+    /// Note: This pool is never actually connected, used only for unit testing
+    async fn test_service() -> ChatService {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test").unwrap();
+        ChatService {
+            repository: ChatRepository::new(pool),
+            http_client: Client::new(),
+            config: OllamaConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_system_prompt_generation() {
+        let context = UserContext {
+            user_id: Uuid::new_v4(),
+            track_count: 1500,
+            artist_count: 250,
+            album_count: 150,
+            playlist_count: 10,
+            top_genres: vec![
+                "rock".to_string(),
+                "jazz".to_string(),
+                "electronic".to_string(),
+            ],
+            current_track_id: Some(Uuid::new_v4()),
+            current_track_title: Some("Bohemian Rhapsody".to_string()),
+        };
+
+        let service = test_service().await;
+        let prompt = service.build_system_prompt(&context);
+
+        assert!(prompt.contains("Tracks: 1500"));
+        assert!(prompt.contains("rock, jazz, electronic"));
+        assert!(prompt.contains("Bohemian Rhapsody"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_definitions() {
+        let service = test_service().await;
+        let tools = service.get_tools();
+
+        assert_eq!(tools.len(), 5);
+
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
+        assert!(tool_names.contains(&"search_library"));
+        assert!(tool_names.contains(&"play_track"));
+        assert!(tool_names.contains(&"add_to_queue"));
+        assert!(tool_names.contains(&"create_playlist"));
+        assert!(tool_names.contains(&"get_recommendations"));
+    }
+
+    #[tokio::test]
+    async fn test_play_track_action() {
+        let service = test_service().await;
+
+        let args = r#"{"track_id": "123e4567-e89b-12d3-a456-426614174000"}"#;
+        let (result, action) = service.tool_play_track(args);
+
+        assert!(result.contains("success"));
+        assert!(action.is_some());
+
+        let action = action.unwrap();
+        assert_eq!(action.action_type, "play_track");
+    }
+
+    #[test]
+    fn test_context_snapshot_from_user_context() {
+        let context = UserContext {
+            user_id: Uuid::new_v4(),
+            track_count: 100,
+            artist_count: 50,
+            album_count: 25,
+            playlist_count: 5,
+            top_genres: vec!["pop".to_string()],
+            current_track_id: None,
+            current_track_title: None,
+        };
+
+        let snapshot: ContextSnapshot = (&context).into();
+
+        assert_eq!(snapshot.track_count, 100);
+        assert_eq!(snapshot.artist_count, 50);
+        assert_eq!(snapshot.top_genres, vec!["pop".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_play_track_invalid_uuid() {
+        let service = test_service().await;
+
+        let args = r#"{"track_id": "not-a-valid-uuid"}"#;
+        let (result, action) = service.tool_play_track(args);
+
+        assert!(result.contains("error"));
+        assert!(result.contains("Invalid track_id"));
+        assert!(action.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_add_to_queue_invalid_uuid() {
+        let service = test_service().await;
+
+        let args = r#"{"track_ids": ["123e4567-e89b-12d3-a456-426614174000", "invalid"]}"#;
+        let (result, action) = service.tool_add_to_queue(args);
+
+        assert!(result.contains("error"));
+        assert!(result.contains("index 1"));
+        assert!(action.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_add_to_queue_valid_uuids() {
+        let service = test_service().await;
+
+        let args = r#"{"track_ids": ["123e4567-e89b-12d3-a456-426614174000", "223e4567-e89b-12d3-a456-426614174000"]}"#;
+        let (result, action) = service.tool_add_to_queue(args);
+
+        assert!(result.contains("success"));
+        assert!(action.is_some());
+        assert_eq!(action.unwrap().action_type, "add_to_queue");
+    }
+
+    #[test]
+    fn test_chat_error_to_api_error_conversion() {
+        use crate::error::ApiError;
+
+        let chat_err = ChatError::ConversationNotFound(Uuid::new_v4());
+        let api_err: ApiError = chat_err.into();
+        assert!(matches!(api_err, ApiError::NotFound { .. }));
+
+        let chat_err = ChatError::InvalidInput("test".to_string());
+        let api_err: ApiError = chat_err.into();
+        assert!(matches!(api_err, ApiError::ValidationError(_)));
+
+        let chat_err = ChatError::Timeout;
+        let api_err: ApiError = chat_err.into();
+        assert!(matches!(api_err, ApiError::AiService(_)));
+    }
+}

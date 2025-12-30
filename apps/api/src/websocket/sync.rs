@@ -73,6 +73,9 @@ impl SyncHandler {
     }
 
     /// Handle an incoming client message
+    ///
+    /// Note: ChatSend messages are handled separately by the ChatHandler
+    /// and should be intercepted before reaching this method.
     pub async fn handle_message(&self, message: ClientMessage) -> Result<(), SyncError> {
         // Update last activity timestamp for this device
         // If the device is not found, the connection is stale - reject the message
@@ -95,6 +98,16 @@ impl SyncHandler {
             ClientMessage::RequestDeviceList => self.handle_device_list_request().await,
             ClientMessage::Heartbeat => self.handle_heartbeat().await,
             ClientMessage::SettingsUpdate(settings) => self.handle_settings_update(settings).await,
+            // ChatSend is handled by ChatHandler, not SyncHandler
+            // If it reaches here, something is misconfigured
+            ClientMessage::ChatSend(_) => {
+                tracing::warn!(
+                    user_id = %self.user_id,
+                    device_id = %self.device_id,
+                    "ChatSend message reached SyncHandler - should be handled by ChatHandler"
+                );
+                Ok(())
+            }
         }
     }
 
