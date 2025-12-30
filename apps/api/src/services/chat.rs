@@ -515,11 +515,7 @@ impl ChatService {
                     while cut > 0 && !body.is_char_boundary(cut) {
                         cut -= 1;
                     }
-                    format!(
-                        "{}...[truncated {} bytes]",
-                        &body[..cut],
-                        body.len() - cut
-                    )
+                    format!("{}...[truncated {} bytes]", &body[..cut], body.len() - cut)
                 } else {
                     body
                 };
