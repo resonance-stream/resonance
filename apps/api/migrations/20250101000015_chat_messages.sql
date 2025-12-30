@@ -103,7 +103,7 @@ BEGIN
     WHERE id = NEW.conversation_id;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 CREATE TRIGGER chat_messages_update_conversation_timestamp
     AFTER INSERT ON chat_messages

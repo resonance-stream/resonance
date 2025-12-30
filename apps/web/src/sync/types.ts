@@ -219,6 +219,8 @@ export interface ChatCompletePayload {
   actions: ChatAction[];
   /** Tool calls that were made */
   tool_calls?: ChatToolCall[];
+  /** Server timestamp when message was created (ISO 8601) */
+  created_at: string;
 }
 
 /** Chat error */

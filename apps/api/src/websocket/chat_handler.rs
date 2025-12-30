@@ -184,6 +184,7 @@ impl ChatHandler {
                     message_id: assistant_message.id,
                     full_response: assistant_message.content.unwrap_or_default(),
                     actions: ws_actions,
+                    created_at: assistant_message.created_at,
                 });
 
                 self.send_to_self(complete_msg);
@@ -271,6 +272,19 @@ fn convert_action(action: ServiceChatAction) -> Option<ChatAction> {
                 .unwrap_or("track")
                 .to_string();
             Some(ChatAction::ShowSearch { query, result_type })
+        }
+        "get_recommendations" => {
+            // Extract mood or similar_to context for recommendations
+            let mood = action
+                .data
+                .get("mood")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(ChatAction::ShowSearch {
+                query: mood,
+                result_type: "recommendation".to_string(),
+            })
         }
         _ => {
             warn!(

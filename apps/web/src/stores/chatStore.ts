@@ -266,12 +266,13 @@ export const useChatStore = create<ChatState>()(
         }
 
         // Create the final message from the completed response
+        // Use server-provided timestamp for accurate message ordering
         const assistantMessage: ChatMessage = {
           id: payload.message_id,
           conversationId: payload.conversation_id,
           role: 'assistant',
           content: payload.full_response,
-          createdAt: new Date().toISOString(),
+          createdAt: payload.created_at,
           isStreaming: false,
         };
 

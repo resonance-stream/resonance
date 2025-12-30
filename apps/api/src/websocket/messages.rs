@@ -399,6 +399,9 @@ pub struct ChatCompletePayload {
 
     /// Actions that can be executed
     pub actions: Vec<ChatAction>,
+
+    /// Server timestamp when message was created (ISO 8601)
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Payload for ChatError server message
@@ -653,12 +656,14 @@ mod tests {
             actions: vec![ChatAction::PlayTrack {
                 track_id: Uuid::nil(),
             }],
+            created_at: chrono::Utc::now(),
         });
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("ChatComplete"));
         assert!(json.contains("Complete response"));
         assert!(json.contains("PlayTrack"));
+        assert!(json.contains("created_at"));
 
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         assert!(matches!(parsed, ServerMessage::ChatComplete(_)));

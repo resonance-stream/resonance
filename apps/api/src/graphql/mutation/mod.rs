@@ -16,4 +16,9 @@ use async_graphql::MergedObject;
 
 /// Root mutation type combining all mutation domains
 #[derive(MergedObject, Default)]
-pub struct Mutation(AuthMutation, PlaylistMutation, IntegrationsMutation, ChatMutation);
+pub struct Mutation(
+    AuthMutation,
+    PlaylistMutation,
+    IntegrationsMutation,
+    ChatMutation,
+);

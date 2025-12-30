@@ -7,8 +7,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::models::chat::{
-    ChatConversation as DbChatConversation, ChatMessage as DbChatMessage,
-    ChatRole as DbChatRole,
+    ChatConversation as DbChatConversation, ChatMessage as DbChatMessage, ChatRole as DbChatRole,
 };
 
 // =============================================================================
@@ -51,7 +50,9 @@ pub struct ChatConversation {
 impl ChatConversation {
     /// Create a new GraphQL ChatConversation from a database model
     pub fn new(conversation: DbChatConversation) -> Self {
-        Self { inner: conversation }
+        Self {
+            inner: conversation,
+        }
     }
 }
 

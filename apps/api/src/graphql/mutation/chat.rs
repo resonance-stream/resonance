@@ -69,7 +69,9 @@ impl ChatMutation {
         let repo = ctx.data::<ChatRepository>()?;
 
         // Delete the conversation (ownership checked by repository, messages cascade)
-        let deleted = repo.delete_conversation(conversation_id, claims.sub).await?;
+        let deleted = repo
+            .delete_conversation(conversation_id, claims.sub)
+            .await?;
 
         if !deleted {
             return Err(async_graphql::Error::new("Conversation not found"));

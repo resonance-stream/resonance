@@ -266,8 +266,17 @@ impl ChatRepository {
                 sqlx::Error::Protocol(format!("context_snapshot serialization error: {}", e))
             })?;
 
-        // Use atomic INSERT with subquery to prevent race conditions on sequence_number
-        sqlx::query_as::<_, ChatMessage>(
+        // Use a transaction with row-level lock to prevent race conditions on sequence_number
+        let mut tx = self.pool.begin().await?;
+
+        // Lock the conversation row to prevent concurrent message insertions
+        sqlx::query("SELECT id FROM chat_conversations WHERE id = $1 FOR UPDATE")
+            .bind(input.conversation_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Now safe to compute and insert with sequence number
+        let message = sqlx::query_as::<_, ChatMessage>(
             r#"
             INSERT INTO chat_messages (
                 conversation_id, user_id, role, content, sequence_number,
@@ -292,8 +301,11 @@ impl ChatRepository {
         .bind(context_json)
         .bind(input.model_used)
         .bind(input.token_count)
-        .fetch_one(&self.pool)
-        .await
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(message)
     }
 
     /// Add multiple tool result messages atomically
@@ -318,6 +330,15 @@ impl ChatRepository {
 
         let mut messages = Vec::with_capacity(results.len());
         let mut tx = self.pool.begin().await?;
+
+        // Lock the conversation row to prevent concurrent message insertions
+        // from causing sequence number race conditions
+        if let Some(first) = results.first() {
+            sqlx::query("SELECT id FROM chat_conversations WHERE id = $1 FOR UPDATE")
+                .bind(first.conversation_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         for input in results {
             let tool_calls_json = input

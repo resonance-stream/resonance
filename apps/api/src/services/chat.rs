@@ -500,7 +500,10 @@ impl ChatService {
 
             if !response.status().is_success() {
                 let status = response.status();
-                let body = response.text().await.unwrap_or_default();
+                let body = match response.text().await {
+                    Ok(text) => text,
+                    Err(e) => format!("Failed to read error body: {}", e),
+                };
                 // Log full details internally
                 error!(status = %status, body = %body, "Ollama request failed");
                 // Return sanitized error to caller
@@ -752,30 +755,37 @@ You can help users with their music library by:
             "Executing tool"
         );
 
+        // Helper to detect errors via JSON parsing instead of substring search
+        let has_json_error = |content: &str| -> bool {
+            serde_json::from_str::<serde_json::Value>(content)
+                .map(|v| v.get("error").is_some())
+                .unwrap_or(true) // Treat parse failures as errors
+        };
+
         let (content, action, is_error) = match function_name.as_str() {
             "search_library" => {
                 let (c, a) = self.tool_search_library(arguments).await;
-                let err = c.contains("\"error\"");
+                let err = has_json_error(&c);
                 (c, a, err)
             }
             "play_track" => {
                 let (c, a) = self.tool_play_track(arguments);
-                let err = c.contains("\"error\"");
+                let err = has_json_error(&c);
                 (c, a, err)
             }
             "add_to_queue" => {
                 let (c, a) = self.tool_add_to_queue(arguments);
-                let err = c.contains("\"error\"");
+                let err = has_json_error(&c);
                 (c, a, err)
             }
             "create_playlist" => {
                 let (c, a) = self.tool_create_playlist(arguments);
-                let err = c.contains("\"error\"");
+                let err = has_json_error(&c);
                 (c, a, err)
             }
             "get_recommendations" => {
                 let (c, a) = self.tool_get_recommendations(arguments).await;
-                let err = c.contains("\"error\"");
+                let err = has_json_error(&c);
                 (c, a, err)
             }
             _ => (
@@ -1050,13 +1060,19 @@ impl UserContextBuilder {
     /// Build user context by querying the database
     #[instrument(skip(self))]
     pub async fn build(&self, user_id: Uuid) -> ChatResult<UserContext> {
-        // Get library stats
+        // Get library stats scoped to user's listening history
         let stats: LibraryStats = sqlx::query_as(
             r#"
+            WITH user_tracks AS (
+                SELECT DISTINCT t.id, t.artist_id, t.album_id
+                FROM tracks t
+                JOIN queue_history qh ON t.id = qh.track_id
+                WHERE qh.user_id = $1
+            )
             SELECT
-                (SELECT COUNT(*) FROM tracks) as track_count,
-                (SELECT COUNT(*) FROM artists) as artist_count,
-                (SELECT COUNT(*) FROM albums) as album_count,
+                (SELECT COUNT(*) FROM user_tracks) as track_count,
+                (SELECT COUNT(DISTINCT artist_id) FROM user_tracks) as artist_count,
+                (SELECT COUNT(DISTINCT album_id) FROM user_tracks) as album_count,
                 (SELECT COUNT(*) FROM playlists WHERE user_id = $1 AND deleted_at IS NULL) as playlist_count
             "#,
         )

@@ -18,4 +18,10 @@ use async_graphql::MergedObject;
 
 /// Root query type combining all query domains
 #[derive(MergedObject, Default)]
-pub struct Query(UserQuery, LibraryQuery, PlaylistQuery, SearchQuery, ChatQuery);
+pub struct Query(
+    UserQuery,
+    LibraryQuery,
+    PlaylistQuery,
+    SearchQuery,
+    ChatQuery,
+);

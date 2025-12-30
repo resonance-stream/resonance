@@ -52,7 +52,10 @@ impl ChatQuery {
             )
             .await?;
 
-        Ok(conversations.into_iter().map(ChatConversation::from).collect())
+        Ok(conversations
+            .into_iter()
+            .map(ChatConversation::from)
+            .collect())
     }
 
     /// Get a specific chat conversation with its messages
@@ -83,7 +86,10 @@ impl ChatQuery {
         let repo = ctx.data::<ChatRepository>()?;
 
         // Find the conversation (ownership checked by repository)
-        let conversation = match repo.find_conversation_by_id(conversation_id, claims.sub).await? {
+        let conversation = match repo
+            .find_conversation_by_id(conversation_id, claims.sub)
+            .await?
+        {
             Some(c) => c,
             None => return Ok(None),
         };
