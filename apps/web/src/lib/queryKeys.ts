@@ -82,6 +82,26 @@ export const libraryKeys = {
   },
 } as const
 
+/**
+ * Query key factory for integration queries
+ *
+ * Provides cache keys for external service integrations:
+ * - ListenBrainz scrobbling
+ * - Discord Rich Presence
+ */
+export const integrationKeys = {
+  /** Root key for all integration queries */
+  all: ['integrations'] as const,
+
+  /** User's integration settings */
+  settings: () => [...integrationKeys.all, 'settings'] as const,
+} as const
+
+/** Type for any integration query key */
+export type IntegrationQueryKey = ReturnType<
+  typeof integrationKeys.settings
+>
+
 /** Type for any library query key */
 export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.artists.all

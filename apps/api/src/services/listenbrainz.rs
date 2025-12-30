@@ -1,0 +1,453 @@
+//! ListenBrainz service for scrobbling
+//!
+//! Submits listening history to ListenBrainz when users play tracks.
+//! Respects the 50% / 4-minute scrobble rule and user preferences.
+
+// Service will be wired to GraphQL in Phase 2: Integrations mutations
+#![allow(dead_code)]
+
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use reqwest::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use tracing::{info, instrument, warn};
+use uuid::Uuid;
+
+use crate::error::{ApiError, ApiResult};
+use crate::models::user::UserPreferences;
+use crate::repositories::UserRepository;
+
+/// ListenBrainz API base URL
+const LISTENBRAINZ_API_URL: &str = "https://api.listenbrainz.org";
+
+/// Minimum track duration in seconds for scrobbling
+const MIN_TRACK_DURATION_SECS: i32 = 30;
+
+/// Maximum play duration threshold in seconds (4 minutes)
+const MAX_SCROBBLE_THRESHOLD_SECS: i32 = 240;
+
+/// HTTP request timeout for ListenBrainz API calls.
+/// ListenBrainz recommends keeping requests under 30s; we use 10s for snappy UX.
+const HTTP_TIMEOUT_SECS: u64 = 10;
+
+/// Maximum number of retry attempts for transient failures
+const MAX_RETRIES: u32 = 3;
+
+/// Base delay between retries in milliseconds (doubles each retry)
+const RETRY_BASE_DELAY_MS: u64 = 500;
+
+/// ListenBrainz service for submitting scrobbles
+#[derive(Clone)]
+pub struct ListenBrainzService {
+    client: Client,
+    user_repo: UserRepository,
+}
+
+/// Track metadata for scrobbling
+#[derive(Debug, Clone)]
+pub struct ScrobbleTrack {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration_secs: i32,
+    pub musicbrainz_recording_id: Option<String>,
+    pub musicbrainz_release_id: Option<String>,
+    pub musicbrainz_artist_id: Option<String>,
+}
+
+/// Request payload for ListenBrainz API
+#[derive(Debug, Serialize)]
+struct SubmitListensPayload {
+    listen_type: &'static str,
+    payload: Vec<Listen>,
+}
+
+/// Individual listen entry
+#[derive(Debug, Serialize)]
+struct Listen {
+    listened_at: i64,
+    track_metadata: TrackMetadata,
+}
+
+/// Track metadata for ListenBrainz
+#[derive(Debug, Serialize)]
+struct TrackMetadata {
+    track_name: String,
+    artist_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_info: Option<AdditionalInfo>,
+}
+
+/// Additional MusicBrainz metadata
+#[derive(Debug, Serialize)]
+struct AdditionalInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recording_mbid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_mbid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist_mbids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<i64>,
+}
+
+/// Response from ListenBrainz API for token validation
+#[derive(Debug, Deserialize)]
+struct ValidateTokenResponse {
+    valid: bool,
+    #[serde(default)]
+    user_name: Option<String>,
+}
+
+/// Error response from ListenBrainz API
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+impl ListenBrainzService {
+    /// Create a new ListenBrainz service
+    ///
+    /// # Errors
+    /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    pub fn new(db: PgPool) -> ApiResult<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .user_agent("Resonance/1.0")
+            .build()
+            .map_err(|e| ApiError::Configuration(format!("HTTP client creation failed: {}", e)))?;
+
+        let user_repo = UserRepository::new(db);
+        Ok(Self { client, user_repo })
+    }
+
+    /// Create a new ListenBrainz service with an existing UserRepository
+    ///
+    /// # Errors
+    /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    pub fn with_repo(user_repo: UserRepository) -> ApiResult<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .user_agent("Resonance/1.0")
+            .build()
+            .map_err(|e| ApiError::Configuration(format!("HTTP client creation failed: {}", e)))?;
+
+        Ok(Self { client, user_repo })
+    }
+
+    /// Validate a ListenBrainz user token
+    ///
+    /// Returns the username if the token is valid.
+    ///
+    /// # Errors
+    /// Returns `ApiError::ListenBrainz` if the HTTP request fails after retries.
+    #[instrument(skip(self, token))]
+    pub async fn validate_token(&self, token: &str) -> ApiResult<Option<String>> {
+        let token_header = format!("Token {}", token);
+        let response = self
+            .execute_with_retry(|| {
+                self.client
+                    .get(format!("{}/1/validate-token", LISTENBRAINZ_API_URL))
+                    .header("Authorization", &token_header)
+                    .send()
+            })
+            .await
+            .map_err(|e| ApiError::ListenBrainz(format!("Failed to validate token: {}", e)))?;
+
+        if response.status().is_success() {
+            let result: ValidateTokenResponse = response.json().await.map_err(|e| {
+                ApiError::ListenBrainz(format!("Failed to parse validation response: {}", e))
+            })?;
+
+            if result.valid {
+                Ok(result.user_name)
+            } else {
+                Ok(None)
+            }
+        } else if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            // Token is invalid (auth failure)
+            Ok(None)
+        } else {
+            // Service error (outage, rate limit, etc.) - report as error
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            // Truncate body to avoid leaking large upstream responses
+            let truncated_body: String = body.chars().take(200).collect();
+            Err(ApiError::ListenBrainz(format!(
+                "Token validation failed with status {}: {}",
+                status, truncated_body
+            )))
+        }
+    }
+
+    /// Submit a scrobble for a user
+    ///
+    /// Validates that:
+    /// 1. The track is at least 30 seconds long
+    /// 2. The user has played 50% of the track OR 4 minutes (whichever comes first)
+    /// 3. The user has scrobbling enabled and a valid token
+    #[instrument(skip(self, track), fields(track_title = %track.title, user_id = %user_id))]
+    pub async fn submit_scrobble(
+        &self,
+        user_id: Uuid,
+        track: &ScrobbleTrack,
+        played_at: DateTime<Utc>,
+        duration_played_secs: i32,
+    ) -> ApiResult<bool> {
+        // Check minimum track duration
+        if track.duration_secs < MIN_TRACK_DURATION_SECS {
+            info!(
+                duration = track.duration_secs,
+                "Track too short for scrobbling"
+            );
+            return Ok(false);
+        }
+
+        // Calculate scrobble threshold: 50% of track or 4 minutes, whichever is smaller
+        let threshold_secs = std::cmp::min(track.duration_secs / 2, MAX_SCROBBLE_THRESHOLD_SECS);
+
+        if duration_played_secs < threshold_secs {
+            info!(
+                played = duration_played_secs,
+                threshold = threshold_secs,
+                "Playback duration below scrobble threshold"
+            );
+            return Ok(false);
+        }
+
+        // Get user token and preferences
+        let (token, preferences) = self.get_user_scrobble_info(user_id).await?;
+
+        // Check if scrobbling is enabled
+        if !preferences.listenbrainz_scrobble {
+            info!("ListenBrainz scrobbling disabled for user");
+            return Ok(false);
+        }
+
+        // Check for private session
+        if preferences.private_session {
+            info!("User in private session, skipping scrobble");
+            return Ok(false);
+        }
+
+        let token = match token {
+            Some(t) => t,
+            None => {
+                warn!("No ListenBrainz token configured for user");
+                return Ok(false);
+            }
+        };
+
+        // Build and submit the listen
+        self.submit_listen(&token, track, played_at).await
+    }
+
+    /// Submit a listen to ListenBrainz API
+    async fn submit_listen(
+        &self,
+        token: &str,
+        track: &ScrobbleTrack,
+        played_at: DateTime<Utc>,
+    ) -> ApiResult<bool> {
+        // Simplified: always include additional_info, skip_serializing_if handles None fields
+        let additional_info = Some(AdditionalInfo {
+            recording_mbid: track.musicbrainz_recording_id.clone(),
+            release_mbid: track.musicbrainz_release_id.clone(),
+            artist_mbids: track.musicbrainz_artist_id.clone().map(|id| vec![id]),
+            duration_ms: Some(i64::from(track.duration_secs) * 1000),
+        });
+
+        let payload = SubmitListensPayload {
+            listen_type: "single",
+            payload: vec![Listen {
+                listened_at: played_at.timestamp(),
+                track_metadata: TrackMetadata {
+                    track_name: track.title.clone(),
+                    artist_name: track.artist.clone(),
+                    release_name: track.album.clone(),
+                    additional_info,
+                },
+            }],
+        };
+
+        let token_header = format!("Token {}", token);
+        let response = self
+            .execute_with_retry(|| {
+                self.client
+                    .post(format!("{}/1/submit-listens", LISTENBRAINZ_API_URL))
+                    .header("Authorization", &token_header)
+                    .header("Content-Type", "application/json")
+                    .json(&payload)
+                    .send()
+            })
+            .await
+            .map_err(|e| ApiError::ListenBrainz(format!("Failed to submit listen: {}", e)))?;
+
+        let status = response.status();
+
+        if status.is_success() {
+            info!(
+                track = %track.title,
+                artist = %track.artist,
+                "Successfully scrobbled to ListenBrainz"
+            );
+            Ok(true)
+        } else if status == StatusCode::TOO_MANY_REQUESTS {
+            // Handle rate limiting gracefully
+            if let Some(retry_after) = response.headers().get("Retry-After") {
+                warn!(
+                    retry_after = ?retry_after,
+                    "ListenBrainz rate limited, scrobble queued for later"
+                );
+            } else {
+                warn!("ListenBrainz rate limited");
+            }
+            // Return false but don't error - scrobble was not submitted
+            Ok(false)
+        } else {
+            let error_msg = response
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "Unknown error".to_string());
+
+            warn!(
+                status = %status,
+                error = %error_msg,
+                "Failed to submit listen to ListenBrainz"
+            );
+
+            // Don't fail the whole operation, just return false
+            Ok(false)
+        }
+    }
+
+    /// Get user's ListenBrainz token and preferences
+    async fn get_user_scrobble_info(
+        &self,
+        user_id: Uuid,
+    ) -> ApiResult<(Option<String>, UserPreferences)> {
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("user", user_id.to_string()))?;
+
+        Ok((user.listenbrainz_token, user.preferences))
+    }
+
+    /// Check if a user has ListenBrainz configured
+    pub async fn is_configured(&self, user_id: Uuid) -> ApiResult<bool> {
+        self.user_repo
+            .has_listenbrainz_token(user_id)
+            .await
+            .map_err(ApiError::from)
+    }
+
+    /// Execute an HTTP request with retry logic for transient failures
+    async fn execute_with_retry<F, Fut, T>(&self, operation: F) -> Result<T, reqwest::Error>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
+    {
+        let mut last_error = None;
+
+        for attempt in 0..MAX_RETRIES {
+            match operation().await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Only retry on connection/timeout errors, not HTTP errors
+                    if e.is_connect() || e.is_timeout() {
+                        let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << attempt));
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            delay_ms = delay.as_millis(),
+                            error = %e,
+                            "Retrying ListenBrainz API request"
+                        );
+                        tokio::time::sleep(delay).await;
+                        last_error = Some(e);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(last_error.expect("Should have at least one error after retries"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scrobble_threshold_calculation() {
+        // For a 3-minute track (180s), threshold should be 90s (50%)
+        let short_track_duration = 180;
+        let threshold = std::cmp::min(short_track_duration / 2, MAX_SCROBBLE_THRESHOLD_SECS);
+        assert_eq!(threshold, 90);
+
+        // For a 10-minute track (600s), threshold should be 240s (4 minutes cap)
+        let long_track_duration = 600;
+        let threshold = std::cmp::min(long_track_duration / 2, MAX_SCROBBLE_THRESHOLD_SECS);
+        assert_eq!(threshold, 240);
+    }
+
+    #[test]
+    fn test_min_track_duration() {
+        assert_eq!(MIN_TRACK_DURATION_SECS, 30);
+    }
+
+    #[test]
+    fn test_submit_listens_payload_serialization() {
+        let payload = SubmitListensPayload {
+            listen_type: "single",
+            payload: vec![Listen {
+                listened_at: 1234567890,
+                track_metadata: TrackMetadata {
+                    track_name: "Test Track".to_string(),
+                    artist_name: "Test Artist".to_string(),
+                    release_name: Some("Test Album".to_string()),
+                    additional_info: Some(AdditionalInfo {
+                        recording_mbid: Some("abc-123".to_string()),
+                        release_mbid: None,
+                        artist_mbids: None,
+                        duration_ms: Some(180000),
+                    }),
+                },
+            }],
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("Test Track"));
+        assert!(json.contains("Test Artist"));
+        assert!(json.contains("Test Album"));
+        assert!(json.contains("abc-123"));
+    }
+
+    #[test]
+    fn test_additional_info_skips_none_fields() {
+        let info = AdditionalInfo {
+            recording_mbid: None,
+            release_mbid: None,
+            artist_mbids: None,
+            duration_ms: Some(180000),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("recording_mbid"));
+        assert!(!json.contains("release_mbid"));
+        assert!(!json.contains("artist_mbids"));
+        assert!(json.contains("duration_ms"));
+    }
+}

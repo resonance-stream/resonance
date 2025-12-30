@@ -18,6 +18,10 @@ export interface AudioQualitySettings {
   downloadQuality: 'low' | 'normal' | 'high' | 'lossless'
 }
 
+// Note: Integration settings (ListenBrainz, Discord RPC) are managed via
+// TanStack Query (useIntegrations hook) as they are server-synced settings.
+// This keeps TanStack Query as the single source of truth for server state.
+
 interface SettingsState {
   playback: PlaybackSettings
   audioQuality: AudioQualitySettings

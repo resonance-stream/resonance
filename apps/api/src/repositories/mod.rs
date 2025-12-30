@@ -24,5 +24,5 @@ pub use artist::ArtistRepository;
 pub use device::DeviceRepository;
 pub use playlist::PlaylistRepository;
 pub use session::SessionRepository;
-pub use track::TrackRepository;
+pub use track::{TrackRepository, TrackScrobbleInfo};
 pub use user::UserRepository;

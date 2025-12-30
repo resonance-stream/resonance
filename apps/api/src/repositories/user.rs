@@ -131,6 +131,115 @@ impl UserRepository {
         Ok(())
     }
 
+    /// Update user preferences
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `preferences` - The new preferences JSON value
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the update was successful
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Will be used by integrations mutations
+    pub async fn update_preferences(
+        &self,
+        user_id: Uuid,
+        preferences: &serde_json::Value,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET preferences = $2, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(preferences)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update user's ListenBrainz token
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `token` - The ListenBrainz token (None to remove)
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the update was successful
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Will be used by integrations mutations
+    pub async fn update_listenbrainz_token(
+        &self,
+        user_id: Uuid,
+        token: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET listenbrainz_token = $2, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(token)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get user's ListenBrainz token
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user
+    ///
+    /// # Returns
+    /// * `Ok(Some(String))` - If the user has a token set
+    /// * `Ok(None)` - If no token is set
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Will be used by integrations mutations
+    pub async fn get_listenbrainz_token(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT listenbrainz_token
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|opt| opt.flatten())
+    }
+
+    /// Check if user has ListenBrainz token configured
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the user has a token set
+    /// * `Ok(false)` - If no token is set or user not found
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by ListenBrainzService
+    pub async fn has_listenbrainz_token(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT listenbrainz_token IS NOT NULL
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|opt| opt.unwrap_or(false))
+    }
+
     /// Create a new user in the database
     ///
     /// # Arguments

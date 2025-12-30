@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { MainLayout } from './components/layout'
 import { AudioProvider } from './providers/AudioProvider'
 import { SyncProvider } from './providers/SyncProvider'
+import { IntegrationsManager } from './components/IntegrationsManager'
 
 // Lazy load pages for code splitting
 const Home = lazy(() => import('./pages/Home'))
@@ -40,86 +41,87 @@ function App() {
   return (
     <AudioProvider>
       <SyncProvider>
+        <IntegrationsManager />
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
-        {/* Public routes - no authentication required */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+            {/* Public routes - no authentication required */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-        {/* Protected routes with MainLayout */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Home />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/library"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Library />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/search"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Search />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/playlist/:id"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Playlist />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/album/:id"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Album />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/artist/:id"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Artist />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute>
-              <MainLayout>
-                <Settings />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
+            {/* Protected routes with MainLayout */}
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Home />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/library"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Library />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Search />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/playlist/:id"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Playlist />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/album/:id"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Album />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/artist/:id"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Artist />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <MainLayout>
+                    <Settings />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Catch-all for 404 */}
-          <Route path="*" element={<NotFound />} />
+            {/* Catch-all for 404 */}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </SyncProvider>

@@ -6,9 +6,12 @@ use async_graphql::dataloader::DataLoader;
 use async_graphql::{EmptySubscription, Schema};
 use sqlx::PgPool;
 
-use crate::repositories::{AlbumRepository, ArtistRepository, PlaylistRepository, TrackRepository};
+use crate::repositories::{
+    AlbumRepository, ArtistRepository, PlaylistRepository, TrackRepository, UserRepository,
+};
 use crate::services::auth::AuthService;
 use crate::services::lastfm::LastfmService;
+use crate::services::listenbrainz::ListenBrainzService;
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
 
@@ -32,10 +35,12 @@ pub struct SchemaBuilder {
     album_repository: Option<AlbumRepository>,
     track_repository: Option<TrackRepository>,
     playlist_repository: Option<PlaylistRepository>,
+    user_repository: Option<UserRepository>,
     // AI/Search services (optional - gracefully degrade if not configured)
     search_service: Option<SearchService>,
     similarity_service: Option<SimilarityService>,
     lastfm_service: Option<LastfmService>,
+    listenbrainz_service: Option<ListenBrainzService>,
     ollama_client: Option<resonance_ollama_client::OllamaClient>,
 }
 
@@ -50,9 +55,11 @@ impl SchemaBuilder {
             album_repository: None,
             track_repository: None,
             playlist_repository: None,
+            user_repository: None,
             search_service: None,
             similarity_service: None,
             lastfm_service: None,
+            listenbrainz_service: None,
             ollama_client: None,
         }
     }
@@ -105,6 +112,13 @@ impl SchemaBuilder {
         self
     }
 
+    /// Set the user repository
+    #[allow(dead_code)]
+    pub fn user_repository(mut self, repo: UserRepository) -> Self {
+        self.user_repository = Some(repo);
+        self
+    }
+
     /// Set the search service for semantic search
     #[allow(dead_code)] // Public API for external callers
     pub fn search_service(mut self, service: SearchService) -> Self {
@@ -123,6 +137,13 @@ impl SchemaBuilder {
     #[allow(dead_code)] // Public API for external callers
     pub fn lastfm_service(mut self, service: LastfmService) -> Self {
         self.lastfm_service = Some(service);
+        self
+    }
+
+    /// Set the ListenBrainz service for scrobbling
+    #[allow(dead_code)] // Public API for external callers
+    pub fn listenbrainz_service(mut self, service: ListenBrainzService) -> Self {
+        self.listenbrainz_service = Some(service);
         self
     }
 
@@ -154,6 +175,9 @@ impl SchemaBuilder {
         let playlist_repo = self
             .playlist_repository
             .unwrap_or_else(|| PlaylistRepository::new(pool.clone()));
+        let user_repo = self
+            .user_repository
+            .unwrap_or_else(|| UserRepository::new(pool.clone()));
 
         // Create DataLoaders for batched fetching
         // Note: DataLoaders already batch requests within a single query execution.
@@ -181,6 +205,7 @@ impl SchemaBuilder {
             .data(album_repo)
             .data(track_repo)
             .data(playlist_repo)
+            .data(user_repo)
             .data(artist_loader)
             .data(album_loader)
             .data(track_loader)
@@ -202,6 +227,9 @@ impl SchemaBuilder {
         }
         if let Some(lastfm_service) = self.lastfm_service {
             builder = builder.data(lastfm_service);
+        }
+        if let Some(listenbrainz_service) = self.listenbrainz_service {
+            builder = builder.data(listenbrainz_service);
         }
         if let Some(ollama_client) = self.ollama_client {
             builder = builder.data(ollama_client);
@@ -264,9 +292,11 @@ mod tests {
         assert!(builder.album_repository.is_none());
         assert!(builder.track_repository.is_none());
         assert!(builder.playlist_repository.is_none());
+        assert!(builder.user_repository.is_none());
         assert!(builder.search_service.is_none());
         assert!(builder.similarity_service.is_none());
         assert!(builder.lastfm_service.is_none());
+        assert!(builder.listenbrainz_service.is_none());
         assert!(builder.ollama_client.is_none());
     }
 }
