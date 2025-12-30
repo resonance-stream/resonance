@@ -18,9 +18,12 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use resonance_shared_config::OllamaConfig;
+
 use crate::middleware::extract_client_ip;
 use crate::services::auth::AuthService;
 
+use super::chat_handler::spawn_chat_handler;
 use super::connection::{ConnectionManager, DeviceInfo};
 use super::messages::{ClientMessage, ConnectedPayload, DeviceType, ErrorPayload, ServerMessage};
 use super::pubsub::SyncPubSub;
@@ -74,6 +77,7 @@ pub async fn ws_handler(
     Extension(connection_manager): Extension<ConnectionManager>,
     Extension(pubsub): Extension<SyncPubSub>,
     Extension(pool): Extension<PgPool>,
+    Extension(ollama_config): Extension<OllamaConfig>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
 ) -> Response {
@@ -149,11 +153,13 @@ pub async fn ws_handler(
             connection_manager,
             pubsub,
             pool,
+            ollama_config,
         )
     })
 }
 
 /// Handle an established WebSocket connection
+#[allow(clippy::too_many_arguments)]
 async fn handle_socket(
     socket: WebSocket,
     user_id: Uuid,
@@ -162,6 +168,7 @@ async fn handle_socket(
     connection_manager: ConnectionManager,
     pubsub: SyncPubSub,
     pool: PgPool,
+    ollama_config: OllamaConfig,
 ) {
     let device_id = device_info.device_id.clone();
     let device_name = device_info.device_name.clone();
@@ -174,6 +181,15 @@ async fn handle_socket(
 
     // Split the socket into sender and receiver
     let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    // Spawn chat handler for this connection
+    let (chat_tx, chat_handle) = spawn_chat_handler(
+        user_id,
+        device_id.clone(),
+        pool.clone(),
+        ollama_config,
+        connection_manager.clone(),
+    );
 
     // Create sync handler for processing messages with database persistence
     let sync_handler = SyncHandler::with_pool(
@@ -286,18 +302,59 @@ async fn handle_socket(
 
     // Handle incoming messages
     let device_id_recv = device_id.clone();
+    let chat_tx_recv = chat_tx.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(result) = ws_receiver.next().await {
             match result {
                 Ok(Message::Text(text)) => {
                     match serde_json::from_str::<ClientMessage>(&text) {
                         Ok(msg) => {
-                            if let Err(e) = sync_handler.handle_message(msg).await {
-                                tracing::warn!(
-                                    error = %e,
-                                    device_id = %device_id_recv,
-                                    "Error handling client message"
-                                );
+                            // Route ChatSend messages to the chat handler
+                            if let ClientMessage::ChatSend(payload) = msg {
+                                match chat_tx_recv.try_send(payload) {
+                                    Ok(_) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        tracing::warn!(
+                                            device_id = %device_id_recv,
+                                            "Chat message queue full, message dropped"
+                                        );
+                                        // Send error back to client
+                                        let error_msg = super::messages::ChatErrorPayload::new(
+                                            None,
+                                            "QUEUE_FULL",
+                                            "Too many pending messages. Please wait.",
+                                        );
+                                        sync_handler.send_to_device(
+                                            &device_id_recv,
+                                            ServerMessage::ChatError(error_msg),
+                                        );
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        tracing::warn!(
+                                            device_id = %device_id_recv,
+                                            "Chat handler channel closed"
+                                        );
+                                        // Notify client that chat is unavailable
+                                        let error_msg = super::messages::ChatErrorPayload::new(
+                                            None,
+                                            "CHAT_UNAVAILABLE",
+                                            "Chat service is temporarily unavailable. Please try again.",
+                                        );
+                                        sync_handler.send_to_device(
+                                            &device_id_recv,
+                                            ServerMessage::ChatError(error_msg),
+                                        );
+                                    }
+                                }
+                            } else {
+                                // All other messages go to sync handler
+                                if let Err(e) = sync_handler.handle_message(msg).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        device_id = %device_id_recv,
+                                        "Error handling client message"
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -346,6 +403,29 @@ async fn handle_socket(
         _ = &mut recv_task => {
             tracing::debug!(device_id = %device_id, "Receive task completed");
             send_task.abort();
+        }
+    }
+
+    // Gracefully stop the chat handler by dropping the sender (closes channel)
+    // The handler will receive None and exit its loop naturally
+    drop(chat_tx);
+
+    // Wait briefly for graceful shutdown, then abort if still running
+    let shutdown_timeout = std::time::Duration::from_secs(1);
+    match tokio::time::timeout(shutdown_timeout, chat_handle).await {
+        Ok(Ok(_)) => {
+            tracing::debug!(device_id = %device_id, "Chat handler stopped gracefully");
+        }
+        Ok(Err(e)) if e.is_cancelled() => {
+            tracing::debug!(device_id = %device_id, "Chat handler was cancelled");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(device_id = %device_id, error = %e, "Chat handler panicked");
+        }
+        Err(_) => {
+            // Timeout elapsed - the handle was consumed so we can't abort explicitly,
+            // but the task will be cleaned up when dropping its resources
+            tracing::debug!(device_id = %device_id, "Chat handler shutdown timed out");
         }
     }
 

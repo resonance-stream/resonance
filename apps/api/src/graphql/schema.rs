@@ -7,7 +7,8 @@ use async_graphql::{EmptySubscription, Schema};
 use sqlx::PgPool;
 
 use crate::repositories::{
-    AlbumRepository, ArtistRepository, PlaylistRepository, TrackRepository, UserRepository,
+    AlbumRepository, ArtistRepository, ChatRepository, PlaylistRepository, TrackRepository,
+    UserRepository,
 };
 use crate::services::auth::AuthService;
 use crate::services::lastfm::LastfmService;
@@ -37,6 +38,7 @@ pub struct SchemaBuilder {
     track_repository: Option<TrackRepository>,
     playlist_repository: Option<PlaylistRepository>,
     user_repository: Option<UserRepository>,
+    chat_repository: Option<ChatRepository>,
     // Core services - auto-created from pool if not provided (like repositories)
     playlist_service: Option<PlaylistService>,
     // Optional AI/Integration services - only registered if explicitly provided
@@ -59,6 +61,7 @@ impl SchemaBuilder {
             track_repository: None,
             playlist_repository: None,
             user_repository: None,
+            chat_repository: None,
             playlist_service: None,
             search_service: None,
             similarity_service: None,
@@ -120,6 +123,13 @@ impl SchemaBuilder {
     #[allow(dead_code)]
     pub fn user_repository(mut self, repo: UserRepository) -> Self {
         self.user_repository = Some(repo);
+        self
+    }
+
+    /// Set the chat repository
+    #[allow(dead_code)]
+    pub fn chat_repository(mut self, repo: ChatRepository) -> Self {
+        self.chat_repository = Some(repo);
         self
     }
 
@@ -189,6 +199,9 @@ impl SchemaBuilder {
         let user_repo = self
             .user_repository
             .unwrap_or_else(|| UserRepository::new(pool.clone()));
+        let chat_repo = self
+            .chat_repository
+            .unwrap_or_else(|| ChatRepository::new(pool.clone()));
 
         // Create PlaylistService from pool if not explicitly provided
         let playlist_service = self
@@ -222,6 +235,7 @@ impl SchemaBuilder {
             .data(track_repo)
             .data(playlist_repo)
             .data(user_repo)
+            .data(chat_repo)
             .data(artist_loader)
             .data(album_loader)
             .data(track_loader)
@@ -310,6 +324,7 @@ mod tests {
         assert!(builder.track_repository.is_none());
         assert!(builder.playlist_repository.is_none());
         assert!(builder.user_repository.is_none());
+        assert!(builder.chat_repository.is_none());
         assert!(builder.search_service.is_none());
         assert!(builder.similarity_service.is_none());
         assert!(builder.playlist_service.is_none());

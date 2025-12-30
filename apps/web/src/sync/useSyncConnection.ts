@@ -10,7 +10,16 @@
 
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { WebSocketClient, type WebSocketClientConfig } from './WebSocketClient';
-import type { ServerMessage, PlaybackState, QueueState, SyncedSettings } from './types';
+import type {
+  ServerMessage,
+  PlaybackState,
+  QueueState,
+  SyncedSettings,
+  ChatTokenPayload,
+  ChatCompletePayload,
+  ChatErrorPayload,
+  ChatSendPayload,
+} from './types';
 import { useDeviceStore } from '../stores/deviceStore';
 import { useAuthStore } from '../stores/authStore';
 
@@ -27,6 +36,12 @@ export interface UseSyncConnectionOptions {
   onSettingsSync?: (settings: SyncedSettings) => void;
   /** Called when transfer is requested to this device */
   onTransferRequested?: (fromDeviceId: string) => void;
+  /** Called when a chat token is received (streaming) */
+  onChatToken?: (payload: ChatTokenPayload) => void;
+  /** Called when a chat response is complete */
+  onChatComplete?: (payload: ChatCompletePayload) => void;
+  /** Called when a chat error occurs */
+  onChatError?: (payload: ChatErrorPayload) => void;
   /** Called on any server message */
   onMessage?: (message: ServerMessage) => void;
   /** Whether to auto-connect when token is available (default: true) */
@@ -56,6 +71,8 @@ export interface SyncConnectionState {
   requestTransfer: (targetDeviceId: string) => void;
   /** Request the device list */
   requestDeviceList: () => void;
+  /** Send a chat message */
+  sendChatMessage: (payload: ChatSendPayload) => void;
 }
 
 /**
@@ -72,6 +89,9 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
     onQueueSync,
     onSettingsSync,
     onTransferRequested,
+    onChatToken,
+    onChatComplete,
+    onChatError,
     onMessage,
     autoConnect = true,
   } = options;
@@ -103,6 +123,9 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
     onQueueSync,
     onSettingsSync,
     onTransferRequested,
+    onChatToken,
+    onChatComplete,
+    onChatError,
     onMessage,
   });
 
@@ -113,9 +136,12 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
       onQueueSync,
       onSettingsSync,
       onTransferRequested,
+      onChatToken,
+      onChatComplete,
+      onChatError,
       onMessage,
     };
-  }, [onPlaybackSync, onSeekSync, onQueueSync, onSettingsSync, onTransferRequested, onMessage]);
+  }, [onPlaybackSync, onSeekSync, onQueueSync, onSettingsSync, onTransferRequested, onChatToken, onChatComplete, onChatError, onMessage]);
 
   // WebSocket client ref
   const clientRef = useRef<WebSocketClient | null>(null);
@@ -187,6 +213,15 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
               break;
             case 'TransferRequested':
               callbacksRef.current.onTransferRequested?.(message.payload.from_device_id);
+              break;
+            case 'ChatToken':
+              callbacksRef.current.onChatToken?.(message.payload);
+              break;
+            case 'ChatComplete':
+              callbacksRef.current.onChatComplete?.(message.payload);
+              break;
+            case 'ChatError':
+              callbacksRef.current.onChatError?.(message.payload);
               break;
             case 'TransferAccepted':
               setActiveDeviceId(message.payload.to_device_id);
@@ -282,6 +317,10 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
     clientRef.current?.requestDeviceList();
   }, []);
 
+  const sendChatMessage = useCallback((payload: ChatSendPayload) => {
+    clientRef.current?.send({ type: 'ChatSend', payload });
+  }, []);
+
   // Return value
   return useMemo(
     () => ({
@@ -296,6 +335,7 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
       sendSettingsUpdate,
       requestTransfer,
       requestDeviceList,
+      sendChatMessage,
     }),
     [
       connectionState,
@@ -309,6 +349,7 @@ export function useSyncConnection(options: UseSyncConnectionOptions = {}): SyncC
       sendSettingsUpdate,
       requestTransfer,
       requestDeviceList,
+      sendChatMessage,
     ]
   );
 }

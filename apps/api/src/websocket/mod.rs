@@ -37,6 +37,7 @@
 //! - `RequestDeviceList` - Request list of connected devices
 //! - `Heartbeat` - Keep connection alive
 //! - `SettingsUpdate` - Update synced settings
+//! - `ChatSend` - Send a message to the AI chat assistant
 //!
 //! ## Server → Client Messages
 //! - `Connected` - Connection established successfully
@@ -48,6 +49,9 @@
 //! - `TransferRequested` / `TransferAccepted` - Playback transfer flow
 //! - `Pong` - Heartbeat response
 //! - `SettingsSync` - Settings sync
+//! - `ChatToken` - Streaming token from AI assistant
+//! - `ChatComplete` - Complete AI response with actions
+//! - `ChatError` - Error from AI assistant
 //! - `Error` - Error occurred
 //!
 //! # Control Model
@@ -57,6 +61,7 @@
 //! - Other devices must request a transfer to become active
 //! - New/reconnecting devices automatically sync to the active device's state
 
+pub mod chat_handler;
 pub mod connection;
 pub mod handler;
 pub mod messages;

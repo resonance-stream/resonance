@@ -6,12 +6,14 @@
 //! - Playlists and user library
 //! - Device presence and sync
 //! - Recommendations and AI features
+//! - AI chat conversations and messages
 
 // Re-exports for public API - some types not yet consumed externally
 #![allow(unused_imports)]
 
 pub mod album;
 pub mod artist;
+pub mod chat;
 pub mod device;
 pub mod playlist;
 pub mod queue;
@@ -21,6 +23,10 @@ pub mod user;
 // Re-export commonly used types for external consumers
 pub use album::{Album, AlbumType, CoverArtColors, CreateAlbum};
 pub use artist::{Artist, CreateArtist};
+pub use chat::{
+    ChatConversation, ChatMessage, ChatRole, ContextSnapshot, CreateChatMessage,
+    CreateConversation, ToolCall, ToolCallFunction,
+};
 pub use device::{
     DevicePresence, DeviceValidationError, UpdateDevicePlaybackState, UpsertDevicePresence,
     VALID_DEVICE_TYPES,

@@ -2,6 +2,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { TopographicBackground } from '../ui/TopographicBackground';
 import { PlayerBar } from '../player';
+import { ChatPanel } from '../chat';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -22,6 +23,9 @@ export function MainLayout({ children }: MainLayoutProps): JSX.Element {
 
       {/* Fixed player bar at bottom */}
       <PlayerBar />
+
+      {/* AI Chat assistant panel */}
+      <ChatPanel />
     </div>
   );
 }

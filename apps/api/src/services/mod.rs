@@ -7,8 +7,10 @@
 //! - Recommendation engine
 //! - External service integrations
 //! - Health checks
+//! - AI chat assistant
 
 pub mod auth;
+pub mod chat;
 pub mod health;
 pub mod lastfm;
 pub mod listenbrainz;
@@ -25,6 +27,8 @@ pub use transcoder::{TranscodeFormat, TranscodeOptions, TranscoderService};
 
 // AI/Search services - re-exported for schema builder and external use
 // These are used via the schema builder pattern, not direct crate imports
+#[allow(unused_imports)]
+pub use chat::{ChatAction, ChatError, ChatService, UserContext};
 #[allow(unused_imports)]
 pub use lastfm::LastfmService;
 #[allow(unused_imports)]
