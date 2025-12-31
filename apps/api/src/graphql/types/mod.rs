@@ -6,6 +6,7 @@
 // Re-exports for public API - some types not yet consumed externally
 #![allow(unused_imports)]
 
+mod admin;
 mod album;
 mod artist;
 pub mod chat;
@@ -15,6 +16,7 @@ mod search;
 mod track;
 mod user;
 
+pub use admin::{AdminSession, AdminUserDetail, AdminUserList, AdminUserListItem, SystemStats};
 pub use album::{Album, CoverArtColors};
 pub use artist::Artist;
 pub use chat::{ChatConversation, ChatConversationWithMessages, ChatMessage, ChatRole};

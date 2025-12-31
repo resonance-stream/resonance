@@ -2,12 +2,14 @@
 //!
 //! This module contains all query resolvers, organized by domain.
 
+mod admin;
 mod chat;
 mod library;
 mod playlist;
 mod search;
 mod user;
 
+pub use admin::AdminQuery;
 pub use chat::ChatQuery;
 pub use library::LibraryQuery;
 pub use playlist::PlaylistQuery;
@@ -24,4 +26,5 @@ pub struct Query(
     PlaylistQuery,
     SearchQuery,
     ChatQuery,
+    AdminQuery,
 );

@@ -151,3 +151,15 @@ export type {
   OperationResult,
   GraphQLError,
 } from './graphql.js';
+
+// Admin types - dashboard and user management
+export type {
+  SystemStats,
+  AdminUserListItem,
+  AdminUserList,
+  AdminSession,
+  AdminUserDetail,
+  AdminOperationResult,
+  InvalidateSessionsResult,
+  UpdateUserRoleInput,
+} from './admin.js';

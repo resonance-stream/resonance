@@ -14,6 +14,7 @@ const Playlist = lazy(() => import('./pages/Playlist'))
 const Album = lazy(() => import('./pages/Album'))
 const Artist = lazy(() => import('./pages/Artist'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Admin = lazy(() => import('./pages/Admin'))
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
 const NotFound = lazy(() => import('./pages/NotFound'))
@@ -115,6 +116,16 @@ function App() {
                 <ProtectedRoute>
                   <MainLayout>
                     <Settings />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <MainLayout>
+                    <Admin />
                   </MainLayout>
                 </ProtectedRoute>
               }
