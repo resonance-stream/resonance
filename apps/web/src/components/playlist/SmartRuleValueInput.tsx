@@ -425,12 +425,13 @@ const MultiValueInput = memo(function MultiValueInput({
 
   const removeValue = useCallback(
     (index: number) => {
+      if (disabled) return
       const newValues = values.filter((_, i) => i !== index)
       onChange(newValues)
       // Return focus to input after removal
       inputRef.current?.focus()
     },
-    [values, onChange]
+    [values, onChange, disabled]
   )
 
   const handleKeyDown = useCallback(

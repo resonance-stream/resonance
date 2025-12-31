@@ -700,20 +700,42 @@ export function validateSmartPlaylistForm(form: SmartPlaylistFormState): Validat
       if (val.track_ids.length > MAX_SEED_TRACKS) {
         return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Cannot have more than ${MAX_SEED_TRACKS} seed tracks` }
       }
-    } else if (rule.operator !== 'is_empty' &&
-               (rule.value === null ||
-                rule.value === '' ||
-                (Array.isArray(rule.value) && rule.value.length === 0))) {
+    } else if (
+      rule.operator !== 'is_empty' &&
+      (rule.value === null ||
+        (typeof rule.value === 'string' && rule.value.trim() === '') ||
+        (Array.isArray(rule.value) && rule.value.length === 0))
+    ) {
       return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Value is required` }
     }
 
     // Range validation for 'between' operator
     if (rule.operator === 'between') {
-      if (isRangeValue(rule.value) && rule.value.min > rule.value.max) {
-        return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Minimum cannot exceed maximum` }
+      if (!isRangeValue(rule.value) && !isDateRangeValue(rule.value)) {
+        return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Range is required` }
       }
-      if (isDateRangeValue(rule.value) && rule.value.min > rule.value.max) {
-        return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Start date must be before end date` }
+
+      if (isRangeValue(rule.value)) {
+        if (!Number.isFinite(rule.value.min) || !Number.isFinite(rule.value.max)) {
+          return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Range values must be numbers` }
+        }
+        if (rule.value.min > rule.value.max) {
+          return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Minimum cannot exceed maximum` }
+        }
+      }
+
+      if (isDateRangeValue(rule.value)) {
+        if (!rule.value.min || !rule.value.max) {
+          return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Start and end dates are required` }
+        }
+        const minTime = Date.parse(rule.value.min)
+        const maxTime = Date.parse(rule.value.max)
+        if (!Number.isFinite(minTime) || !Number.isFinite(maxTime)) {
+          return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Dates must be valid` }
+        }
+        if (minTime > maxTime) {
+          return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Start date must be before end date` }
+        }
       }
     }
   }
