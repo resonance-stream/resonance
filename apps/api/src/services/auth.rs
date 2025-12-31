@@ -492,6 +492,286 @@ impl AuthService {
         Ok(count)
     }
 
+    // =========================================================================
+    // Account Settings Methods
+    // =========================================================================
+
+    /// Change a user's password
+    ///
+    /// This method:
+    /// 1. Verifies the current password is correct
+    /// 2. Validates the new password meets complexity requirements
+    /// 3. Hashes the new password with Argon2id
+    /// 4. Updates the password in the database
+    /// 5. Invalidates ALL other sessions (security measure)
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose password to change
+    /// * `current_session_id` - The current session (kept active)
+    /// * `current_password` - The user's current password for verification
+    /// * `new_password` - The new password to set
+    ///
+    /// # Returns
+    /// * `Ok(sessions_invalidated)` - Number of other sessions that were logged out
+    ///
+    /// # Errors
+    /// - `ApiError::NotFound` if user doesn't exist
+    /// - `ApiError::Unauthorized` if current password is incorrect
+    /// - `ApiError::ValidationError` if new password doesn't meet requirements
+    #[allow(dead_code)] // Used by GraphQL mutations
+    pub async fn change_password(
+        &self,
+        user_id: Uuid,
+        current_session_id: Uuid,
+        current_password: &str,
+        new_password: &str,
+    ) -> ApiResult<u64> {
+        // Fetch the user to verify current password
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            })?;
+
+        // Verify current password
+        if !self.verify_password(current_password, &user.password_hash)? {
+            tracing::warn!(user_id = %user_id, "Password change failed: incorrect current password");
+            return Err(ApiError::Unauthorized);
+        }
+
+        // Validate new password complexity
+        let password_validation = validate_password_complexity(new_password);
+        if !password_validation.is_valid {
+            return Err(ApiError::ValidationError(
+                password_validation.errors.join("; "),
+            ));
+        }
+
+        // Hash the new password
+        let new_password_hash = self.hash_password(new_password)?;
+
+        // Update the password in database
+        let updated = self
+            .user_repo
+            .update_password(user_id, &new_password_hash)
+            .await?;
+
+        if !updated {
+            return Err(ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            });
+        }
+
+        // Invalidate all OTHER sessions (security measure: force re-login on other devices)
+        let sessions_invalidated = self
+            .session_repo
+            .deactivate_all_except(user_id, current_session_id)
+            .await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            sessions_invalidated = sessions_invalidated,
+            "Password changed successfully, other sessions invalidated"
+        );
+
+        Ok(sessions_invalidated)
+    }
+
+    /// Update a user's email address
+    ///
+    /// This is a sensitive operation that requires password verification.
+    /// The email_verified flag will be reset to false after the update.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose email to update
+    /// * `new_email` - The new email address
+    /// * `current_password` - The user's password for verification
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    ///
+    /// # Errors
+    /// - `ApiError::NotFound` if user doesn't exist
+    /// - `ApiError::Unauthorized` if password is incorrect
+    /// - `ApiError::ValidationError` if email format is invalid
+    /// - `ApiError::Conflict` if email is already in use by another user
+    #[allow(dead_code)] // Used by GraphQL mutations
+    pub async fn update_email(
+        &self,
+        user_id: Uuid,
+        new_email: &str,
+        current_password: &str,
+    ) -> ApiResult<()> {
+        // Normalize email
+        let new_email = normalize_email(new_email);
+
+        // Validate email format
+        if !is_valid_email(&new_email) {
+            return Err(ApiError::ValidationError(
+                "invalid email format".to_string(),
+            ));
+        }
+
+        // Fetch the user to verify password
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            })?;
+
+        // Verify current password (sensitive operation)
+        if !self.verify_password(current_password, &user.password_hash)? {
+            tracing::warn!(user_id = %user_id, "Email change failed: incorrect password");
+            return Err(ApiError::Unauthorized);
+        }
+
+        // Check if email is already in use (by a different user)
+        if let Some(existing_user) = self.user_repo.find_by_email(&new_email).await? {
+            if existing_user.id != user_id {
+                return Err(ApiError::Conflict {
+                    resource_type: "user",
+                    id: new_email,
+                });
+            }
+            // If it's the same user with the same email, no change needed
+            if existing_user.email == new_email {
+                return Ok(());
+            }
+        }
+
+        // Update email in database (this also resets email_verified to false)
+        // Handle unique constraint violation as a conflict error (same pattern as register)
+        let updated = self
+            .user_repo
+            .update_email(user_id, &new_email)
+            .await
+            .map_err(|e| match &e {
+                sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+                    ApiError::Conflict {
+                        resource_type: "user",
+                        id: new_email.clone(),
+                    }
+                }
+                _ => ApiError::Database(e),
+            })?;
+
+        if !updated {
+            return Err(ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            });
+        }
+
+        tracing::info!(
+            user_id = %user_id,
+            new_email = %new_email,
+            "Email updated successfully"
+        );
+
+        Ok(())
+    }
+
+    /// Update a user's profile (display name and/or avatar URL)
+    ///
+    /// This is a non-sensitive operation that doesn't require password verification.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose profile to update
+    /// * `display_name` - Optional new display name (if None, not updated)
+    /// * `avatar_url` - Optional new avatar URL (if None, not updated; Some(None) clears it)
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    ///
+    /// # Errors
+    /// - `ApiError::NotFound` if user doesn't exist
+    /// - `ApiError::ValidationError` if display name is invalid
+    #[allow(dead_code)] // Used by GraphQL mutations
+    pub async fn update_profile(
+        &self,
+        user_id: Uuid,
+        display_name: Option<&str>,
+        avatar_url: Option<Option<&str>>,
+    ) -> ApiResult<()> {
+        // Maximum avatar URL length (matches common URL length limits)
+        const MAX_AVATAR_URL_LENGTH: usize = 2048;
+
+        // Validate and trim display name if provided
+        let trimmed_display_name = display_name.map(|name| name.trim());
+        if let Some(name) = trimmed_display_name {
+            if !is_valid_display_name(name) {
+                return Err(ApiError::ValidationError(
+                    "display_name must be between 1 and 100 characters".to_string(),
+                ));
+            }
+        }
+
+        // Validate and trim avatar URL if provided (basic check)
+        // Transform Option<Option<&str>> to Option<Option<String>> with trimmed values
+        let trimmed_avatar_url: Option<Option<String>> = match avatar_url {
+            None => None,
+            Some(None) => Some(None), // Explicit clear
+            Some(Some(url)) => {
+                let url_trimmed = url.trim();
+                if url_trimmed.is_empty() {
+                    return Err(ApiError::ValidationError(
+                        "avatar_url cannot be empty".to_string(),
+                    ));
+                }
+                // Basic URL validation - must start with http:// or https://
+                if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+                    return Err(ApiError::ValidationError(
+                        "avatar_url must be a valid HTTP or HTTPS URL".to_string(),
+                    ));
+                }
+                // Validate maximum length
+                if url_trimmed.len() > MAX_AVATAR_URL_LENGTH {
+                    return Err(ApiError::ValidationError(format!(
+                        "avatar_url must not exceed {} characters",
+                        MAX_AVATAR_URL_LENGTH
+                    )));
+                }
+                Some(Some(url_trimmed.to_string()))
+            }
+        };
+
+        // Update display name if provided (pass trimmed value)
+        if let Some(name) = trimmed_display_name {
+            let updated = self.user_repo.update_display_name(user_id, name).await?;
+            if !updated {
+                return Err(ApiError::NotFound {
+                    resource_type: "user",
+                    id: user_id.to_string(),
+                });
+            }
+            tracing::info!(user_id = %user_id, "Display name updated");
+        }
+
+        // Update avatar URL if provided (pass trimmed value)
+        if let Some(url) = trimmed_avatar_url {
+            let updated = self
+                .user_repo
+                .update_avatar_url(user_id, url.as_deref())
+                .await?;
+            if !updated {
+                return Err(ApiError::NotFound {
+                    resource_type: "user",
+                    id: user_id.to_string(),
+                });
+            }
+            tracing::info!(user_id = %user_id, "Avatar URL updated");
+        }
+
+        Ok(())
+    }
+
     /// Verify an access token and return its claims
     ///
     /// # Arguments
@@ -765,13 +1045,25 @@ pub fn validate_password_complexity(password: &str) -> PasswordValidation {
 ///
 /// # Returns
 /// `true` if the display name is valid, `false` otherwise
-fn is_valid_display_name(display_name: &str) -> bool {
+pub fn is_valid_display_name(display_name: &str) -> bool {
     let trimmed = display_name.trim();
     !trimmed.is_empty() && trimmed.len() <= 100
 }
 
 /// Simple email validation
-fn is_valid_email(email: &str) -> bool {
+///
+/// Validates that an email address has the correct format:
+/// - Not empty and not longer than 254 characters
+/// - Has exactly one @ symbol
+/// - Local part (before @) is not empty and <= 64 characters
+/// - Domain part (after @) has at least one dot
+///
+/// # Arguments
+/// * `email` - The email address to validate
+///
+/// # Returns
+/// `true` if the email format is valid, `false` otherwise
+pub fn is_valid_email(email: &str) -> bool {
     let email = email.trim();
     if email.is_empty() || email.len() > 254 {
         return false;

@@ -144,6 +144,11 @@ impl User {
     async fn updated_at(&self) -> DateTime<Utc> {
         self.inner.updated_at
     }
+
+    /// When password was last changed
+    async fn password_updated_at(&self) -> DateTime<Utc> {
+        self.inner.password_updated_at
+    }
 }
 
 /// Authentication payload returned after login or registration

@@ -54,7 +54,8 @@ impl UserRepository {
                 email_verified,
                 last_seen_at,
                 created_at,
-                updated_at
+                updated_at,
+                password_updated_at
             FROM users
             WHERE id = $1
             "#,
@@ -89,7 +90,8 @@ impl UserRepository {
                 email_verified,
                 last_seen_at,
                 created_at,
-                updated_at
+                updated_at,
+                password_updated_at
             FROM users
             WHERE email = $1
             "#,
@@ -240,6 +242,136 @@ impl UserRepository {
         .map(|opt| opt.unwrap_or(false))
     }
 
+    /// Update user's password hash and password_updated_at timestamp
+    ///
+    /// This method is used when a user changes their password. It updates both
+    /// the password_hash and password_updated_at fields, and also sets updated_at.
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `password_hash` - The new Argon2id hashed password
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the update was successful
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by AccountSettingsService
+    pub async fn update_password(
+        &self,
+        user_id: Uuid,
+        password_hash: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE users
+            SET password_hash = $2, password_updated_at = NOW(), updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(password_hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update user's email address
+    ///
+    /// This method resets `email_verified` to `false` since the new email
+    /// has not been verified.
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `new_email` - The new email address (will be normalized to lowercase)
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the update was successful
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs (including unique constraint violations)
+    ///
+    /// # Note
+    /// Callers should check for `sqlx::Error::Database` with code "23505" to detect
+    /// duplicate email errors and provide appropriate user feedback.
+    #[allow(dead_code)] // Used by AccountSettingsService
+    pub async fn update_email(
+        &self,
+        user_id: Uuid,
+        new_email: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE users
+            SET email = $2, email_verified = false, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(new_email.trim().to_lowercase())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update user's display name
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `display_name` - The new display name (will be trimmed)
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the update was successful
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by AccountSettingsService
+    pub async fn update_display_name(
+        &self,
+        user_id: Uuid,
+        display_name: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE users
+            SET display_name = $2, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(display_name.trim())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update user's avatar URL
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to update
+    /// * `avatar_url` - The new avatar URL (None to remove)
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the update was successful
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by AccountSettingsService
+    pub async fn update_avatar_url(
+        &self,
+        user_id: Uuid,
+        avatar_url: Option<&str>,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE users
+            SET avatar_url = $2, updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(avatar_url)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Create a new user in the database
     ///
     /// # Arguments
@@ -277,7 +409,8 @@ impl UserRepository {
                 email_verified,
                 last_seen_at,
                 created_at,
-                updated_at
+                updated_at,
+                password_updated_at
             "#,
         )
         .bind(email.trim().to_lowercase())

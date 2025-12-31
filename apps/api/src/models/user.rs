@@ -133,6 +133,9 @@ pub struct User {
 
     /// Last profile update timestamp
     pub updated_at: DateTime<Utc>,
+
+    /// When password was last changed
+    pub password_updated_at: DateTime<Utc>,
 }
 
 /// Public user profile (safe to expose to other users)
@@ -460,6 +463,7 @@ mod tests {
 
     #[test]
     fn test_public_user_from_user() {
+        let now = Utc::now();
         let user = User {
             id: Uuid::new_v4(),
             email: "test@example.com".to_string(),
@@ -472,8 +476,9 @@ mod tests {
             discord_user_id: None,
             email_verified: true,
             last_seen_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
+            password_updated_at: now,
         };
 
         let public: PublicUser = user.into();

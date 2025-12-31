@@ -7,9 +7,31 @@
  * - Logout
  * - Refresh token
  * - Get current user
+ * - Account settings (change password, update email/profile)
  */
 
 import { gql } from 'graphql-request'
+
+// =============================================================================
+// Fragments
+// =============================================================================
+
+/**
+ * Core user fields fragment for consistent field selection
+ * Used across login, register, me query, and account update mutations
+ */
+export const USER_CORE_FIELDS = gql`
+  fragment UserCoreFields on User {
+    id
+    email
+    displayName
+    avatarUrl
+    role
+    emailVerified
+    createdAt
+    updatedAt
+  }
+`
 
 /**
  * Login mutation
@@ -99,6 +121,53 @@ export const ME_QUERY = gql`
       lastSeenAt
       createdAt
       updatedAt
+      passwordUpdatedAt
+    }
+  }
+`
+
+// =============================================================================
+// Account Settings Mutations
+// =============================================================================
+
+/**
+ * Change password mutation
+ * Requires current password for verification.
+ * Invalidates all other sessions after successful change.
+ */
+export const CHANGE_PASSWORD_MUTATION = gql`
+  mutation ChangePassword($input: ChangePasswordInput!) {
+    changePassword(input: $input) {
+      success
+      sessionsInvalidated
+    }
+  }
+`
+
+/**
+ * Update email mutation
+ * Requires current password for verification.
+ * Resets email_verified to false after change.
+ */
+export const UPDATE_EMAIL_MUTATION = gql`
+  ${USER_CORE_FIELDS}
+  mutation UpdateEmail($input: UpdateEmailInput!) {
+    updateEmail(input: $input) {
+      ...UserCoreFields
+    }
+  }
+`
+
+/**
+ * Update profile mutation
+ * Updates display name and/or avatar URL.
+ * At least one field must be provided.
+ */
+export const UPDATE_PROFILE_MUTATION = gql`
+  ${USER_CORE_FIELDS}
+  mutation UpdateProfile($input: UpdateProfileInput!) {
+    updateProfile(input: $input) {
+      ...UserCoreFields
     }
   }
 `
