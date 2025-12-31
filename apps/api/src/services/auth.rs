@@ -632,22 +632,14 @@ impl AuthService {
             return Err(ApiError::Unauthorized);
         }
 
-        // Check if email is already in use (by a different user)
-        if let Some(existing_user) = self.user_repo.find_by_email(&new_email).await? {
-            if existing_user.id != user_id {
-                return Err(ApiError::Conflict {
-                    resource_type: "user",
-                    id: new_email,
-                });
-            }
-            // If it's the same user with the same email, no change needed
-            if existing_user.email == new_email {
-                return Ok(());
-            }
+        // If the normalized email is the same as the current one, no change needed
+        if user.email == new_email {
+            return Ok(());
         }
 
         // Update email in database (this also resets email_verified to false)
-        // Handle unique constraint violation as a conflict error (same pattern as register)
+        // Rely on the database's unique constraint to handle conflicts atomically,
+        // avoiding a TOCTOU race condition from checking email existence separately
         let updated = self
             .user_repo
             .update_email(user_id, &new_email)

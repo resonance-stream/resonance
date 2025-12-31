@@ -30,6 +30,7 @@ export const USER_CORE_FIELDS = gql`
     emailVerified
     createdAt
     updatedAt
+    passwordUpdatedAt
   }
 `
 

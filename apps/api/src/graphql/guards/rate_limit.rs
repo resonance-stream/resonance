@@ -23,6 +23,7 @@ pub struct GraphQLRateLimiter {
     login_config: RateLimitConfig,
     register_config: RateLimitConfig,
     refresh_config: RateLimitConfig,
+    change_password_config: RateLimitConfig,
 }
 
 impl GraphQLRateLimiter {
@@ -33,6 +34,7 @@ impl GraphQLRateLimiter {
             login_config: RateLimitConfig::login(),
             register_config: RateLimitConfig::register(),
             refresh_config: RateLimitConfig::refresh_token(),
+            change_password_config: RateLimitConfig::change_password(),
         }
     }
 
@@ -48,6 +50,7 @@ impl GraphQLRateLimiter {
             login_config: RateLimitConfig::login(),
             register_config: RateLimitConfig::register(),
             refresh_config: RateLimitConfig::refresh_token(),
+            change_password_config: RateLimitConfig::change_password(),
         }
     }
 
@@ -66,12 +69,20 @@ impl GraphQLRateLimiter {
         self.limiter.check(client_ip, &self.refresh_config).await
     }
 
+    /// Check password change rate limit for a client
+    pub async fn check_change_password(&self, client_ip: &str) -> Result<u32, u64> {
+        self.limiter
+            .check(client_ip, &self.change_password_config)
+            .await
+    }
+
     /// Get the rate limit config for a specific limit type
     pub fn config_for(&self, limit_type: RateLimitType) -> &RateLimitConfig {
         match limit_type {
             RateLimitType::Login => &self.login_config,
             RateLimitType::Register => &self.register_config,
             RateLimitType::RefreshToken => &self.refresh_config,
+            RateLimitType::ChangePassword => &self.change_password_config,
         }
     }
 }
@@ -85,6 +96,8 @@ pub enum RateLimitType {
     Register,
     /// Token refresh rate limit: 10 attempts per 60 seconds
     RefreshToken,
+    /// Password change rate limit: 5 attempts per 15 minutes
+    ChangePassword,
 }
 
 /// Rate limiting guard for GraphQL mutations
@@ -131,6 +144,12 @@ impl RateLimitGuard {
     pub fn refresh_token() -> Self {
         Self::new(RateLimitType::RefreshToken)
     }
+
+    /// Create a password change rate limit guard
+    #[allow(dead_code)]
+    pub fn change_password() -> Self {
+        Self::new(RateLimitType::ChangePassword)
+    }
 }
 
 impl Guard for RateLimitGuard {
@@ -156,6 +175,7 @@ impl Guard for RateLimitGuard {
             RateLimitType::Login => rate_limiter.check_login(&client_ip).await,
             RateLimitType::Register => rate_limiter.check_register(&client_ip).await,
             RateLimitType::RefreshToken => rate_limiter.check_refresh(&client_ip).await,
+            RateLimitType::ChangePassword => rate_limiter.check_change_password(&client_ip).await,
         };
 
         match result {
@@ -214,6 +234,10 @@ mod tests {
         assert_eq!(format!("{:?}", RateLimitType::Login), "Login");
         assert_eq!(format!("{:?}", RateLimitType::Register), "Register");
         assert_eq!(format!("{:?}", RateLimitType::RefreshToken), "RefreshToken");
+        assert_eq!(
+            format!("{:?}", RateLimitType::ChangePassword),
+            "ChangePassword"
+        );
     }
 
     #[test]
@@ -226,5 +250,11 @@ mod tests {
 
         let refresh_guard = RateLimitGuard::refresh_token();
         assert_eq!(refresh_guard.limit_type, RateLimitType::RefreshToken);
+
+        let change_password_guard = RateLimitGuard::change_password();
+        assert_eq!(
+            change_password_guard.limit_type,
+            RateLimitType::ChangePassword
+        );
     }
 }

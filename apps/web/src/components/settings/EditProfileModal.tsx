@@ -69,9 +69,12 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps):
 
   const isValidUrl = (url: string): boolean => {
     if (!url) return true // Empty is valid (optional field)
+    const trimmed = url.trim()
+    if (!trimmed) return true
     try {
-      new URL(url)
-      return true
+      const parsed = new URL(trimmed)
+      // Only allow http/https protocols to prevent XSS via javascript: URLs
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
     } catch {
       return false
     }

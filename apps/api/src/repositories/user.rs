@@ -293,11 +293,7 @@ impl UserRepository {
     /// Callers should check for `sqlx::Error::Database` with code "23505" to detect
     /// duplicate email errors and provide appropriate user feedback.
     #[allow(dead_code)] // Used by AccountSettingsService
-    pub async fn update_email(
-        &self,
-        user_id: Uuid,
-        new_email: &str,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn update_email(&self, user_id: Uuid, new_email: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"
             UPDATE users

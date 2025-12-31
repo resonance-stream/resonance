@@ -389,6 +389,8 @@ impl AuthMutation {
     /// all other sessions will be invalidated for security (user stays logged in
     /// on current device but must re-login on other devices).
     ///
+    /// Rate limited to 5 attempts per 15 minutes per IP address.
+    ///
     /// # Arguments
     /// * `input` - Contains current_password and new_password
     ///
@@ -399,6 +401,8 @@ impl AuthMutation {
     /// - Returns error if not authenticated
     /// - Returns error if current password is incorrect
     /// - Returns error if new password doesn't meet complexity requirements
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::ChangePassword)")]
     async fn change_password(
         &self,
         ctx: &Context<'_>,
@@ -432,6 +436,8 @@ impl AuthMutation {
     /// Requires password verification for security. After successful update,
     /// the email_verified flag will be reset to false.
     ///
+    /// Rate limited to 5 attempts per 15 minutes per IP address (same as password change).
+    ///
     /// # Arguments
     /// * `input` - Contains new_email and current_password
     ///
@@ -443,6 +449,8 @@ impl AuthMutation {
     /// - Returns error if password is incorrect
     /// - Returns error if email format is invalid
     /// - Returns error if email is already in use
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::ChangePassword)")]
     async fn update_email(&self, ctx: &Context<'_>, input: UpdateEmailInput) -> Result<User> {
         let auth_service = ctx.data::<AuthService>()?;
         let user_repo = ctx.data::<UserRepository>()?;
