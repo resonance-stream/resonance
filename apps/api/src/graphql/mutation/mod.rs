@@ -2,11 +2,13 @@
 //!
 //! This module contains all mutation resolvers, organized by domain.
 
+mod admin;
 mod auth;
 mod chat;
 mod integrations;
 mod playlist;
 
+pub use admin::AdminMutation;
 pub use auth::AuthMutation;
 pub use chat::ChatMutation;
 pub use integrations::IntegrationsMutation;
@@ -21,4 +23,5 @@ pub struct Mutation(
     PlaylistMutation,
     IntegrationsMutation,
     ChatMutation,
+    AdminMutation,
 );

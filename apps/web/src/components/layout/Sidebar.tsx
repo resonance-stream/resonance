@@ -1,7 +1,8 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Search, Library, Settings } from 'lucide-react';
+import { Home, Search, Library, Settings, Shield } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ScrollArea } from '../ui/ScrollArea';
+import { useAuthStore } from '../../stores/authStore';
 
 interface NavItemProps {
   to: string;
@@ -31,6 +32,9 @@ function NavItem({ to, icon, label }: NavItemProps): JSX.Element {
 }
 
 export function Sidebar(): JSX.Element {
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === 'admin';
+
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-64 bg-background/95 backdrop-blur-xl border-r border-white/5 flex flex-col z-40">
       {/* Logo + Wordmark */}
@@ -112,6 +116,9 @@ export function Sidebar(): JSX.Element {
 
       {/* Bottom Settings */}
       <div className="border-t border-white/5">
+        {isAdmin && (
+          <NavItem to="/admin" icon={<Shield size={20} />} label="Admin" />
+        )}
         <NavItem to="/settings" icon={<Settings size={20} />} label="Settings" />
       </div>
     </aside>

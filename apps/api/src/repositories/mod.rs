@@ -10,6 +10,7 @@
 // Allow unused imports - some repositories are prepared for future features
 #![allow(unused_imports)]
 
+pub mod admin;
 pub mod album;
 pub mod artist;
 pub mod chat;
@@ -21,6 +22,7 @@ pub mod track;
 pub mod user;
 pub mod utils;
 
+pub use admin::{AdminRepository, AdminSessionRow, AdminUserRow, SystemStats};
 pub use album::AlbumRepository;
 pub use artist::ArtistRepository;
 pub use chat::ChatRepository;
