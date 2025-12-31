@@ -700,8 +700,21 @@ export function validateSmartPlaylistForm(form: SmartPlaylistFormState): Validat
       if (val.track_ids.length > MAX_SEED_TRACKS) {
         return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Cannot have more than ${MAX_SEED_TRACKS} seed tracks` }
       }
-    } else if (rule.operator !== 'is_empty' && (rule.value === null || rule.value === '')) {
+    } else if (rule.operator !== 'is_empty' &&
+               (rule.value === null ||
+                rule.value === '' ||
+                (Array.isArray(rule.value) && rule.value.length === 0))) {
       return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Value is required` }
+    }
+
+    // Range validation for 'between' operator
+    if (rule.operator === 'between') {
+      if (isRangeValue(rule.value) && rule.value.min > rule.value.max) {
+        return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Minimum cannot exceed maximum` }
+      }
+      if (isDateRangeValue(rule.value) && rule.value.min > rule.value.max) {
+        return { field: `rules.${i}.value`, message: `Rule ${i + 1}: Start date must be before end date` }
+      }
     }
   }
 

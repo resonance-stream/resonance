@@ -131,8 +131,10 @@ export function CreatePlaylistModal({
       e.preventDefault()
       setValidationError(null)
 
-      // Build form state for validation
-      // Note: 'random' is a valid sort option but not a SmartRuleField
+      // Build form state for validation and submission
+      // When sort is 'random', neither sortBy nor sortOrder should be sent
+      // to the backend - random ordering is handled at the query level
+      const isRandomSort = sortField === 'random'
       const formState = {
         name,
         description,
@@ -140,8 +142,8 @@ export function CreatePlaylistModal({
         matchMode,
         rules,
         limit,
-        sortBy: sortField === 'random' ? null : (sortField as SmartRuleField),
-        sortOrder: sortDirection,
+        sortBy: isRandomSort ? null : (sortField as SmartRuleField),
+        sortOrder: isRandomSort ? null : sortDirection,
       }
 
       // Validate form

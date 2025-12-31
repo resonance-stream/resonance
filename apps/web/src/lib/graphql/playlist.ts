@@ -21,7 +21,6 @@ export const CREATE_PLAYLIST_MUTATION = gql`
   mutation CreatePlaylist($input: CreatePlaylistInput!) {
     createPlaylist(input: $input) {
       id
-      userId
       name
       description
       isPublic

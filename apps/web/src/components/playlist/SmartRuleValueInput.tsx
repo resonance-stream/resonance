@@ -426,7 +426,7 @@ const MultiValueInput = memo(function MultiValueInput({
   const removeValue = useCallback(
     (index: number) => {
       const newValues = values.filter((_, i) => i !== index)
-      onChange(newValues.length > 0 ? newValues : null)
+      onChange(newValues)
       // Return focus to input after removal
       inputRef.current?.focus()
     },
