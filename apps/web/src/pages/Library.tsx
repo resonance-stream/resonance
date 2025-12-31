@@ -1,8 +1,9 @@
 import { useState, useCallback, useMemo } from 'react'
-import { LayoutGrid, List, AlertCircle } from 'lucide-react'
+import { LayoutGrid, List, AlertCircle, Plus } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { MediaCard } from '../components/media'
 import { SkeletonCard } from '../components/ui/Skeleton'
+import { CreatePlaylistModal } from '../components/playlist/CreatePlaylistModal'
 import { useAlbums, useMyPlaylists, useArtists } from '../hooks/useLibrary'
 import { usePlayerStore } from '../stores/playerStore'
 import { mapAlbumToPlayerTracks } from '../lib/mappers'
@@ -22,6 +23,7 @@ const FILTERS: { key: FilterType; label: string }[] = [
 export default function Library() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [filter, setFilter] = useState<FilterType>('all')
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
 
   // Fetch data based on filter
   const shouldFetchAlbums = filter === 'all' || filter === 'albums'
@@ -139,26 +141,39 @@ export default function Library() {
           </p>
         </div>
 
-        {/* View Toggle */}
-        <div className="flex items-center gap-2">
+        {/* Actions */}
+        <div className="flex items-center gap-3">
+          {/* Create Playlist Button */}
           <Button
-            variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
-            size="icon"
-            onClick={() => setViewMode('grid')}
-            aria-label="Grid view"
-            aria-pressed={viewMode === 'grid'}
+            variant="accent"
+            size="sm"
+            onClick={() => setIsCreateModalOpen(true)}
           >
-            <LayoutGrid size={18} />
+            <Plus size={16} className="mr-1" aria-hidden="true" />
+            Create Playlist
           </Button>
-          <Button
-            variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-            size="icon"
-            onClick={() => setViewMode('list')}
-            aria-label="List view"
-            aria-pressed={viewMode === 'list'}
-          >
-            <List size={18} />
-          </Button>
+
+          {/* View Toggle */}
+          <div className="flex items-center gap-1">
+            <Button
+              variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+              size="icon"
+              onClick={() => setViewMode('grid')}
+              aria-label="Grid view"
+              aria-pressed={viewMode === 'grid'}
+            >
+              <LayoutGrid size={18} />
+            </Button>
+            <Button
+              variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+              size="icon"
+              onClick={() => setViewMode('list')}
+              aria-label="List view"
+              aria-pressed={viewMode === 'list'}
+            >
+              <List size={18} />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -254,6 +269,12 @@ export default function Library() {
           ))}
         </div>
       )}
+
+      {/* Create Playlist Modal */}
+      <CreatePlaylistModal
+        open={isCreateModalOpen}
+        onOpenChange={setIsCreateModalOpen}
+      />
     </div>
   )
 }

@@ -57,6 +57,8 @@ export const libraryKeys = {
       [...libraryKeys.tracks.all(), 'top', limit] as const,
     search: (query: string, limit?: number) =>
       [...libraryKeys.tracks.all(), 'search', query, limit] as const,
+    seedSearch: (query: string, limit?: number) =>
+      [...libraryKeys.tracks.all(), 'seedSearch', query, limit] as const,
     byAlbum: (albumId: string, params: { limit?: number; offset?: number } = {}) =>
       [...libraryKeys.tracks.all(), 'album', albumId, params] as const,
     byArtist: (artistId: string, params: { limit?: number; offset?: number } = {}) =>
@@ -129,6 +131,7 @@ export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.tracks.detail
   | typeof libraryKeys.tracks.top
   | typeof libraryKeys.tracks.search
+  | typeof libraryKeys.tracks.seedSearch
   | typeof libraryKeys.tracks.byAlbum
   | typeof libraryKeys.tracks.byArtist
   | typeof libraryKeys.playlists.all
