@@ -341,6 +341,7 @@ mod tests {
         use crate::models::user::{UserPreferences, UserRole};
         use chrono::Utc;
 
+        let now = Utc::now();
         let user = User {
             id: Uuid::new_v4(),
             email: "test@example.com".to_string(),
@@ -353,8 +354,9 @@ mod tests {
             discord_user_id: None,
             email_verified: true,
             last_seen_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
+            password_updated_at: now,
         };
 
         let response: UserResponse = user.into();

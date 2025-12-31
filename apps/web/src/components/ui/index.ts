@@ -11,3 +11,15 @@ export {
 export { Badge, QualityBadge, type BadgeProps, type QualityBadgeProps } from './Badge';
 export { ScrollArea, ScrollBar } from './ScrollArea';
 export { TopographicBackground } from './TopographicBackground';
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from './Dialog';

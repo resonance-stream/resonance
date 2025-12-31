@@ -1,12 +1,59 @@
+import { useState } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Switch } from '../components/ui/Switch'
 import { Slider } from '../components/ui/Slider'
-import { IntegrationsSettings } from '../components/settings/IntegrationsSettings'
+import {
+  IntegrationsSettings,
+  ChangePasswordModal,
+  ChangeEmailModal,
+  EditProfileModal,
+} from '../components/settings'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useAuthStore } from '../stores/authStore'
 
 // Note: Crossfade settings are synced to AudioEngine in AudioProvider.tsx
 // This component only updates the store; AudioProvider handles the sync.
+
+/**
+ * Calculate relative time string from a date
+ */
+function formatRelativeTime(dateString: string | undefined): string {
+  if (!dateString) {
+    return 'Never'
+  }
+
+  const date = new Date(dateString)
+
+  // Handle invalid date strings
+  if (isNaN(date.getTime())) {
+    return 'Never'
+  }
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+
+  // Handle future dates (clock skew protection)
+  if (diffMs < 0) {
+    return 'Just now'
+  }
+
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) {
+    return 'Today'
+  } else if (diffDays === 1) {
+    return 'Yesterday'
+  } else if (diffDays < 30) {
+    return `${diffDays} days ago`
+  } else if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30)
+    return `${months} month${months === 1 ? '' : 's'} ago`
+  } else {
+    const years = Math.floor(diffDays / 365)
+    return `${years} year${years === 1 ? '' : 's'} ago`
+  }
+}
 
 export default function Settings() {
   const {
@@ -18,6 +65,13 @@ export default function Settings() {
     setNormalizeVolume,
     setAudioQuality,
   } = useSettingsStore()
+
+  const user = useAuthStore((s) => s.user)
+
+  // Modal state
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
 
   const formatDuration = (seconds: number): string => {
     return `${seconds}s`
@@ -147,19 +201,56 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="mt-4 space-y-4">
+            {/* Profile Section */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt="Avatar"
+                    className="w-10 h-10 rounded-full object-cover bg-background-tertiary"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-background-tertiary flex items-center justify-center">
+                    <span className="text-text-muted text-lg">
+                      {user?.displayName?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'}
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium text-text-primary">Profile</p>
+                  <p className="text-sm text-text-muted">
+                    {user?.displayName || 'No display name set'}
+                  </p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setIsProfileModalOpen(true)}>
+                Edit
+              </Button>
+            </div>
+
+            {/* Email Section */}
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Email</p>
-                <p className="text-sm text-text-muted">user@example.com</p>
+                <p className="text-sm text-text-muted">{user?.email || 'Not set'}</p>
               </div>
-              <Button variant="ghost" size="sm">Change</Button>
+              <Button variant="ghost" size="sm" onClick={() => setIsEmailModalOpen(true)}>
+                Change
+              </Button>
             </div>
+
+            {/* Password Section */}
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Password</p>
-                <p className="text-sm text-text-muted">Last changed 30 days ago</p>
+                <p className="text-sm text-text-muted">
+                  Last changed {formatRelativeTime(user?.passwordUpdatedAt)}
+                </p>
               </div>
-              <Button variant="ghost" size="sm">Change</Button>
+              <Button variant="ghost" size="sm" onClick={() => setIsPasswordModalOpen(true)}>
+                Change
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -179,6 +270,21 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Account Settings Modals */}
+      <ChangePasswordModal
+        open={isPasswordModalOpen}
+        onOpenChange={setIsPasswordModalOpen}
+      />
+      <ChangeEmailModal
+        open={isEmailModalOpen}
+        onOpenChange={setIsEmailModalOpen}
+        currentEmail={user?.email || ''}
+      />
+      <EditProfileModal
+        open={isProfileModalOpen}
+        onOpenChange={setIsProfileModalOpen}
+      />
     </div>
   )
 }

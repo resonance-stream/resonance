@@ -163,6 +163,39 @@ impl SessionRepository {
         Ok(result.rows_affected())
     }
 
+    /// Deactivate all active sessions for a user EXCEPT the specified session
+    ///
+    /// This is used when changing a password to log out all other devices
+    /// while keeping the current session active.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose sessions to deactivate
+    /// * `except_session_id` - The session ID to keep active
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - The number of sessions that were deactivated
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by AuthService::change_password
+    pub async fn deactivate_all_except(
+        &self,
+        user_id: Uuid,
+        except_session_id: Uuid,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET is_active = false
+            WHERE user_id = $1 AND is_active = true AND id != $2
+            "#,
+        )
+        .bind(user_id)
+        .bind(except_session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Update session tokens and extend expiration after a token refresh
     ///
     /// # Arguments

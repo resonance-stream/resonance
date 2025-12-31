@@ -32,6 +32,8 @@ export interface User {
   updatedAt: string;
   /** Last login timestamp */
   lastLoginAt?: string;
+  /** When password was last changed */
+  passwordUpdatedAt?: string;
 }
 
 /**

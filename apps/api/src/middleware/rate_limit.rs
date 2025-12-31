@@ -177,6 +177,15 @@ impl RateLimitConfig {
     pub fn refresh_token() -> Self {
         Self::new("auth:refresh", 10, 60)
     }
+
+    /// Rate limit for password change: 5 attempts per 15 minutes per IP
+    ///
+    /// Password changes are sensitive operations. While they require the current
+    /// password, we still limit attempts to prevent brute-force attacks that
+    /// could guess the current password.
+    pub fn change_password() -> Self {
+        Self::new("auth:change_password", 5, 900) // 15 minutes
+    }
 }
 
 /// Entry for tracking request timestamps in the in-memory rate limiter
@@ -984,6 +993,14 @@ mod tests {
         assert_eq!(config.max_requests, 3);
         assert_eq!(config.window_secs, 3600);
         assert_eq!(config.key_prefix, "auth:register");
+    }
+
+    #[test]
+    fn test_rate_limit_config_change_password() {
+        let config = RateLimitConfig::change_password();
+        assert_eq!(config.max_requests, 5);
+        assert_eq!(config.window_secs, 900); // 15 minutes
+        assert_eq!(config.key_prefix, "auth:change_password");
     }
 
     // In-memory rate limiter tests

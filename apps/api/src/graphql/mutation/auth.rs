@@ -5,13 +5,19 @@
 //! - login: Authenticate and get tokens (rate limited: 5/minute)
 //! - refreshToken: Get new tokens using refresh token (rate limited: 10/minute)
 //! - logout: Invalidate the current session
+//!
+//! Account settings mutations:
+//! - changePassword: Change the user's password (invalidates other sessions)
+//! - updateEmail: Change the user's email (requires password verification)
+//! - updateProfile: Update display name and/or avatar URL
 
-use async_graphql::{Context, InputObject, Object, Result};
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 
 use crate::error::ApiError;
 use crate::graphql::guards::{RateLimitGuard, RateLimitType};
-use crate::graphql::types::{AuthPayload, RefreshPayload};
+use crate::graphql::types::{AuthPayload, RefreshPayload, User};
 use crate::models::user::{DeviceInfo, DeviceType, RequestMetadata};
+use crate::repositories::UserRepository;
 use crate::services::auth::AuthService;
 
 // =============================================================================
@@ -181,6 +187,54 @@ pub struct RefreshTokenInput {
     pub refresh_token: String,
 }
 
+// =============================================================================
+// Account Settings Input Types
+// =============================================================================
+
+/// Input for changing password
+#[derive(Debug, InputObject)]
+pub struct ChangePasswordInput {
+    /// Current password for verification
+    pub current_password: String,
+    /// New password (minimum 8 characters, must include uppercase, lowercase, number)
+    pub new_password: String,
+}
+
+/// Input for updating email
+#[derive(Debug, InputObject)]
+pub struct UpdateEmailInput {
+    /// New email address
+    pub new_email: String,
+    /// Current password for verification (required for security)
+    pub current_password: String,
+}
+
+/// Input for updating profile
+///
+/// At least one field must be provided. To perform an update, include
+/// only the fields you want to change.
+#[derive(Debug, InputObject)]
+pub struct UpdateProfileInput {
+    /// New display name (1-100 characters, optional)
+    pub display_name: Option<String>,
+    /// New avatar URL (must be http/https, optional)
+    ///
+    /// Behavior:
+    /// - `null` or omitted: No change to avatar
+    /// - `""` (empty string): Clear the avatar (set to null)
+    /// - `"https://..."`: Set to the provided URL
+    pub avatar_url: Option<String>,
+}
+
+/// Result of changing password
+#[derive(Debug, SimpleObject)]
+pub struct ChangePasswordResult {
+    /// Whether the password was changed successfully
+    pub success: bool,
+    /// Number of other sessions that were invalidated
+    pub sessions_invalidated: i32,
+}
+
 /// Authentication mutations
 #[derive(Default)]
 pub struct AuthMutation;
@@ -323,5 +377,167 @@ impl AuthMutation {
             .map_err(|e| sanitize_auth_error(&e))?;
 
         Ok(count as i32)
+    }
+
+    // =========================================================================
+    // Account Settings Mutations
+    // =========================================================================
+
+    /// Change the current user's password
+    ///
+    /// Requires the current password for verification. After successful change,
+    /// all other sessions will be invalidated for security (user stays logged in
+    /// on current device but must re-login on other devices).
+    ///
+    /// Rate limited to 5 attempts per 15 minutes per IP address.
+    ///
+    /// # Arguments
+    /// * `input` - Contains current_password and new_password
+    ///
+    /// # Returns
+    /// Result containing success status and count of invalidated sessions
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated
+    /// - Returns error if current password is incorrect
+    /// - Returns error if new password doesn't meet complexity requirements
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::ChangePassword)")]
+    async fn change_password(
+        &self,
+        ctx: &Context<'_>,
+        input: ChangePasswordInput,
+    ) -> Result<ChangePasswordResult> {
+        let auth_service = ctx.data::<AuthService>()?;
+
+        // Get the current session from context
+        let claims = ctx
+            .data_opt::<crate::models::user::Claims>()
+            .ok_or_else(|| async_graphql::Error::new("authentication required"))?;
+
+        let sessions_invalidated = auth_service
+            .change_password(
+                claims.sub,
+                claims.sid,
+                &input.current_password,
+                &input.new_password,
+            )
+            .await
+            .map_err(|e| sanitize_auth_error(&e))?;
+
+        Ok(ChangePasswordResult {
+            success: true,
+            sessions_invalidated: sessions_invalidated as i32,
+        })
+    }
+
+    /// Update the current user's email address
+    ///
+    /// Requires password verification for security. After successful update,
+    /// the email_verified flag will be reset to false.
+    ///
+    /// Rate limited to 5 attempts per 15 minutes per IP address (same as password change).
+    ///
+    /// # Arguments
+    /// * `input` - Contains new_email and current_password
+    ///
+    /// # Returns
+    /// The updated user
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated
+    /// - Returns error if password is incorrect
+    /// - Returns error if email format is invalid
+    /// - Returns error if email is already in use
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::ChangePassword)")]
+    async fn update_email(&self, ctx: &Context<'_>, input: UpdateEmailInput) -> Result<User> {
+        let auth_service = ctx.data::<AuthService>()?;
+        let user_repo = ctx.data::<UserRepository>()?;
+
+        // Get the current session from context
+        let claims = ctx
+            .data_opt::<crate::models::user::Claims>()
+            .ok_or_else(|| async_graphql::Error::new("authentication required"))?;
+
+        // Update the email
+        auth_service
+            .update_email(claims.sub, &input.new_email, &input.current_password)
+            .await
+            .map_err(|e| sanitize_auth_error(&e))?;
+
+        // Fetch and return the updated user
+        let user = user_repo.find_by_id(claims.sub).await.map_err(|e| {
+            tracing::error!(error = %e, user_id = %claims.sub, "Failed to fetch updated user");
+            async_graphql::Error::new("Failed to fetch updated user")
+        })?;
+
+        let user = user.ok_or_else(|| {
+            tracing::error!(user_id = %claims.sub, "User not found after email update");
+            async_graphql::Error::new("User not found")
+        })?;
+
+        Ok(User::from(user))
+    }
+
+    /// Update the current user's profile (display name and/or avatar)
+    ///
+    /// This is a non-sensitive operation that doesn't require password verification.
+    /// At least one field must be provided.
+    ///
+    /// # Arguments
+    /// * `input` - Contains optional display_name and avatar_url
+    ///
+    /// # Returns
+    /// The updated user
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated
+    /// - Returns error if no fields are provided (no-op not allowed)
+    /// - Returns error if display name is invalid (empty or > 100 chars)
+    /// - Returns error if avatar URL is invalid
+    async fn update_profile(&self, ctx: &Context<'_>, input: UpdateProfileInput) -> Result<User> {
+        // Validate that at least one field is provided
+        if input.display_name.is_none() && input.avatar_url.is_none() {
+            return Err(async_graphql::Error::new(
+                "At least one field (display_name or avatar_url) must be provided",
+            ));
+        }
+
+        let auth_service = ctx.data::<AuthService>()?;
+        let user_repo = ctx.data::<UserRepository>()?;
+
+        // Get the current session from context
+        let claims = ctx
+            .data_opt::<crate::models::user::Claims>()
+            .ok_or_else(|| async_graphql::Error::new("authentication required"))?;
+
+        // Convert UpdateProfileInput to the service method signature
+        // For avatar_url: None = don't update, Some(None) = clear, Some(Some(url)) = set
+        // The input has: None = don't update, Some(empty or value)
+        let avatar_url: Option<Option<&str>> = match &input.avatar_url {
+            None => None,                              // Don't update
+            Some(url) if url.is_empty() => Some(None), // Clear (empty string = clear)
+            Some(url) => Some(Some(url.as_str())),     // Set to value
+        };
+
+        // Update the profile
+        auth_service
+            .update_profile(claims.sub, input.display_name.as_deref(), avatar_url)
+            .await
+            .map_err(|e| sanitize_auth_error(&e))?;
+
+        // Fetch and return the updated user
+        let user = user_repo.find_by_id(claims.sub).await.map_err(|e| {
+            tracing::error!(error = %e, user_id = %claims.sub, "Failed to fetch updated user");
+            async_graphql::Error::new("Failed to fetch updated user")
+        })?;
+
+        let user = user.ok_or_else(|| {
+            tracing::error!(user_id = %claims.sub, "User not found after profile update");
+            async_graphql::Error::new("User not found")
+        })?;
+
+        Ok(User::from(user))
     }
 }

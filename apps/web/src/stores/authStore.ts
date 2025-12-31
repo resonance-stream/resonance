@@ -19,6 +19,9 @@ import {
   LOGOUT_MUTATION,
   REFRESH_TOKEN_MUTATION,
   ME_QUERY,
+  CHANGE_PASSWORD_MUTATION,
+  UPDATE_EMAIL_MUTATION,
+  UPDATE_PROFILE_MUTATION,
 } from '../lib/graphql/auth'
 
 interface AuthState {
@@ -39,6 +42,11 @@ interface AuthState {
   clearError: () => void
   setStatus: (status: AuthStatus) => void
   hydrate: () => void
+
+  // Account Settings Actions
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ sessionsInvalidated: number }>
+  updateEmail: (newEmail: string, currentPassword: string) => Promise<void>
+  updateProfile: (displayName?: string, avatarUrl?: string | null) => Promise<void>
 }
 
 /**
@@ -101,6 +109,13 @@ function parseAuthError(error: unknown): AuthError {
       }
       if (code === 'RATE_LIMITED') {
         return { code: 'RATE_LIMITED', message: 'Too many attempts. Please try again later.' }
+      }
+      // Account settings error codes
+      if (code === 'INCORRECT_PASSWORD' || code === 'WRONG_PASSWORD') {
+        return { code: 'INCORRECT_PASSWORD', message: 'Current password is incorrect' }
+      }
+      if (code === 'VALIDATION_ERROR') {
+        return { code: 'VALIDATION_ERROR', message: message || 'Validation failed' }
       }
 
       // Fall back to message-based detection for this error
@@ -217,6 +232,21 @@ interface AuthPayloadResponse {
   refreshToken: string
   expiresAt: string
   tokenType: string
+}
+
+/**
+ * User fields response from account update mutations
+ * Matches the UserCoreFields GraphQL fragment
+ */
+interface UserFieldsResponse {
+  id: string
+  email: string
+  displayName: string
+  avatarUrl: string | null
+  role: string
+  emailVerified: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 /**
@@ -644,6 +674,152 @@ export const useAuthStore = create<AuthState>()(
           // Note: User will be fetched by app when needed (e.g., ProtectedRoute)
           setAuthToken(accessToken)
           set({ status: 'authenticated' })
+        }
+      },
+
+      // =========================================================================
+      // Account Settings Actions
+      // =========================================================================
+
+      /**
+       * Change the current user's password
+       * Invalidates all other sessions after successful change
+       *
+       * @param currentPassword - Current password for verification
+       * @param newPassword - New password (must meet complexity requirements)
+       * @returns Object containing the number of sessions invalidated
+       */
+      changePassword: async (currentPassword: string, newPassword: string) => {
+        set({ error: null })
+
+        try {
+          interface ChangePasswordResponse {
+            changePassword: {
+              success: boolean
+              sessionsInvalidated: number
+            }
+          }
+
+          const response = await graphqlClient.request<ChangePasswordResponse>(
+            CHANGE_PASSWORD_MUTATION,
+            {
+              input: {
+                currentPassword,
+                newPassword,
+              },
+            }
+          )
+
+          // Refresh user data to update passwordUpdatedAt
+          await get().fetchCurrentUser()
+
+          return { sessionsInvalidated: response.changePassword.sessionsInvalidated }
+        } catch (error) {
+          const authError = parseAuthError(error)
+          set({ error: authError })
+          throw authError
+        }
+      },
+
+      /**
+       * Update the current user's email address
+       * Requires password verification. Resets email_verified to false.
+       *
+       * @param newEmail - New email address
+       * @param currentPassword - Current password for verification
+       */
+      updateEmail: async (newEmail: string, currentPassword: string) => {
+        set({ error: null })
+
+        try {
+          interface UpdateEmailResponse {
+            updateEmail: UserFieldsResponse
+          }
+
+          const response = await graphqlClient.request<UpdateEmailResponse>(
+            UPDATE_EMAIL_MUTATION,
+            {
+              input: {
+                newEmail,
+                currentPassword,
+              },
+            }
+          )
+
+          // Update user in state with new email
+          const { user } = get()
+          if (user) {
+            set({
+              user: {
+                ...user,
+                email: response.updateEmail.email,
+                emailVerified: response.updateEmail.emailVerified,
+                updatedAt: response.updateEmail.updatedAt,
+              },
+            })
+          }
+        } catch (error) {
+          const authError = parseAuthError(error)
+          set({ error: authError })
+          throw authError
+        }
+      },
+
+      /**
+       * Update the current user's profile (display name and/or avatar)
+       *
+       * @param displayName - New display name (optional)
+       * @param avatarUrl - New avatar URL (optional, null to clear)
+       */
+      updateProfile: async (displayName?: string, avatarUrl?: string | null) => {
+        set({ error: null })
+
+        // Build input object with only provided fields
+        const input: { displayName?: string; avatarUrl?: string } = {}
+        if (displayName !== undefined) {
+          input.displayName = displayName
+        }
+        if (avatarUrl !== undefined) {
+          // Convert null to empty string for clearing
+          input.avatarUrl = avatarUrl === null ? '' : avatarUrl
+        }
+
+        // Validate at least one field is provided
+        if (Object.keys(input).length === 0) {
+          const authError: AuthError = {
+            code: 'VALIDATION_ERROR',
+            message: 'At least one field (displayName or avatarUrl) must be provided',
+          }
+          set({ error: authError })
+          throw authError
+        }
+
+        try {
+          interface UpdateProfileResponse {
+            updateProfile: UserFieldsResponse
+          }
+
+          const response = await graphqlClient.request<UpdateProfileResponse>(
+            UPDATE_PROFILE_MUTATION,
+            { input }
+          )
+
+          // Update user in state with new profile data
+          const { user } = get()
+          if (user) {
+            set({
+              user: {
+                ...user,
+                displayName: response.updateProfile.displayName,
+                avatarUrl: response.updateProfile.avatarUrl ?? undefined,
+                updatedAt: response.updateProfile.updatedAt,
+              },
+            })
+          }
+        } catch (error) {
+          const authError = parseAuthError(error)
+          set({ error: authError })
+          throw authError
         }
       },
     }),

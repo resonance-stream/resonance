@@ -75,3 +75,20 @@ export type AuthErrorCode =
   | 'RATE_LIMITED'
   | 'NETWORK_ERROR'
   | 'UNKNOWN_ERROR'
+  // Account settings error codes
+  | 'INCORRECT_PASSWORD'     // Current password verification failed
+  | 'VALIDATION_ERROR'       // Generic validation failure
+
+/**
+ * Type guard to safely check if an unknown error is an AuthError
+ */
+export function isAuthError(err: unknown): err is AuthError {
+  return (
+    err !== null &&
+    typeof err === 'object' &&
+    'code' in err &&
+    'message' in err &&
+    typeof (err as AuthError).code === 'string' &&
+    typeof (err as AuthError).message === 'string'
+  )
+}

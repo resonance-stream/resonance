@@ -47,7 +47,8 @@ impl UserQuery {
                 email_verified,
                 last_seen_at,
                 created_at,
-                updated_at
+                updated_at,
+                password_updated_at
             FROM users
             WHERE id = $1
             "#,
