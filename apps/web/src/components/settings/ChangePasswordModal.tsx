@@ -49,6 +49,11 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
 
   const handleOpenChange = (newOpen: boolean): void => {
     if (!newOpen) {
+      // Clear any pending auto-close timer to prevent race condition
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
+      }
       resetForm()
     }
     onOpenChange(newOpen)

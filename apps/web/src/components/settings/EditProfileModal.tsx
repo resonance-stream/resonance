@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useState, useEffect, useRef, useMemo, type FormEvent } from 'react'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import {
@@ -27,6 +27,24 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps):
   const [error, setError] = useState<AuthError | null>(null)
   const [success, setSuccess] = useState(false)
   const [avatarLoadError, setAvatarLoadError] = useState(false)
+
+  // Compute sanitized URL for preview - only http/https URLs pass through
+  // This is separate from isValidUrl to make security validation explicit for static analyzers
+  const sanitizedPreviewUrl = useMemo(() => {
+    if (!avatarUrl) return null
+    const trimmed = avatarUrl.trim()
+    if (!trimmed) return null
+    try {
+      const parsed = new URL(trimmed)
+      // Only allow safe protocols to prevent XSS
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return trimmed
+      }
+    } catch {
+      // Invalid URL - don't render preview
+    }
+    return null
+  }, [avatarUrl])
 
   // Ref for auto-close timeout cleanup
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -62,6 +80,11 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps):
 
   const handleOpenChange = (newOpen: boolean): void => {
     if (!newOpen) {
+      // Clear any pending auto-close timer to prevent race condition
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
+      }
       resetForm()
     }
     onOpenChange(newOpen)
@@ -188,13 +211,13 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps):
             </p>
           </div>
 
-          {/* Avatar preview */}
-          {avatarUrl && isValidUrl(avatarUrl) && (
+          {/* Avatar preview - uses sanitizedPreviewUrl which is explicitly validated */}
+          {sanitizedPreviewUrl && (
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">Preview:</span>
               {!avatarLoadError ? (
                 <img
-                  src={avatarUrl}
+                  src={sanitizedPreviewUrl}
                   alt="Avatar preview"
                   className="w-10 h-10 rounded-full object-cover bg-background-tertiary"
                   onError={() => setAvatarLoadError(true)}
