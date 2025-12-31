@@ -292,14 +292,15 @@ impl AdminRepository {
         };
 
         // If demoting from admin, check if this is the last admin
-        // Use FOR UPDATE to lock all admin rows, preventing concurrent demotions
+        // Use SELECT id FOR UPDATE to lock all admin rows, preventing concurrent demotions
+        // Note: COUNT(*) with FOR UPDATE doesn't lock rows; we must select actual rows
         if current_role == UserRole::Admin && new_role != UserRole::Admin {
-            let admin_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' FOR UPDATE")
-                    .fetch_one(&mut *tx)
+            let admin_ids: Vec<Uuid> =
+                sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' FOR UPDATE")
+                    .fetch_all(&mut *tx)
                     .await?;
 
-            if admin_count <= 1 {
+            if admin_ids.len() <= 1 {
                 return Err(AdminOperationError::LastAdminDemotion);
             }
         }
@@ -345,14 +346,15 @@ impl AdminRepository {
         };
 
         // If deleting an admin, check if this is the last admin
-        // Use FOR UPDATE to lock all admin rows, preventing concurrent deletions
+        // Use SELECT id FOR UPDATE to lock all admin rows, preventing concurrent deletions
+        // Note: COUNT(*) with FOR UPDATE doesn't lock rows; we must select actual rows
         if user_role == UserRole::Admin {
-            let admin_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' FOR UPDATE")
-                    .fetch_one(&mut *tx)
+            let admin_ids: Vec<Uuid> =
+                sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' FOR UPDATE")
+                    .fetch_all(&mut *tx)
                     .await?;
 
-            if admin_count <= 1 {
+            if admin_ids.len() <= 1 {
                 return Err(AdminOperationError::LastAdminDeletion);
             }
         }

@@ -2,7 +2,7 @@
  * Users table for admin management
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Search, ChevronLeft, ChevronRight, Shield, User as UserIcon, Eye } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
@@ -49,16 +49,20 @@ export function UsersTable() {
   const [searchDebounced, setSearchDebounced] = useState('')
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
 
-  // Debounce search input
+  // Handle search input change
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value)
-    // Simple debounce using setTimeout
-    const timeoutId = setTimeout(() => {
-      setSearchDebounced(value)
+  }, [])
+
+  // Debounce search input with proper cleanup
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setSearchDebounced(search)
       setPage(0) // Reset to first page on search
     }, 300)
-    return () => clearTimeout(timeoutId)
-  }, [])
+
+    return () => window.clearTimeout(timeoutId)
+  }, [search])
 
   const { data, isLoading, error } = useAdminUsers({
     limit: PAGE_SIZE,

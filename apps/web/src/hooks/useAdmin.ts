@@ -128,7 +128,9 @@ export function useUpdateUserRole() {
     },
     onSuccess: (updatedUser: GqlAdminUserListItem) => {
       // Invalidate all users list queries (all paginated/searched variations)
-      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'admin' && q.queryKey[1] === 'users',
+      })
       // Update the specific user cache
       queryClient.setQueryData(adminKeys.user(updatedUser.id), (old: GqlAdminUserDetail | undefined) => {
         if (old) {
@@ -153,7 +155,9 @@ export function useDeleteUser() {
     },
     onSuccess: (_result, userId) => {
       // Invalidate all users list queries (all paginated/searched variations)
-      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'admin' && q.queryKey[1] === 'users',
+      })
       // Remove user from cache
       queryClient.removeQueries({ queryKey: adminKeys.user(userId) })
     },
@@ -175,7 +179,9 @@ export function useInvalidateSessions() {
       // Invalidate the user detail to refresh session data
       queryClient.invalidateQueries({ queryKey: adminKeys.user(userId) })
       // Invalidate all users list queries (session counts changed)
-      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'admin' && q.queryKey[1] === 'users',
+      })
       // Invalidate system stats since active session count changed
       queryClient.invalidateQueries({ queryKey: adminKeys.stats() })
     },
