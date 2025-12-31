@@ -7,7 +7,7 @@
  * - Track limit and sort options
  */
 
-import { memo, useCallback, useRef } from 'react'
+import { memo, useCallback, useRef, useState, useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
@@ -119,6 +119,14 @@ const OptionsSection = memo(function OptionsSection({
   onSortDirectionChange,
   disabled,
 }: OptionsSectionProps): JSX.Element {
+  // Local state for limit input to allow empty/intermediate values while typing
+  const [limitText, setLimitText] = useState(String(limit))
+
+  // Sync local state when prop changes (e.g., from parent reset)
+  useEffect(() => {
+    setLimitText(String(limit))
+  }, [limit])
+
   return (
     <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-white/10">
       {/* Limit */}
@@ -129,20 +137,28 @@ const OptionsSection = memo(function OptionsSection({
         <Input
           id="playlist-limit"
           type="number"
-          value={limit}
+          value={limitText}
           onChange={(e) => {
-            const val = parseInt(e.target.value, 10)
-            if (!isNaN(val) && val >= 1 && val <= VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT) {
-              onLimitChange(val)
+            const next = e.target.value
+            setLimitText(next)
+            // Commit valid values immediately for responsiveness
+            const parsed = parseInt(next, 10)
+            if (Number.isFinite(parsed) && parsed >= 1 && parsed <= VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT) {
+              onLimitChange(parsed)
             }
           }}
-          onBlur={(e) => {
-            // Coerce to valid range on blur
-            const val = parseInt(e.target.value, 10)
-            if (isNaN(val) || val < 1) {
+          onBlur={() => {
+            // Coerce to valid range on blur and sync local state
+            const parsed = parseInt(limitText, 10)
+            if (!Number.isFinite(parsed) || parsed < 1) {
               onLimitChange(1)
-            } else if (val > VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT) {
+              setLimitText('1')
+            } else if (parsed > VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT) {
               onLimitChange(VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT)
+              setLimitText(String(VALIDATION_LIMITS.MAX_PLAYLIST_LIMIT))
+            } else {
+              onLimitChange(parsed)
+              setLimitText(String(parsed))
             }
           }}
           min={1}

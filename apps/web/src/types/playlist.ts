@@ -702,6 +702,7 @@ export function validateSmartPlaylistForm(form: SmartPlaylistFormState): Validat
       }
     } else if (
       rule.operator !== 'is_empty' &&
+      rule.operator !== 'between' &&
       (rule.value === null ||
         (typeof rule.value === 'string' && rule.value.trim() === '') ||
         (Array.isArray(rule.value) && rule.value.length === 0))

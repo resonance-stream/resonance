@@ -145,9 +145,12 @@ export default function Library() {
         <div className="flex items-center gap-3">
           {/* Create Playlist Button */}
           <Button
+            type="button"
             variant="accent"
             size="sm"
             onClick={() => setIsCreateModalOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={isCreateModalOpen}
           >
             <Plus size={16} className="mr-1" aria-hidden="true" />
             Create Playlist
