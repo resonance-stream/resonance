@@ -51,6 +51,19 @@ pub struct AdminSessionRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// Error type for admin operations that require atomicity
+#[derive(Debug, thiserror::Error)]
+pub enum AdminOperationError {
+    #[error("User not found")]
+    UserNotFound,
+    #[error("Cannot demote the last administrator")]
+    LastAdminDemotion,
+    #[error("Cannot delete the last administrator")]
+    LastAdminDeletion,
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
 /// Repository for admin database operations
 #[derive(Clone)]
 pub struct AdminRepository {
@@ -246,73 +259,119 @@ impl AdminRepository {
         .await
     }
 
-    /// Update a user's role
+    /// Update a user's role with atomic last-admin protection
+    ///
+    /// This method wraps the check and update in a transaction to prevent
+    /// race conditions when demoting admins.
     ///
     /// # Arguments
     /// * `user_id` - The user to update
     /// * `new_role` - The new role to assign
     ///
     /// # Returns
-    /// * `Ok(true)` - If the role was updated
-    /// * `Ok(false)` - If no user was found
-    pub async fn update_user_role(
+    /// * `Ok(())` - If the role was updated successfully
+    /// * `Err(AdminOperationError::UserNotFound)` - If no user was found
+    /// * `Err(AdminOperationError::LastAdminDemotion)` - If this would leave no admins
+    pub async fn update_user_role_atomic(
         &self,
         user_id: Uuid,
         new_role: UserRole,
-    ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            r#"
-            UPDATE users
-            SET role = $2, updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(user_id)
-        .bind(new_role)
-        .execute(&self.pool)
-        .await?;
+    ) -> Result<(), AdminOperationError> {
+        let mut tx = self.pool.begin().await?;
 
-        Ok(result.rows_affected() > 0)
+        // Get the current user's role with FOR UPDATE to lock the row
+        let current_role: Option<UserRole> =
+            sqlx::query_scalar("SELECT role FROM users WHERE id = $1 FOR UPDATE")
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+        let current_role = match current_role {
+            Some(role) => role,
+            None => return Err(AdminOperationError::UserNotFound),
+        };
+
+        // If demoting from admin, check if this is the last admin
+        // Use FOR UPDATE to lock all admin rows, preventing concurrent demotions
+        if current_role == UserRole::Admin && new_role != UserRole::Admin {
+            let admin_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' FOR UPDATE")
+                    .fetch_one(&mut *tx)
+                    .await?;
+
+            if admin_count <= 1 {
+                return Err(AdminOperationError::LastAdminDemotion);
+            }
+        }
+
+        // Perform the update
+        sqlx::query("UPDATE users SET role = $2, updated_at = NOW() WHERE id = $1")
+            .bind(user_id)
+            .bind(new_role)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+
+        Ok(())
     }
 
-    /// Count the number of admin users
-    ///
-    /// Used to prevent deleting or demoting the last admin.
-    pub async fn count_admins(&self) -> Result<i64, sqlx::Error> {
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(&self.pool)
-            .await
-    }
-
-    /// Delete a user account
+    /// Delete a user account with atomic last-admin protection
     ///
     /// This invalidates all sessions and removes the user from the database.
-    /// The operation is wrapped in a transaction for consistency.
+    /// The operation is wrapped in a transaction for consistency and includes
+    /// a check to prevent deleting the last admin.
     ///
     /// # Arguments
     /// * `user_id` - The user to delete
     ///
     /// # Returns
-    /// * `Ok(true)` - If the user was deleted
-    /// * `Ok(false)` - If no user was found
-    pub async fn delete_user(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
+    /// * `Ok(())` - If the user was deleted
+    /// * `Err(AdminOperationError::UserNotFound)` - If no user was found
+    /// * `Err(AdminOperationError::LastAdminDeletion)` - If this would leave no admins
+    pub async fn delete_user_atomic(&self, user_id: Uuid) -> Result<(), AdminOperationError> {
         let mut tx = self.pool.begin().await?;
 
-        // First invalidate all sessions
+        // Get the user's role with FOR UPDATE to lock the row
+        let user_role: Option<UserRole> =
+            sqlx::query_scalar("SELECT role FROM users WHERE id = $1 FOR UPDATE")
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+        let user_role = match user_role {
+            Some(role) => role,
+            None => return Err(AdminOperationError::UserNotFound),
+        };
+
+        // If deleting an admin, check if this is the last admin
+        // Use FOR UPDATE to lock all admin rows, preventing concurrent deletions
+        if user_role == UserRole::Admin {
+            let admin_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' FOR UPDATE")
+                    .fetch_one(&mut *tx)
+                    .await?;
+
+            if admin_count <= 1 {
+                return Err(AdminOperationError::LastAdminDeletion);
+            }
+        }
+
+        // Invalidate all sessions
         sqlx::query("UPDATE sessions SET is_active = false WHERE user_id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
 
         // Delete the user
-        let result = sqlx::query("DELETE FROM users WHERE id = $1")
+        sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
 
         tx.commit().await?;
 
-        Ok(result.rows_affected() > 0)
+        Ok(())
     }
 
     /// Invalidate all sessions for a user

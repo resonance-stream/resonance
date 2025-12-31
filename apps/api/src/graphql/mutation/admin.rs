@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::graphql::types::AdminUserListItem;
 use crate::models::user::{Claims, UserRole as DbUserRole};
-use crate::repositories::AdminRepository;
+use crate::repositories::{AdminOperationError, AdminRepository};
 
 /// User role input for admin operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
@@ -106,44 +106,27 @@ impl AdminMutation {
         let pool = ctx.data::<PgPool>()?;
         let repo = AdminRepository::new(pool.clone());
 
-        // Check if demoting the last admin
         let db_role: DbUserRole = input.role.into();
-        if db_role != DbUserRole::Admin {
-            // Get current user to check if they're an admin
-            let current_user = repo
-                .find_by_id(input.user_id)
-                .await
-                .map_err(|e| {
-                    tracing::error!(error = %e, user_id = %input.user_id, "Failed to get user");
-                    async_graphql::Error::new("Failed to get user")
-                })?
-                .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
-            if current_user.role == DbUserRole::Admin {
-                let admin_count = repo.count_admins().await.map_err(|e| {
-                    tracing::error!(error = %e, "Failed to count admins");
-                    async_graphql::Error::new("Failed to verify admin count")
-                })?;
-
-                if admin_count <= 1 {
-                    return Err(async_graphql::Error::new(
-                        "Cannot demote the last administrator",
-                    ));
-                }
-            }
-        }
-
-        let updated = repo
-            .update_user_role(input.user_id, db_role)
+        // Use atomic operation with transaction-based last-admin protection
+        repo.update_user_role_atomic(input.user_id, db_role)
             .await
-            .map_err(|e| {
-                tracing::error!(error = %e, user_id = %input.user_id, "Failed to update user role");
-                async_graphql::Error::new("Failed to update user role")
+            .map_err(|e| match e {
+                AdminOperationError::UserNotFound => {
+                    async_graphql::Error::new("User not found")
+                }
+                AdminOperationError::LastAdminDemotion => {
+                    async_graphql::Error::new("Cannot demote the last administrator")
+                }
+                AdminOperationError::LastAdminDeletion => {
+                    // This shouldn't happen for role update, but handle it anyway
+                    async_graphql::Error::new("Cannot demote the last administrator")
+                }
+                AdminOperationError::Database(db_err) => {
+                    tracing::error!(error = %db_err, user_id = %input.user_id, "Failed to update user role");
+                    async_graphql::Error::new("Failed to update user role")
+                }
             })?;
-
-        if !updated {
-            return Err(async_graphql::Error::new("User not found"));
-        }
 
         tracing::info!(
             admin_id = %claims.sub,
@@ -152,7 +135,7 @@ impl AdminMutation {
             "Admin updated user role"
         );
 
-        // Fetch the updated user (efficient single query)
+        // Fetch the updated user
         let user = repo
             .find_by_id(input.user_id)
             .await
@@ -175,6 +158,7 @@ impl AdminMutation {
     /// # Errors
     /// - Returns error if not authenticated as admin
     /// - Returns error if trying to delete own account
+    /// - Returns error if deleting the last admin
     /// - Returns error if user not found
     async fn admin_delete_user(
         &self,
@@ -195,14 +179,23 @@ impl AdminMutation {
         let pool = ctx.data::<PgPool>()?;
         let repo = AdminRepository::new(pool.clone());
 
-        let deleted = repo.delete_user(user_id).await.map_err(|e| {
-            tracing::error!(error = %e, user_id = %user_id, "Failed to delete user");
-            async_graphql::Error::new("Failed to delete user")
-        })?;
-
-        if !deleted {
-            return Err(async_graphql::Error::new("User not found"));
-        }
+        // Use atomic operation with transaction-based last-admin protection
+        repo.delete_user_atomic(user_id)
+            .await
+            .map_err(|e| match e {
+                AdminOperationError::UserNotFound => async_graphql::Error::new("User not found"),
+                AdminOperationError::LastAdminDeletion => {
+                    async_graphql::Error::new("Cannot delete the last administrator")
+                }
+                AdminOperationError::LastAdminDemotion => {
+                    // This shouldn't happen for delete, but handle it anyway
+                    async_graphql::Error::new("Cannot delete the last administrator")
+                }
+                AdminOperationError::Database(db_err) => {
+                    tracing::error!(error = %db_err, user_id = %user_id, "Failed to delete user");
+                    async_graphql::Error::new("Failed to delete user")
+                }
+            })?;
 
         tracing::info!(
             admin_id = %claims.sub,

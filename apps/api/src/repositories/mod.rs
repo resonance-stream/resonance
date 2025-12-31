@@ -22,7 +22,7 @@ pub mod track;
 pub mod user;
 pub mod utils;
 
-pub use admin::{AdminRepository, AdminSessionRow, AdminUserRow, SystemStats};
+pub use admin::{AdminOperationError, AdminRepository, AdminSessionRow, AdminUserRow, SystemStats};
 pub use album::AlbumRepository;
 pub use artist::ArtistRepository;
 pub use chat::ChatRepository;
