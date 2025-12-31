@@ -542,6 +542,13 @@ impl AuthService {
             return Err(ApiError::Unauthorized);
         }
 
+        // Prevent reusing the same password (server-side validation)
+        if self.verify_password(new_password, &user.password_hash)? {
+            return Err(ApiError::ValidationError(
+                "new password must be different from current password".to_string(),
+            ));
+        }
+
         // Validate new password complexity
         let password_validation = validate_password_complexity(new_password);
         if !password_validation.is_valid {

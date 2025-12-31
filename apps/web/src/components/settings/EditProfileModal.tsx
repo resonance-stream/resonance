@@ -29,16 +29,19 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps):
   const [avatarLoadError, setAvatarLoadError] = useState(false)
 
   // Compute sanitized URL for preview - only http/https URLs pass through
-  // This is separate from isValidUrl to make security validation explicit for static analyzers
+  // Uses parsed.href (normalized by URL API) to make sanitization explicit for static analyzers
   const sanitizedPreviewUrl = useMemo(() => {
     if (!avatarUrl) return null
     const trimmed = avatarUrl.trim()
     if (!trimmed) return null
+    // Length check to match backend validation
+    if (trimmed.length > 2048) return null
     try {
       const parsed = new URL(trimmed)
       // Only allow safe protocols to prevent XSS
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        return trimmed
+        // Return normalized URL from parser, not raw input
+        return parsed.href
       }
     } catch {
       // Invalid URL - don't render preview
