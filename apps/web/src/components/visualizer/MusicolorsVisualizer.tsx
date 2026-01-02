@@ -82,7 +82,8 @@ export function MusicolorsVisualizer({ className }: MusicolorsVisualizerProps): 
   );
 
   useEffect(() => {
-    if (!containerRef.current || !isInitialized) return;
+    const container = containerRef.current;
+    if (!container || !isInitialized) return;
 
     // Don't start visualizer if user prefers reduced motion
     if (prefersReducedMotion) {
@@ -97,27 +98,26 @@ export function MusicolorsVisualizer({ className }: MusicolorsVisualizerProps): 
     }
 
     // Create and initialize the visualizer
-    const viz = new Visualizer(containerRef.current);
+    const viz = new Visualizer(container);
     viz.initWithAnalyser(analyser, audioContext);
     viz.start();
     visualizerRef.current = viz;
 
-    // Handle resize with debouncing
-    window.addEventListener('resize', debouncedResize);
-
-    // Initial resize to fit container
-    handleResize();
+    // Use ResizeObserver for more efficient resize handling
+    const resizeObserver = new ResizeObserver(debouncedResize);
+    resizeObserver.observe(container);
 
     // Cleanup
     return () => {
-      window.removeEventListener('resize', debouncedResize);
-      debouncedResize.cancel(); // Cancel any pending debounced calls
+      resizeObserver.disconnect();
+      debouncedResize.cancel();
       if (visualizerRef.current) {
+        visualizerRef.current.stop();
         visualizerRef.current.destroy();
         visualizerRef.current = null;
       }
     };
-  }, [isInitialized, prefersReducedMotion, getAnalyser, getAudioContext, handleResize, debouncedResize]);
+  }, [isInitialized, prefersReducedMotion, getAnalyser, getAudioContext, debouncedResize]);
 
   return (
     <div

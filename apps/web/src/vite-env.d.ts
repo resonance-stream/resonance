@@ -28,5 +28,6 @@ declare module 'resonance-visualizer' {
     stop(): void;
     destroy(): void;
     resize(width: number, height: number): void;
+    readonly isRunning: boolean;
   }
 }

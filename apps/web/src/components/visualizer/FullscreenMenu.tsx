@@ -93,6 +93,7 @@ export function FullscreenMenu(): JSX.Element {
         >
           {/* Visualizer Toggle */}
           <button
+            type="button"
             onClick={() => {
               toggleVisualizer();
               setIsOpen(false);
@@ -123,6 +124,7 @@ export function FullscreenMenu(): JSX.Element {
 
           {/* Add to Playlist */}
           <button
+            type="button"
             onClick={() => setIsOpen(false)}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/5 transition-colors"
             role="menuitem"
@@ -133,6 +135,7 @@ export function FullscreenMenu(): JSX.Element {
 
           {/* Go to Radio */}
           <button
+            type="button"
             onClick={() => setIsOpen(false)}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/5 transition-colors"
             role="menuitem"
@@ -143,6 +146,7 @@ export function FullscreenMenu(): JSX.Element {
 
           {/* Share */}
           <button
+            type="button"
             onClick={() => setIsOpen(false)}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-white/5 transition-colors"
             role="menuitem"

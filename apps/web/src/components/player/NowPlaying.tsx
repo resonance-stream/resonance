@@ -32,6 +32,7 @@ export function NowPlaying(): JSX.Element | null {
 
   return (
     <button
+      type="button"
       onClick={openFullscreen}
       className={cn(
         'flex items-center gap-3 min-w-0',

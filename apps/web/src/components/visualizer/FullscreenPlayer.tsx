@@ -45,9 +45,10 @@ export function FullscreenPlayer(): JSX.Element | null {
   );
 
   useEffect(() => {
+    if (!isFullscreen) return;
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, [handleKeyDown, isFullscreen]);
 
   // Prevent body scroll when fullscreen is open
   useEffect(() => {
