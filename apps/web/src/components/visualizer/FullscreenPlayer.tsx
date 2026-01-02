@@ -46,22 +46,28 @@ export function FullscreenPlayer(): JSX.Element | null {
 
   useEffect(() => {
     if (!isFullscreen) return;
-    const opts: AddEventListenerOptions = { capture: true };
-    document.addEventListener('keydown', handleKeyDown, opts);
-    return () => document.removeEventListener('keydown', handleKeyDown, opts);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [handleKeyDown, isFullscreen]);
 
   // Prevent body scroll when fullscreen is open
   useEffect(() => {
-    if (isFullscreen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
+    if (!isFullscreen) return;
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     return () => {
-      document.body.style.overflow = '';
+      document.body.style.overflow = prevOverflow;
     };
   }, [isFullscreen]);
+
+  // Auto-close if track becomes null while fullscreen is open
+  useEffect(() => {
+    if (isFullscreen && !currentTrack) {
+      closeFullscreen();
+    }
+  }, [isFullscreen, currentTrack, closeFullscreen]);
 
   if (!isFullscreen || !currentTrack) {
     return null;

@@ -283,7 +283,9 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
   }, [engine]);
 
   const getAudioContext = useCallback((): globalThis.AudioContext | null => {
-    return engine.getAudioContext();
+    const ctx = engine.getAudioContext();
+    if (!ctx || ctx.state === 'closed') return null;
+    return ctx;
   }, [engine]);
 
   // Cleanup on unmount

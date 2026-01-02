@@ -52,13 +52,13 @@ export function MusicolorsVisualizer({ className }: MusicolorsVisualizerProps): 
 
   // Listen for reduced motion preference changes
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const handleChange = (e: MediaQueryListEvent) => {
       setPrefersReducedMotion(e.matches);
-      // If reduced motion is enabled, stop + destroy the visualizer
-      if (e.matches && visualizerRef.current) {
-        visualizerRef.current.stop();
-        visualizerRef.current.destroy();
+      // Let the visualizer effect cleanup handle stopping/destroying to avoid double teardown
+      if (e.matches) {
         visualizerRef.current = null;
       }
     };
@@ -105,7 +105,8 @@ export function MusicolorsVisualizer({ className }: MusicolorsVisualizerProps): 
     visualizerRef.current = viz;
 
     // Use ResizeObserver for more efficient resize handling
-    const resizeObserver = new ResizeObserver(() => {
+    // Note: ResizeObserver callback receives (entries, observer) but we only need to trigger resize
+    const resizeObserver = new ResizeObserver(function onResize() {
       debouncedResize();
     });
     resizeObserver.observe(container);
