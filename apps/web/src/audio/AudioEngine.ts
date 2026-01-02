@@ -755,6 +755,24 @@ export class AudioEngine {
     return this._prefetchedTrack;
   }
 
+  // ============ Visualizer Access ============
+
+  /**
+   * Get the AnalyserNode for audio visualization
+   * Returns null if audio engine is not initialized
+   */
+  getAnalyser(): AnalyserNode | null {
+    return this.analyser;
+  }
+
+  /**
+   * Get the AudioContext for audio visualization
+   * Returns null if audio engine is not initialized
+   */
+  getAudioContext(): AudioContext | null {
+    return this.audioContext;
+  }
+
   // ============ Events ============
 
   /**

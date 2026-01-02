@@ -5,7 +5,7 @@ import { Button } from '../ui/Button';
 export interface AlbumArtProps {
   src?: string;
   alt: string;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'fullscreen';
   showPlayButton?: boolean;
   onPlay?: () => void;
   className?: string;
@@ -16,6 +16,7 @@ const sizeClasses = {
   md: 'w-24 h-24',
   lg: 'w-40 h-40',
   xl: 'w-60 h-60',
+  fullscreen: 'w-80 h-80',
 };
 
 const playButtonSizes = {
@@ -23,6 +24,7 @@ const playButtonSizes = {
   md: 'w-10 h-10',
   lg: 'w-12 h-12',
   xl: 'w-14 h-14',
+  fullscreen: 'w-16 h-16',
 };
 
 const playIconSizes = {
@@ -30,6 +32,7 @@ const playIconSizes = {
   md: 18,
   lg: 24,
   xl: 28,
+  fullscreen: 32,
 };
 
 export function AlbumArt({

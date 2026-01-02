@@ -35,6 +35,12 @@ export interface AudioContextValue {
 
   /** Set crossfade settings */
   setCrossfadeSettings: (settings: CrossfadeSettings) => void;
+
+  /** Get the AnalyserNode for audio visualization */
+  getAnalyser: () => AnalyserNode | null;
+
+  /** Get the AudioContext for audio visualization */
+  getAudioContext: () => AudioContext | null;
 }
 
 export const AudioContext = createContext<AudioContextValue | null>(null);
