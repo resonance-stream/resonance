@@ -277,6 +277,15 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
     engine.setCrossfade(settings);
   }, [engine]);
 
+  // Visualizer access methods
+  const getAnalyser = useCallback((): AnalyserNode | null => {
+    return engine.getAnalyser();
+  }, [engine]);
+
+  const getAudioContext = useCallback((): AudioContext | null => {
+    return engine.getAudioContext();
+  }, [engine]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -298,6 +307,8 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
       applyEqSettings,
       getCrossfadeSettings,
       setCrossfadeSettings,
+      getAnalyser,
+      getAudioContext,
     }),
     [
       seek,
@@ -310,6 +321,8 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
       applyEqSettings,
       getCrossfadeSettings,
       setCrossfadeSettings,
+      getAnalyser,
+      getAudioContext,
     ]
   );
 

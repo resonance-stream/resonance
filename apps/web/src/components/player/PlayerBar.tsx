@@ -5,6 +5,7 @@ import { PlaybackControls } from './PlaybackControls';
 import { VolumeControl } from './VolumeControl';
 import { EqualizerPanel } from '../equalizer';
 import { QueuePanel } from '../queue';
+import { FullscreenPlayer } from '../visualizer';
 import { useEqualizerStore } from '../../stores/equalizerStore';
 import { cn } from '../../lib/utils';
 
@@ -33,6 +34,9 @@ export function PlayerBar(): JSX.Element | null {
 
   return (
     <>
+      {/* Fullscreen Player View */}
+      <FullscreenPlayer />
+
       {/* EQ Panel Overlay */}
       {activePanel === 'equalizer' && (
         <div className="fixed bottom-24 right-4 z-50 animate-fade-in">

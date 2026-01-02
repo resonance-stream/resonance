@@ -1,11 +1,13 @@
 import { useRef, useEffect, useState } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useVisualizerStore } from '../../stores/visualizerStore';
 import { AlbumArt } from '../media/AlbumArt';
 import { cn } from '../../lib/utils';
 
 export function NowPlaying(): JSX.Element | null {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const openFullscreen = useVisualizerStore((s) => s.openFullscreen);
 
   // Track previous track ID to only announce on actual track changes
   const previousTrackIdRef = useRef<string | null>(null);
@@ -29,7 +31,16 @@ export function NowPlaying(): JSX.Element | null {
   }
 
   return (
-    <div className="flex items-center gap-3 min-w-0">
+    <button
+      onClick={openFullscreen}
+      className={cn(
+        'flex items-center gap-3 min-w-0',
+        'rounded-lg p-1 -m-1',
+        'hover:bg-white/5 transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50'
+      )}
+      aria-label={`Now playing: ${currentTrack.title} by ${currentTrack.artist}. Click to open fullscreen view.`}
+    >
       {/* Album Art with subtle animation when playing */}
       <div
         className={cn(
@@ -46,7 +57,7 @@ export function NowPlaying(): JSX.Element | null {
       </div>
 
       {/* Track Info */}
-      <div className="flex flex-col min-w-0">
+      <div className="flex flex-col min-w-0 text-left">
         {/* Track Title - uses display font for premium feel */}
         <span
           className="font-display text-sm text-text-primary truncate"
@@ -70,6 +81,6 @@ export function NowPlaying(): JSX.Element | null {
           {announcement}
         </div>
       )}
-    </div>
+    </button>
   );
 }
