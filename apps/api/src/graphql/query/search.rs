@@ -109,7 +109,8 @@ impl SearchQuery {
         )]
         limit: i32,
     ) -> Result<Vec<ScoredTrack>> {
-        let uuid = Uuid::parse_str(&track_id)?;
+        let uuid = Uuid::parse_str(&track_id)
+            .map_err(|_| async_graphql::Error::new("Invalid track ID"))?;
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT) as i32;
 
         let similarity_service = ctx.data::<SimilarityService>()?;
@@ -139,7 +140,8 @@ impl SearchQuery {
         )]
         limit: i32,
     ) -> Result<Vec<SimilarTrack>> {
-        let uuid = Uuid::parse_str(&track_id)?;
+        let uuid = Uuid::parse_str(&track_id)
+            .map_err(|_| async_graphql::Error::new("Invalid track ID"))?;
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT) as i32;
 
         let similarity_service = ctx.data::<SimilarityService>()?;
