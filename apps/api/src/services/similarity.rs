@@ -5,10 +5,7 @@
 //! - Audio features (acoustic similarity)
 //! - Genre and mood matching (categorical similarity)
 //!
-//! This service is used by the semantic search GraphQL API (Phase 6).
-
-// TODO: Remove once GraphQL API integration is complete in Phase 6
-#![allow(dead_code)]
+//! This service is used by the semantic search GraphQL API.
 
 use std::collections::HashMap;
 
@@ -21,9 +18,6 @@ use crate::error::{ApiError, ApiResult};
 
 /// Maximum number of similar tracks that can be requested
 const MAX_SIMILARITY_RESULTS: i32 = 100;
-
-/// Default number of similar tracks to return
-const DEFAULT_SIMILARITY_RESULTS: i32 = 20;
 
 /// Similarity weights for combined scoring
 const WEIGHT_SEMANTIC: f64 = 0.5;
