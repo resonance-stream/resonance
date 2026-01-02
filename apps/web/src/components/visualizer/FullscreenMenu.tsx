@@ -104,7 +104,8 @@ export function FullscreenMenu(): JSX.Element {
               'hover:bg-white/5 transition-colors',
               showVisualizer && 'text-accent'
             )}
-            role="menuitem"
+            role="menuitemcheckbox"
+            aria-checked={showVisualizer}
           >
             <Sparkles size={18} />
             <span>Visualizer</span>

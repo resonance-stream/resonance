@@ -282,7 +282,7 @@ export function AudioProvider({ children }: AudioProviderProps): JSX.Element {
     return engine.getAnalyser();
   }, [engine]);
 
-  const getAudioContext = useCallback((): AudioContext | null => {
+  const getAudioContext = useCallback((): globalThis.AudioContext | null => {
     return engine.getAudioContext();
   }, [engine]);
 
