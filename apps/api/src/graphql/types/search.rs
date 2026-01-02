@@ -42,24 +42,36 @@ impl ScoredTrack {
 
 impl From<ServiceScoredTrack> for ScoredTrack {
     fn from(st: ServiceScoredTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             track_id: st.track_id,
             title: st.title,
             artist_name: st.artist_name,
             album_title: st.album_title,
-            score: st.score,
+            score,
         }
     }
 }
 
 impl From<ServiceSimilarTrack> for ScoredTrack {
     fn from(st: ServiceSimilarTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             track_id: st.track_id,
             title: st.title,
             artist_name: st.artist_name,
             album_title: st.album_title,
-            score: st.score,
+            score,
         }
     }
 }
@@ -209,12 +221,18 @@ impl SimilarTrack {
 
 impl From<ServiceSimilarTrack> for SimilarTrack {
     fn from(st: ServiceSimilarTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             track_id: st.track_id,
             title: st.title,
             artist_name: st.artist_name,
             album_title: st.album_title,
-            score: st.score,
+            score,
             similarity_type: st.similarity_type.into(),
         }
     }
@@ -336,5 +354,62 @@ mod tests {
         assert!(graphql_track.artist_name.is_none());
         assert!(graphql_track.album_title.is_none());
         assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_nan() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: f64::NAN,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_infinity() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: f64::INFINITY,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_clamps_to_range() {
+        // Test negative score gets clamped to 0
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: -0.5,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+
+        // Test score > 1.0 gets clamped to 1.0
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: 1.5,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 1.0).abs() < f64::EPSILON);
     }
 }
