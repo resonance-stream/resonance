@@ -29,8 +29,7 @@ import type {
   ChatErrorPayload,
 } from '../sync/types';
 import { usePlayerStore } from '../stores/playerStore';
-import { mapGqlTrackToPlayerTrack } from '../lib/mappers';
-import type { GqlTrack } from '../types/library';
+import { fetchTrackById } from '../sync/fetchTrackById';
 
 // =============================================================================
 // GraphQL Queries
@@ -78,21 +77,6 @@ const DELETE_CONVERSATION_MUTATION = `
 const DELETE_ALL_CONVERSATIONS_MUTATION = `
   mutation DeleteAllConversations {
     deleteAllConversations
-  }
-`;
-
-const TRACK_BY_ID_QUERY = `
-  query Track($id: ID!) {
-    track(id: $id) {
-      id
-      title
-      durationMs
-      artistId
-      albumId
-      streamUrl
-      artist { name }
-      album { id title coverArtUrl }
-    }
   }
 `;
 
@@ -229,16 +213,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         if (!trackId) break;
 
         try {
-          const { track } = await graphqlClient.request<{ track: GqlTrack }>(
-            TRACK_BY_ID_QUERY,
-            { id: trackId }
-          );
+          const track = await fetchTrackById(trackId);
           if (track) {
-            const playerTrack = mapGqlTrackToPlayerTrack(track);
-            setTrack(playerTrack);
+            setTrack(track);
           }
         } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to play track:', err);
+          handleError({
+            conversation_id: useChatStore.getState().conversationId,
+            error: `Failed to play track: ${errorMsg}`,
+          });
         }
         break;
       }
@@ -248,17 +233,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
         try {
           for (const trackId of trackIds) {
-            const { track } = await graphqlClient.request<{ track: GqlTrack }>(
-              TRACK_BY_ID_QUERY,
-              { id: trackId }
-            );
+            const track = await fetchTrackById(trackId);
             if (track) {
-              const playerTrack = mapGqlTrackToPlayerTrack(track);
-              addToQueue(playerTrack);
+              addToQueue(track);
             }
           }
         } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to add to queue:', err);
+          handleError({
+            conversation_id: useChatStore.getState().conversationId,
+            error: `Failed to add tracks to queue: ${errorMsg}`,
+          });
         }
         break;
       }
@@ -287,7 +273,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, [setTrack, addToQueue, navigate]);
+  }, [setTrack, addToQueue, navigate, handleError]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
@@ -297,11 +283,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
     onChatComplete: useCallback((payload: ChatCompletePayload) => {
       completeResponse(payload);
-      // Execute any actions
+      // Execute any actions sequentially
       if (payload.actions?.length) {
-        payload.actions.forEach((action) => {
-          executeAction(action);
-        });
+        (async () => {
+          for (const action of payload.actions) {
+            await executeAction(action);
+          }
+        })();
       }
     }, [completeResponse, executeAction]),
 
