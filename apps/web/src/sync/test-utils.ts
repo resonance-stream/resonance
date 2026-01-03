@@ -26,11 +26,26 @@
  */
 
 import { vi } from 'vitest';
-import type { PlaybackState, QueueState, QueueTrack } from './types';
-import type { StateChangeSource } from './usePlaybackSync';
+import type { PlaybackState, QueueState, QueueTrack, StateChangeSource } from './types';
+import type { LocalQueueTrack } from './adapters';
+import type { UsePlaybackSyncOptions } from './usePlaybackSync';
+import type { UseQueueSyncOptions } from './useQueueSync';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
 import type { Track } from '../stores/playerStore';
+
+// Re-export options types from source hooks for test convenience
+export type { UsePlaybackSyncOptions, UseQueueSyncOptions };
+
+/**
+ * @deprecated Use UsePlaybackSyncOptions instead
+ */
+export type PlaybackSyncOptions = UsePlaybackSyncOptions;
+
+/**
+ * @deprecated Use UseQueueSyncOptions instead
+ */
+export type QueueSyncOptions = UseQueueSyncOptions;
 
 // =============================================================================
 // Playback State Factory
@@ -176,18 +191,8 @@ export function createQueueState(
 // Local Queue Track Factory
 // =============================================================================
 
-/**
- * Local queue track type (camelCase format, matches playerStore)
- */
-export interface LocalQueueTrack {
-  id: string;
-  title: string;
-  artist: string;
-  albumId: string;
-  albumTitle: string;
-  duration: number; // seconds
-  coverUrl?: string;
-}
+// Re-export LocalQueueTrack from adapters for convenience
+export type { LocalQueueTrack } from './adapters';
 
 /**
  * Default local queue track for testing (camelCase format)
@@ -379,17 +384,6 @@ export function resetAllSyncStores(): void {
 // =============================================================================
 
 /**
- * Options for usePlaybackSync hook
- */
-export interface PlaybackSyncOptions {
-  isConnected: boolean;
-  sendPlaybackUpdate: (state: PlaybackState) => void;
-  stateSourceRef: React.MutableRefObject<StateChangeSource>;
-  onRemoteTrackChange?: (trackId: string) => void;
-  positionBroadcastInterval?: number;
-}
-
-/**
  * Create mock options for usePlaybackSync hook
  *
  * @param overrides - Partial options to override defaults
@@ -414,15 +408,6 @@ export function createMockPlaybackSyncOptions(
     stateSourceRef: { current: null },
     ...overrides,
   };
-}
-
-/**
- * Options for useQueueSync hook
- */
-export interface QueueSyncOptions {
-  isConnected: boolean;
-  sendQueueUpdate: (state: QueueState) => void;
-  stateSourceRef: React.MutableRefObject<StateChangeSource>;
 }
 
 /**
