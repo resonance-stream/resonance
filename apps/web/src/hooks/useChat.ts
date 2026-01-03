@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { graphqlClient } from '../lib/api';
 import {
@@ -215,6 +216,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const setTrack = usePlayerStore((s) => s.setTrack);
   const addToQueue = usePlayerStore((s) => s.addToQueue);
 
+  // Navigation for action execution
+  const navigate = useNavigate();
+
   // Execute a chat action (play track, add to queue, etc.)
   const executeAction = useCallback(async (action: ChatAction) => {
     console.log('[Chat] Executing action:', action);
@@ -259,8 +263,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'create_playlist': {
-        console.log('[Chat] create_playlist action:', action.payload);
-        // Would call playlist mutation
+        const name = action.payload.name as string | undefined;
+        const trackIds = action.payload.track_ids as string[] | undefined;
+        navigate('/library/playlists/new', {
+          state: { name, trackIds }
+        });
         break;
       }
       case 'search_library': {
@@ -276,7 +283,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, [setTrack, addToQueue]);
+  }, [setTrack, addToQueue, navigate]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
