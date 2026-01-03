@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button'
 import { AlbumArt } from '../components/media/AlbumArt'
 import { QualityBadge, type QualityBadgeProps } from '../components/ui/Badge'
 import { SkeletonHeader, SkeletonTrackRow } from '../components/ui/Skeleton'
+import { SimilarTracksSection, FindSimilarButton } from '../components/similar'
 import { useAlbum } from '../hooks/useLibrary'
 import { usePlayerStore } from '../stores/playerStore'
 import { mapAlbumToPlayerTracks, formatDurationMs } from '../lib/mappers'
@@ -94,13 +95,14 @@ export default function Album() {
       <div className="flex flex-1 flex-col p-6 animate-fade-in">
         <SkeletonHeader className="mb-8" />
         <div className="mt-4">
-          <div className="grid grid-cols-[auto_1fr_auto_auto] gap-4 px-4 py-2 text-sm text-text-muted border-b border-white/5">
+          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-4 px-4 py-2 text-sm text-text-muted border-b border-white/5">
             <span className="w-8 text-center">#</span>
             <span>Title</span>
             <span className="w-20 text-center">Quality</span>
             <span className="w-16 text-right flex items-center justify-end">
               <Clock size={16} />
             </span>
+            <span className="w-8" />
           </div>
           <div className="divide-y divide-white/5">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -182,13 +184,15 @@ export default function Album() {
       {/* Track List */}
       <div className="mt-4">
         {/* Header */}
-        <div className="grid grid-cols-[auto_1fr_auto_auto] gap-4 px-4 py-2 text-sm text-text-muted border-b border-white/5">
+        <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-4 px-4 py-2 text-sm text-text-muted border-b border-white/5">
           <span className="w-8 text-center">#</span>
           <span>Title</span>
           <span className="w-20 text-center">Quality</span>
           <span className="w-16 text-right flex items-center justify-end">
             <Clock size={16} />
           </span>
+          {/* Empty header for similar button column */}
+          <span className="w-8" />
         </div>
 
         {/* Empty state */}
@@ -213,7 +217,7 @@ export default function Album() {
                   onKeyDown={(e) => handleTrackKeyDown(e, track, index)}
                   aria-label={`Play ${track.title}${isPlayingTrack ? ' (currently playing)' : ''}`}
                   aria-current={isCurrentTrack ? 'true' : undefined}
-                  className={`grid grid-cols-[auto_1fr_auto_auto] gap-4 px-4 py-3 text-sm hover:bg-background-tertiary/50 rounded-lg cursor-pointer group transition-colors focus:outline-none focus:ring-2 focus:ring-mint/50 ${
+                  className={`grid grid-cols-[auto_1fr_auto_auto_auto] gap-4 px-4 py-3 text-sm hover:bg-background-tertiary/50 rounded-lg cursor-pointer group transition-colors focus:outline-none focus:ring-2 focus:ring-mint/50 ${
                     isCurrentTrack ? 'bg-accent-dark/10' : ''
                   }`}
                 >
@@ -249,12 +253,28 @@ export default function Album() {
                   <span className="w-16 text-right text-text-muted">
                     {track.formattedDuration || formatDurationMs(track.durationMs)}
                   </span>
+                  <span className="w-8 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <FindSimilarButton
+                      trackId={track.id}
+                      trackTitle={track.title}
+                    />
+                  </span>
                 </div>
               </li>
             )
           })}
         </ol>
       </div>
+
+      {/* Similar Tracks Section */}
+      {tracks[0] && (
+        <SimilarTracksSection
+          trackId={tracks[0].id}
+          title="You Might Also Like"
+          limit={6}
+          className="mt-8"
+        />
+      )}
     </div>
   )
 }
