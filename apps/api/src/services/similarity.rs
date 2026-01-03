@@ -641,6 +641,8 @@ impl SimilarityService {
         .map_err(|e| handle_query_error(e, "set_timeout_categorical"))?;
 
         // Find tracks with overlapping genres or moods
+        // Note: Using subqueries for array intersection/union since & and | operators
+        // only work with intarray extension (integer arrays), not text arrays
         let similar: Vec<SimilarTrackRow> = sqlx::query_as(
             r#"
             WITH source_track AS (
@@ -656,13 +658,13 @@ impl SimilarityService {
                 -- Score based on tag overlap (weighted Jaccard similarity)
                 -- Mood is weighted 2x in both numerator and denominator
                 (
-                    COALESCE(array_length(t.genres & src.genres, 1), 0) +
-                    COALESCE(array_length(t.ai_mood & src.ai_mood, 1), 0) * 2 +
-                    COALESCE(array_length(t.ai_tags & src.ai_tags, 1), 0)
+                    COALESCE((SELECT COUNT(*) FROM UNNEST(t.genres) g WHERE g = ANY(src.genres)), 0) +
+                    COALESCE((SELECT COUNT(*) FROM UNNEST(t.ai_mood) m WHERE m = ANY(src.ai_mood)), 0) * 2 +
+                    COALESCE((SELECT COUNT(*) FROM UNNEST(t.ai_tags) tg WHERE tg = ANY(src.ai_tags)), 0)
                 )::float / GREATEST(1,
-                    COALESCE(array_length(t.genres | src.genres, 1), 0) +
-                    COALESCE(array_length(t.ai_mood | src.ai_mood, 1), 0) * 2 +
-                    COALESCE(array_length(t.ai_tags | src.ai_tags, 1), 0)
+                    COALESCE((SELECT COUNT(*) FROM (SELECT UNNEST(t.genres) UNION SELECT UNNEST(src.genres)) u), 0) +
+                    COALESCE((SELECT COUNT(*) FROM (SELECT UNNEST(t.ai_mood) UNION SELECT UNNEST(src.ai_mood)) u), 0) * 2 +
+                    COALESCE((SELECT COUNT(*) FROM (SELECT UNNEST(t.ai_tags) UNION SELECT UNNEST(src.ai_tags)) u), 0)
                 ) as score
             FROM tracks t
             CROSS JOIN source_track src
