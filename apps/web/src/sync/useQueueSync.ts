@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { usePlayerStore } from '../stores/playerStore';
 import { useIsActiveDevice } from '../stores/deviceStore';
 import type { QueueState } from './types';
@@ -94,9 +95,14 @@ export interface UseQueueSyncValue {
 export function useQueueSync(options: UseQueueSyncOptions): UseQueueSyncValue {
   const { isConnected, sendQueueUpdate, stateSourceRef } = options;
 
-  // Get player state
-  const queue = usePlayerStore((s) => s.queue);
-  const queueIndex = usePlayerStore((s) => s.queueIndex);
+  // Get player state using useShallow for optimal re-render behavior
+  // Groups multiple selectors into a single subscription with shallow comparison
+  const { queue, queueIndex } = usePlayerStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      queueIndex: s.queueIndex,
+    }))
+  );
 
   // Get player actions
   const setQueue = usePlayerStore((s) => s.setQueue);
