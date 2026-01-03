@@ -271,8 +271,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'search_library': {
-        console.log('[Chat] search_library action:', action.payload);
-        // Would trigger search UI
+        const query = action.payload.query as string | undefined;
+        if (query) {
+          navigate(`/search?q=${encodeURIComponent(query)}`);
+        }
         break;
       }
       case 'get_recommendations': {
