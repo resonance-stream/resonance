@@ -8,6 +8,7 @@
  */
 
 import { useRef, useCallback, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { usePlayerStore } from '../stores/playerStore';
 import { useIsActiveDevice } from '../stores/deviceStore';
 import type { PlaybackState } from './types';
@@ -17,7 +18,16 @@ import {
   adjustPositionForClockDrift,
 } from './adapters';
 
-/** Source of a state change for loop prevention */
+/**
+ * Indicates the source of a state change for sync loop prevention.
+ *
+ * Used by sync hooks to determine whether a state change should be broadcast:
+ * - `'local'`: Change from user action on this device → should broadcast
+ * - `'remote'`: Change from sync message → should NOT re-broadcast
+ * - `null`: No change in progress → subsequent changes are local
+ *
+ * @see useSyncState - Documents the full loop prevention pattern
+ */
 export type StateChangeSource = 'local' | 'remote' | null;
 
 /** Throttle interval for playback updates (ms) */
@@ -25,6 +35,9 @@ const PLAYBACK_THROTTLE_MS = 250;
 
 /** Minimum position difference to trigger a seek sync (ms) */
 const SEEK_THRESHOLD_MS = 1000;
+
+/** Default interval for periodic position broadcasts while playing (ms) */
+const DEFAULT_POSITION_BROADCAST_INTERVAL_MS = 5000;
 
 /**
  * Consolidated ref state for playback sync internal tracking.
@@ -42,40 +55,130 @@ interface PlaybackSyncRefs {
   initialized: boolean;
 }
 
+/**
+ * Configuration options for the usePlaybackSync hook.
+ *
+ * Provides the connection state, send function, and shared state source ref
+ * needed for bidirectional playback synchronization.
+ */
 export interface UsePlaybackSyncOptions {
-  /** Whether sync connection is active */
+  /**
+   * Whether the WebSocket sync connection is currently active.
+   * When false, all sync operations are no-ops.
+   */
   isConnected: boolean;
-  /** Send playback state to remote devices */
+
+  /**
+   * Function to send playback state updates to remote devices.
+   * Provided by the parent useSyncConnection hook.
+   *
+   * @param state - The playback state to broadcast
+   */
   sendPlaybackUpdate: (state: PlaybackState) => void;
-  /** Shared ref to track state change source (for loop prevention) */
+
+  /**
+   * Shared ref to track the source of state changes for loop prevention.
+   * Set to 'remote' when applying incoming sync messages to prevent re-broadcast.
+   *
+   * @see StateChangeSource - For possible values and their meanings
+   * @see useSyncState - For the full loop prevention pattern documentation
+   */
   stateSourceRef: React.MutableRefObject<StateChangeSource>;
-  /** Callback when remote device changes the track */
+
+  /**
+   * Callback invoked when a remote device changes the current track.
+   * The parent component should use this to load the new track.
+   *
+   * @param trackId - The ID of the track to load
+   */
   onRemoteTrackChange?: (trackId: string) => void;
+
+  /**
+   * Interval in milliseconds for periodic position broadcasts while playing.
+   * Keeps other devices in sync even without explicit seek operations.
+   *
+   * @default 5000
+   */
+  positionBroadcastInterval?: number;
 }
 
+/**
+ * Return value interface for the usePlaybackSync hook.
+ *
+ * Provides handlers for incoming sync messages and a function to
+ * manually trigger state broadcasts.
+ */
 export interface UsePlaybackSyncValue {
-  /** Handle incoming playback sync from remote device */
+  /**
+   * Handler for incoming playback state sync messages from remote devices.
+   * Applies the remote state to the local player (play/pause, volume, position, etc.).
+   * Only applies state if this device is NOT the active device.
+   *
+   * @param syncState - The playback state received from a remote device
+   */
   handlePlaybackSync: (syncState: PlaybackState) => void;
-  /** Handle incoming seek sync from remote device */
+
+  /**
+   * Handler for incoming seek sync messages from remote devices.
+   * Updates the local player position with clock drift compensation.
+   * Only applies if this device is NOT the active device.
+   *
+   * @param positionMs - The target position in milliseconds
+   * @param timestamp - The Unix timestamp when the seek occurred (for drift adjustment)
+   */
   handleSeekSync: (positionMs: number, timestamp: number) => void;
-  /** Manually trigger a playback state broadcast */
+
+  /**
+   * Manually trigger a playback state broadcast to all connected devices.
+   * Subject to throttling (250ms minimum between broadcasts).
+   * Only broadcasts if connected and this device is the active device.
+   */
   broadcastPlaybackState: () => void;
 }
 
 /**
- * Hook for syncing playback state across devices
+ * Hook for bidirectional playback state synchronization across devices.
+ *
+ * Handles syncing play/pause, volume, mute, position, shuffle, and repeat state
+ * between the local player and remote devices. This hook is typically composed
+ * by {@link useSyncState} rather than used directly.
+ *
+ * ## Key behaviors:
+ * - **Active device only broadcasts**: State changes are only sent when this device
+ *   is the active (controlling) device
+ * - **Throttled broadcasts**: Normal state changes are throttled to 250ms minimum
+ * - **Immediate track changes**: Track changes bypass throttling for instant sync
+ * - **Periodic position sync**: While playing, position is broadcast periodically
+ * - **Loop prevention**: Uses stateSourceRef to prevent re-broadcasting received state
+ * - **Clock drift compensation**: Adjusts position based on message timestamps
+ *
+ * @param options - Configuration options including connection state and handlers
+ * @returns Object with sync handlers and broadcast function
+ *
+ * @see useSyncState - The facade hook that composes this with other sync hooks
  */
 export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyncValue {
-  const { isConnected, sendPlaybackUpdate, stateSourceRef, onRemoteTrackChange } = options;
+  const {
+    isConnected,
+    sendPlaybackUpdate,
+    stateSourceRef,
+    onRemoteTrackChange,
+    positionBroadcastInterval = DEFAULT_POSITION_BROADCAST_INTERVAL_MS,
+  } = options;
 
-  // Get player state (needs to be before ref initialization for proper defaults)
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const currentTime = usePlayerStore((s) => s.currentTime);
-  const volume = usePlayerStore((s) => s.volume);
-  const isMuted = usePlayerStore((s) => s.isMuted);
-  const shuffle = usePlayerStore((s) => s.shuffle);
-  const repeat = usePlayerStore((s) => s.repeat);
+  // Get player state using useShallow for optimal re-render behavior
+  // Groups multiple selectors into a single subscription with shallow comparison
+  const { currentTrack, isPlaying, currentTime, volume, isMuted, shuffle, repeat } = usePlayerStore(
+    useShallow((s) => ({
+      currentTrack: s.currentTrack,
+      isPlaying: s.isPlaying,
+      currentTime: s.currentTime,
+      volume: s.volume,
+      isMuted: s.isMuted,
+      shuffle: s.shuffle,
+      repeat: s.repeat,
+    }))
+  );
 
   // Consolidated ref for internal playback sync state tracking
   // Uses lazy initialization pattern to set prevTrackId and lastLocalPosition
@@ -249,7 +352,7 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
     broadcastPlaybackStateRef.current = broadcastPlaybackState;
   }, [broadcastPlaybackState]);
 
-  // Periodic position broadcast while playing (every 5 seconds)
+  // Periodic position broadcast while playing (configurable interval, default 5 seconds)
   // This keeps other devices in sync even without explicit seeks
   useEffect(() => {
     if (!isConnected || !isActiveDevice || !isPlaying) return;
@@ -259,10 +362,10 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
       if (stateSourceRef.current !== 'remote') {
         broadcastPlaybackStateRef.current();
       }
-    }, 5000);
+    }, positionBroadcastInterval);
 
     return () => clearInterval(interval);
-  }, [isConnected, isActiveDevice, isPlaying, stateSourceRef]);
+  }, [isConnected, isActiveDevice, isPlaying, stateSourceRef, positionBroadcastInterval]);
 
   // Broadcast immediately on large local seeks to reduce sync lag
   useEffect(() => {
