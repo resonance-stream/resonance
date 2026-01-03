@@ -9,15 +9,15 @@
  * - Syncs playback state between devices
  * - Handles incoming sync commands
  * - Provides sync context to child components
- * - Shows toast notifications for connection events
+ * - Emits sync events for UI effects (via syncEvents)
  */
 
 import { createContext, useContext, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import { useSyncState, type SyncStateValue } from '../sync/useSyncState';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
-import { useToastStore } from '../stores/toastStore';
 import { fetchTrackById } from '../sync/fetchTrackById';
+import { syncEvents } from '../sync/syncEvents';
 
 interface SyncProviderProps {
   children: ReactNode;
@@ -88,13 +88,13 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
   // Get connection state and error from device store
   const connectionState = useDeviceStore((s) => s.connectionState);
   const connectionError = useDeviceStore((s) => s.lastError);
-  const addToast = useToastStore((s) => s.addToast);
+  const deviceId = useDeviceStore((s) => s.deviceId);
 
-  // Track previous connection state for toast notifications
+  // Track previous connection state for event emission
   const prevConnectionStateRef = useRef(connectionState);
-  const hasShownDisconnectToastRef = useRef(false);
+  const hasConnectedRef = useRef(false);
 
-  // Show toast notifications for connection state changes
+  // Emit sync events for connection state changes
   useEffect(() => {
     // Skip if sync is disabled
     if (!enabled) return;
@@ -102,35 +102,35 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
     const prevState = prevConnectionStateRef.current;
     prevConnectionStateRef.current = connectionState;
 
-    // Show warning when disconnecting or reconnecting
-    if (
-      (connectionState === 'disconnected' || connectionState === 'reconnecting') &&
-      prevState === 'connected' &&
-      !hasShownDisconnectToastRef.current
-    ) {
-      hasShownDisconnectToastRef.current = true;
-      addToast({
-        type: 'warning',
-        title: 'Sync disconnected',
-        description: 'Reconnecting...',
+    // Emit disconnected event when connection drops
+    if (connectionState === 'disconnected' && prevState === 'connected') {
+      syncEvents.emit('disconnected', {
+        reason: undefined,
+        wasClean: false,
       });
     }
 
-    // Show success when reconnected
-    if (connectionState === 'connected' && prevState !== 'connected') {
-      // Only show "restored" if we previously disconnected (not initial connect)
-      if (hasShownDisconnectToastRef.current) {
-        addToast({
-          type: 'success',
-          title: 'Sync restored',
-          description: 'Cross-device sync is active',
-        });
-      }
-      hasShownDisconnectToastRef.current = false;
+    // Emit reconnecting event
+    if (connectionState === 'reconnecting' && prevState !== 'reconnecting') {
+      syncEvents.emit('reconnecting', {
+        attempt: 1,
+      });
     }
-  }, [connectionState, enabled, addToast]);
 
-  // Show error toast for auth failures and other errors
+    // Emit connected event when connection established
+    if (connectionState === 'connected' && prevState !== 'connected') {
+      const isReconnect = hasConnectedRef.current;
+      hasConnectedRef.current = true;
+
+      syncEvents.emit('connected', {
+        deviceId,
+        sessionId: '', // Session ID is managed by useSyncState
+        isReconnect,
+      });
+    }
+  }, [connectionState, enabled, deviceId]);
+
+  // Emit error event for connection errors
   useEffect(() => {
     if (!enabled || !connectionError) return;
 
@@ -141,21 +141,11 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
       connectionError.toLowerCase().includes('token') ||
       connectionError.toLowerCase().includes('401');
 
-    if (isAuthError) {
-      addToast({
-        type: 'error',
-        title: 'Sync authentication failed',
-        description: 'Please sign in again to enable sync',
-      });
-    } else {
-      // Generic connection error
-      addToast({
-        type: 'error',
-        title: 'Sync connection error',
-        description: connectionError,
-      });
-    }
-  }, [connectionError, enabled, addToast]);
+    syncEvents.emit('error', {
+      message: connectionError,
+      isAuthError,
+    });
+  }, [connectionError, enabled]);
 
   // Memoize context value
   const contextValue = useMemo<SyncContextValue>(() => ({
