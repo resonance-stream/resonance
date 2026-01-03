@@ -1068,3 +1068,929 @@ async fn test_similar_track_response_structure() {
 
     ctx.cleanup().await;
 }
+
+// ==========================================================================
+// GraphQL Integration Tests
+// ==========================================================================
+//
+// These tests exercise the GraphQL API layer for similarity queries,
+// testing the `similarTracks` and `similarTracksByMethod` queries.
+
+use async_graphql::{EmptyMutation, EmptySubscription, Schema};
+
+/// GraphQL test context that wraps the TestContext and provides schema execution
+struct GraphQLTestContext {
+    ctx: TestContext,
+    schema: Schema<resonance_api::graphql::query::Query, EmptyMutation, EmptySubscription>,
+}
+
+impl GraphQLTestContext {
+    /// Create a new GraphQL test context
+    async fn new(pool: PgPool) -> Self {
+        let ctx = TestContext::new(pool.clone()).await;
+
+        // Create a minimal schema with only the SimilarityService for testing
+        let similarity_service = resonance_api::services::similarity::SimilarityService::new(pool.clone());
+        let track_repo = resonance_api::repositories::TrackRepository::new(pool.clone());
+
+        let schema = Schema::build(
+            resonance_api::graphql::query::Query::default(),
+            EmptyMutation,
+            EmptySubscription,
+        )
+        .data(pool)
+        .data(similarity_service)
+        .data(track_repo)
+        .finish();
+
+        Self { ctx, schema }
+    }
+
+    /// Execute a GraphQL query and return the result
+    async fn execute(&self, query: &str) -> async_graphql::Response {
+        self.schema.execute(query).await
+    }
+
+    /// Execute a GraphQL query with variables
+    async fn execute_with_variables(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> async_graphql::Response {
+        let request = async_graphql::Request::new(query).variables(
+            async_graphql::Variables::from_json(variables),
+        );
+        self.schema.execute(request).await
+    }
+
+    /// Cleanup test data
+    async fn cleanup(&self) {
+        self.ctx.cleanup().await;
+    }
+}
+
+// ========== similarTracks Query Tests ==========
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_query() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with all features
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "GraphQL Source Track",
+            &["rock", "indie"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create similar tracks
+    for i in 0..3 {
+        let track_id = gql_ctx
+            .ctx
+            .add_track(
+                &format!("Similar Track {}", i),
+                &["rock", "indie"],
+                &["energetic"],
+                &["guitar"],
+                json!({
+                    "bpm": 118.0 + i as f64,
+                    "loudness": -9.0,
+                    "energy": 0.68,
+                    "danceability": 0.58,
+                    "valence": 0.48
+                }),
+            )
+            .await;
+        gql_ctx
+            .ctx
+            .add_embedding(track_id, &generate_test_embedding((i + 2) as u8))
+            .await;
+    }
+
+    // Execute GraphQL query
+    let query = format!(
+        r#"
+        query {{
+            similarTracks(trackId: "{}", limit: 10) {{
+                trackId
+                title
+                score
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+
+    // Check for no errors
+    assert!(
+        response.errors.is_empty(),
+        "GraphQL query should not have errors: {:?}",
+        response.errors
+    );
+
+    // Parse response data
+    let data = response.data.into_json().unwrap();
+    let similar_tracks = data["similarTracks"].as_array().unwrap();
+
+    // Should return similar tracks
+    assert!(
+        !similar_tracks.is_empty(),
+        "Should find similar tracks via GraphQL"
+    );
+
+    // Verify response structure
+    for track in similar_tracks {
+        assert!(track["trackId"].is_string(), "trackId should be a string");
+        assert!(track["title"].is_string(), "title should be a string");
+        assert!(track["score"].is_number(), "score should be a number");
+
+        let score = track["score"].as_f64().unwrap();
+        assert!(score >= 0.0 && score <= 1.0, "Score should be in [0, 1]");
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_with_limit() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Source Track",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create 5 similar tracks
+    for i in 0..5 {
+        let track_id = gql_ctx
+            .ctx
+            .add_track(
+                &format!("Similar Track {}", i),
+                &["rock"],
+                &["energetic"],
+                &["guitar"],
+                standard_audio_features(),
+            )
+            .await;
+        gql_ctx
+            .ctx
+            .add_embedding(track_id, &generate_test_embedding((i + 2) as u8))
+            .await;
+    }
+
+    // Query with limit of 2
+    let query = format!(
+        r#"
+        query {{
+            similarTracks(trackId: "{}", limit: 2) {{
+                trackId
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(response.errors.is_empty(), "Should not have errors");
+
+    let data = response.data.into_json().unwrap();
+    let similar_tracks = data["similarTracks"].as_array().unwrap();
+
+    assert!(
+        similar_tracks.len() <= 2,
+        "Should respect limit parameter, got {}",
+        similar_tracks.len()
+    );
+
+    gql_ctx.cleanup().await;
+}
+
+// ========== similarTracksByMethod Query Tests ==========
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_semantic() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with embedding
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Semantic Source",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create similar track with similar embedding
+    let similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "Semantic Similar",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(similar_id, &generate_test_embedding(2))
+        .await;
+
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: SEMANTIC, limit: 10) {{
+                trackId
+                title
+                score
+                similarityType
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(
+        response.errors.is_empty(),
+        "SEMANTIC query should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    // Should return tracks
+    assert!(!tracks.is_empty(), "Should find semantically similar tracks");
+
+    // All tracks should have SEMANTIC similarity type
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "SEMANTIC",
+            "All tracks should have SEMANTIC similarity type"
+        );
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_acoustic() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with specific audio features
+    let source_features = json!({
+        "bpm": 120.0,
+        "loudness": -8.0,
+        "energy": 0.7,
+        "danceability": 0.6,
+        "valence": 0.5
+    });
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Acoustic Source",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            source_features,
+        )
+        .await;
+
+    // Create track with similar features
+    let similar_features = json!({
+        "bpm": 122.0,
+        "loudness": -9.0,
+        "energy": 0.72,
+        "danceability": 0.58,
+        "valence": 0.52
+    });
+    let _similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "Acoustic Similar",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            similar_features,
+        )
+        .await;
+
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: ACOUSTIC, limit: 10) {{
+                trackId
+                title
+                score
+                similarityType
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(
+        response.errors.is_empty(),
+        "ACOUSTIC query should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    // Should return tracks
+    assert!(
+        !tracks.is_empty(),
+        "Should find acoustically similar tracks"
+    );
+
+    // All tracks should have ACOUSTIC similarity type
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "ACOUSTIC",
+            "All tracks should have ACOUSTIC similarity type"
+        );
+        let score = track["score"].as_f64().unwrap();
+        assert!(score >= 0.0 && score <= 1.0, "Score should be in [0, 1]");
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_categorical() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with specific tags
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Categorical Source",
+            &["rock", "indie", "alternative"],
+            &["energetic", "upbeat"],
+            &["guitar", "drums"],
+            standard_audio_features(),
+        )
+        .await;
+
+    // Create track with overlapping tags
+    let _similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "Categorical Similar",
+            &["rock", "indie"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: CATEGORICAL, limit: 10) {{
+                trackId
+                title
+                score
+                similarityType
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(
+        response.errors.is_empty(),
+        "CATEGORICAL query should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    // Should return tracks
+    assert!(
+        !tracks.is_empty(),
+        "Should find categorically similar tracks"
+    );
+
+    // All tracks should have CATEGORICAL similarity type
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "CATEGORICAL",
+            "All tracks should have CATEGORICAL similarity type"
+        );
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_combined() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with all features
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Combined Source",
+            &["rock", "indie"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create track similar in all dimensions
+    let similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "Combined Similar",
+            &["rock", "indie"],
+            &["energetic"],
+            &["guitar"],
+            json!({
+                "bpm": 118.0,
+                "loudness": -9.0,
+                "energy": 0.68,
+                "danceability": 0.58,
+                "valence": 0.48
+            }),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(similar_id, &generate_test_embedding(2))
+        .await;
+
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: COMBINED, limit: 10) {{
+                trackId
+                title
+                score
+                similarityType
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(
+        response.errors.is_empty(),
+        "COMBINED query should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    // Should return tracks
+    assert!(!tracks.is_empty(), "Should find combined similar tracks");
+
+    // All tracks should have COMBINED similarity type
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "COMBINED",
+            "All tracks should have COMBINED similarity type"
+        );
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+// ========== GraphQL Error Cases ==========
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_invalid_track_id() {
+    require_db!(pool);
+
+    let gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Query with invalid UUID format
+    let query = r#"
+        query {
+            similarTracks(trackId: "invalid-uuid", limit: 10) {
+                trackId
+            }
+        }
+    "#;
+
+    let response = gql_ctx.execute(query).await;
+
+    // Should have an error
+    assert!(
+        !response.errors.is_empty(),
+        "Should have error for invalid track ID"
+    );
+
+    // Check error message contains relevant information
+    let error_msg = response.errors[0].message.to_lowercase();
+    assert!(
+        error_msg.contains("invalid") || error_msg.contains("track"),
+        "Error should mention invalid track ID: {}",
+        response.errors[0].message
+    );
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_nonexistent_track() {
+    require_db!(pool);
+
+    let gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    let nonexistent_id = Uuid::new_v4();
+
+    let query = format!(
+        r#"
+        query {{
+            similarTracks(trackId: "{}", limit: 10) {{
+                trackId
+            }}
+        }}
+        "#,
+        nonexistent_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+
+    // Should either have an error or return empty results (both are valid behaviors)
+    if response.errors.is_empty() {
+        let data = response.data.into_json().unwrap();
+        let tracks = data["similarTracks"].as_array().unwrap();
+        assert!(
+            tracks.is_empty(),
+            "Should return empty for nonexistent track"
+        );
+    } else {
+        // Error is also acceptable
+        assert!(!response.errors.is_empty());
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_no_embedding() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create track WITHOUT embedding
+    let track_id = gql_ctx
+        .ctx
+        .add_track(
+            "Track Without Embedding",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+
+    // Query SEMANTIC method which requires embedding
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: SEMANTIC, limit: 10) {{
+                trackId
+            }}
+        }}
+        "#,
+        track_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+
+    // Should have an error because track has no embedding
+    assert!(
+        !response.errors.is_empty(),
+        "Should error when track has no embedding for SEMANTIC method"
+    );
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_no_features() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create track with empty audio features
+    let empty_features = json!({
+        "bpm": null,
+        "loudness": null,
+        "energy": null
+    });
+    let track_id = gql_ctx
+        .ctx
+        .add_track(
+            "Track Without Features",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            empty_features,
+        )
+        .await;
+
+    // Query ACOUSTIC method which requires audio features
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: ACOUSTIC, limit: 10) {{
+                trackId
+            }}
+        }}
+        "#,
+        track_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+
+    // Should have an error because track has no audio features
+    assert!(
+        !response.errors.is_empty(),
+        "Should error when track has no audio features for ACOUSTIC method"
+    );
+
+    gql_ctx.cleanup().await;
+}
+
+// ========== GraphQL Variables Tests ==========
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_with_variables() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Variable Test Track",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create similar track
+    let similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "Similar Variable Track",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(similar_id, &generate_test_embedding(2))
+        .await;
+
+    let query = r#"
+        query SimilarTracks($trackId: ID!, $limit: Int!) {
+            similarTracks(trackId: $trackId, limit: $limit) {
+                trackId
+                title
+                score
+            }
+        }
+    "#;
+
+    let variables = json!({
+        "trackId": source_id.to_string(),
+        "limit": 5
+    });
+
+    let response = gql_ctx.execute_with_variables(query, variables).await;
+
+    assert!(
+        response.errors.is_empty(),
+        "Query with variables should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracks"].as_array().unwrap();
+
+    assert!(
+        tracks.len() <= 5,
+        "Should respect limit variable"
+    );
+
+    gql_ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_by_method_with_variables() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Method Variable Track",
+            &["rock", "indie"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create similar tracks
+    for i in 0..2 {
+        let track_id = gql_ctx
+            .ctx
+            .add_track(
+                &format!("Similar Method Variable {}", i),
+                &["rock", "indie"],
+                &["energetic"],
+                &["guitar"],
+                standard_audio_features(),
+            )
+            .await;
+        gql_ctx
+            .ctx
+            .add_embedding(track_id, &generate_test_embedding((i + 2) as u8))
+            .await;
+    }
+
+    let query = r#"
+        query SimilarByMethod($trackId: ID!, $method: SimilarityMethod!, $limit: Int!) {
+            similarTracksByMethod(trackId: $trackId, method: $method, limit: $limit) {
+                trackId
+                title
+                score
+                similarityType
+            }
+        }
+    "#;
+
+    let variables = json!({
+        "trackId": source_id.to_string(),
+        "method": "COMBINED",
+        "limit": 3
+    });
+
+    let response = gql_ctx.execute_with_variables(query, variables).await;
+
+    assert!(
+        response.errors.is_empty(),
+        "Query with method variable should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "COMBINED",
+            "Method variable should be respected"
+        );
+    }
+
+    gql_ctx.cleanup().await;
+}
+
+// ========== GraphQL Default Limit Tests ==========
+
+#[tokio::test]
+async fn test_graphql_similar_tracks_default_limit() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "Default Limit Track",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            standard_audio_features(),
+        )
+        .await;
+    gql_ctx
+        .ctx
+        .add_embedding(source_id, &generate_test_embedding(1))
+        .await;
+
+    // Create multiple similar tracks
+    for i in 0..15 {
+        let track_id = gql_ctx
+            .ctx
+            .add_track(
+                &format!("Similar Default {}", i),
+                &["rock"],
+                &["energetic"],
+                &["guitar"],
+                standard_audio_features(),
+            )
+            .await;
+        gql_ctx
+            .ctx
+            .add_embedding(track_id, &generate_test_embedding((i + 2) as u8))
+            .await;
+    }
+
+    // Query WITHOUT specifying limit (should use default of 10)
+    let query = format!(
+        r#"
+        query {{
+            similarTracks(trackId: "{}") {{
+                trackId
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(response.errors.is_empty(), "Should not have errors");
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracks"].as_array().unwrap();
+
+    // Default limit is 10
+    assert!(
+        tracks.len() <= 10,
+        "Should respect default limit of 10, got {}",
+        tracks.len()
+    );
+
+    gql_ctx.cleanup().await;
+}
