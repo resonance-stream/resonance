@@ -89,6 +89,7 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
   const connectionState = useDeviceStore((s) => s.connectionState);
   const connectionError = useDeviceStore((s) => s.lastError);
   const deviceId = useDeviceStore((s) => s.deviceId);
+  const sessionId = useDeviceStore((s) => s.sessionId);
 
   // Track previous connection state for event emission
   const prevConnectionStateRef = useRef(connectionState);
@@ -124,11 +125,11 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
 
       syncEvents.emit('connected', {
         deviceId,
-        sessionId: '', // Session ID is managed by useSyncState
+        sessionId: sessionId ?? '',
         isReconnect,
       });
     }
-  }, [connectionState, enabled, deviceId]);
+  }, [connectionState, enabled, deviceId, sessionId]);
 
   // Emit error event for connection errors
   useEffect(() => {
