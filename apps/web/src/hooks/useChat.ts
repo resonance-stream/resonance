@@ -27,6 +27,10 @@ import type {
   ChatCompletePayload,
   ChatErrorPayload,
 } from '../sync/types';
+import { useNavigate } from 'react-router-dom';
+import { usePlayerStore } from '../stores/playerStore';
+import { mapGqlTrackToPlayerTrack } from '../lib/mappers';
+import type { GqlTrack } from '../types/library';
 
 // =============================================================================
 // GraphQL Queries
