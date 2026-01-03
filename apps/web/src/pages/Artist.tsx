@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button'
 import { MediaCard } from '../components/media'
 import { AlbumArt } from '../components/media/AlbumArt'
 import { SkeletonCard, Skeleton } from '../components/ui/Skeleton'
+import { SimilarTracksSection } from '../components/similar'
 import { useArtist } from '../hooks/useLibrary'
 import { usePlayerStore } from '../stores/playerStore'
 import { mapGqlTrackToPlayerTrack, mapAlbumToPlayerTracks, formatDurationMs } from '../lib/mappers'
@@ -276,6 +277,16 @@ export default function Artist() {
               })}
             </ol>
           </section>
+        )}
+
+        {/* More Like [Artist] - Similar Tracks based on top track */}
+        {topTracks[0] && (
+          <SimilarTracksSection
+            trackId={topTracks[0].id}
+            title={`More Like ${artist.name}`}
+            limit={6}
+            className="mb-8"
+          />
         )}
 
         {/* Discography */}
