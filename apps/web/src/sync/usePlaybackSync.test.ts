@@ -17,63 +17,23 @@ import { renderHook, act } from '@testing-library/react';
 import { usePlaybackSync, type UsePlaybackSyncOptions, type StateChangeSource } from './usePlaybackSync';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
-import type { PlaybackState } from './types';
+import {
+  createPlaybackState,
+  createMockPlaybackSyncOptions,
+  resetAllSyncStores,
+  createStateSourceRef,
+  setAsActiveDevice,
+  setAsPassiveDevice,
+} from './test-utils';
 
-// Helper to reset stores between tests
-function resetStores(): void {
-  usePlayerStore.setState({
-    currentTrack: null,
-    isPlaying: false,
-    currentTime: 0,
-    volume: 0.75,
-    isMuted: false,
-    queue: [],
-    queueIndex: 0,
-    shuffle: false,
-    repeat: 'off',
-  });
-
-  useDeviceStore.setState({
-    connectionState: 'connected',
-    sessionId: 'test-session',
-    lastError: null,
-    reconnectAttempt: 0,
-    deviceId: 'mock-device-id',
-    deviceName: 'Mock Device',
-    deviceType: 'web',
-    devices: [],
-    activeDeviceId: 'mock-device-id', // Default to active
-  });
-}
-
-// Factory for creating test playback state
-function createPlaybackState(overrides: Partial<PlaybackState> = {}): PlaybackState {
-  return {
-    track_id: 'track-1',
-    is_playing: true,
-    position_ms: 30000,
-    timestamp: Date.now(),
-    volume: 0.75,
-    is_muted: false,
-    shuffle: false,
-    repeat: 'off',
-    ...overrides,
-  };
-}
-
-// Factory for creating mock hook options
-function createMockOptions(overrides: Partial<UsePlaybackSyncOptions> = {}): UsePlaybackSyncOptions {
-  return {
-    isConnected: true,
-    sendPlaybackUpdate: vi.fn(),
-    stateSourceRef: { current: null },
-    ...overrides,
-  };
-}
+// Alias factory to match existing test patterns
+const createMockOptions = (
+  overrides: Partial<UsePlaybackSyncOptions> = {}
+): UsePlaybackSyncOptions => createMockPlaybackSyncOptions(overrides) as UsePlaybackSyncOptions;
 
 describe('usePlaybackSync', () => {
   beforeEach(() => {
-    resetStores();
+    resetAllSyncStores();
     vi.clearAllMocks();
     vi.useFakeTimers();
   });
@@ -995,6 +955,190 @@ describe('usePlaybackSync', () => {
       });
 
       expect(stateSourceRef.current).toBeNull();
+    });
+  });
+
+  describe('configurable timing options', () => {
+    describe('playbackThrottleMs', () => {
+      it('respects custom playbackThrottleMs option for throttling', () => {
+        useDeviceStore.setState({ activeDeviceId: 'mock-device-id' });
+        usePlayerStore.setState({
+          currentTrack: { id: 'track-1', title: 'Test', artist: 'A', albumId: '1', albumTitle: 'X', duration: 180 },
+          isPlaying: true,
+        });
+
+        const sendPlaybackUpdate = vi.fn();
+        const { result } = renderHook(() =>
+          usePlaybackSync(
+            createMockOptions({
+              sendPlaybackUpdate,
+              playbackThrottleMs: 100, // 100ms instead of default 250ms
+            })
+          )
+        );
+
+        // First broadcast should work
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(1);
+
+        // Immediate second broadcast should be throttled
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(1);
+
+        // After 100ms (custom throttle), should work again
+        act(() => {
+          vi.advanceTimersByTime(100);
+        });
+
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(2);
+      });
+
+      it('uses default 250ms throttle when playbackThrottleMs not specified', () => {
+        useDeviceStore.setState({ activeDeviceId: 'mock-device-id' });
+        usePlayerStore.setState({
+          currentTrack: { id: 'track-1', title: 'Test', artist: 'A', albumId: '1', albumTitle: 'X', duration: 180 },
+          isPlaying: true,
+        });
+
+        const sendPlaybackUpdate = vi.fn();
+        const { result } = renderHook(() =>
+          usePlaybackSync(createMockOptions({ sendPlaybackUpdate }))
+        );
+
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(1);
+
+        // After 200ms (less than default 250ms), should still be throttled
+        act(() => {
+          vi.advanceTimersByTime(200);
+        });
+
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(1);
+
+        // After 50ms more (total 250ms), should work
+        act(() => {
+          vi.advanceTimersByTime(50);
+        });
+
+        act(() => {
+          result.current.broadcastPlaybackState();
+        });
+        expect(sendPlaybackUpdate).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('seekThresholdMs', () => {
+      it('respects custom seekThresholdMs for handleSeekSync', () => {
+        useDeviceStore.setState({ activeDeviceId: 'other-device-id' });
+        usePlayerStore.setState({ currentTime: 30, isPlaying: false });
+
+        const { result } = renderHook(() =>
+          usePlaybackSync(
+            createMockOptions({
+              seekThresholdMs: 500, // 500ms instead of default 1000ms
+            })
+          )
+        );
+
+        // 400ms difference is within 500ms custom threshold - should be ignored
+        act(() => {
+          result.current.handleSeekSync(30400, Date.now());
+        });
+        expect(usePlayerStore.getState().currentTime).toBe(30);
+
+        // 600ms difference exceeds 500ms custom threshold - should apply
+        act(() => {
+          result.current.handleSeekSync(30600, Date.now());
+        });
+        expect(usePlayerStore.getState().currentTime).toBeCloseTo(30.6, 1);
+      });
+
+      it('respects custom seekThresholdMs for handlePlaybackSync position sync', () => {
+        useDeviceStore.setState({ activeDeviceId: 'other-device-id' });
+        usePlayerStore.setState({ currentTime: 30, isPlaying: false });
+
+        const { result } = renderHook(() =>
+          usePlaybackSync(
+            createMockOptions({
+              seekThresholdMs: 2000, // 2000ms instead of default 1000ms
+            })
+          )
+        );
+
+        // 1500ms difference is within 2000ms custom threshold - should be ignored
+        act(() => {
+          result.current.handlePlaybackSync(
+            createPlaybackState({ position_ms: 31500, is_playing: false })
+          );
+        });
+        expect(usePlayerStore.getState().currentTime).toBe(30);
+
+        // 2500ms difference exceeds 2000ms custom threshold - should apply
+        act(() => {
+          result.current.handlePlaybackSync(
+            createPlaybackState({ position_ms: 32500, is_playing: false })
+          );
+        });
+        expect(usePlayerStore.getState().currentTime).toBeCloseTo(32.5, 1);
+      });
+
+      it('respects custom seekThresholdMs for local seek detection broadcast', () => {
+        useDeviceStore.setState({ activeDeviceId: 'mock-device-id' });
+        usePlayerStore.setState({
+          currentTrack: { id: 'track-1', title: 'Test', artist: 'A', albumId: '1', albumTitle: 'X', duration: 180 },
+          isPlaying: true,
+          currentTime: 0,
+        });
+
+        const sendPlaybackUpdate = vi.fn();
+        renderHook(() =>
+          usePlaybackSync(
+            createMockOptions({
+              sendPlaybackUpdate,
+              seekThresholdMs: 3000, // 3000ms instead of default 1000ms
+            })
+          )
+        );
+
+        // Trigger an initial broadcast via volume change to start the throttle window
+        act(() => {
+          usePlayerStore.getState().setVolume(0.9);
+        });
+
+        const callsAfterVolume = sendPlaybackUpdate.mock.calls.length;
+
+        // 2s seek from 0 to 2 is within 3000ms custom threshold
+        // This should NOT bypass the throttle (only large seeks bypass throttle)
+        act(() => {
+          usePlayerStore.setState({ currentTime: 2 });
+        });
+        // Call count should be unchanged (throttled, and not a large seek)
+        expect(sendPlaybackUpdate.mock.calls.length).toBe(callsAfterVolume);
+
+        // Wait for throttle to pass
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+
+        // Now a 4s seek from 2 to 6 exceeds 3000ms custom threshold - should trigger immediately
+        act(() => {
+          usePlayerStore.setState({ currentTime: 6 });
+        });
+        // Large seek should have triggered a broadcast
+        expect(sendPlaybackUpdate.mock.calls.length).toBeGreaterThan(callsAfterVolume);
+      });
     });
   });
 });

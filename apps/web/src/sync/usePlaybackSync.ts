@@ -30,11 +30,11 @@ import {
  */
 export type StateChangeSource = 'local' | 'remote' | null;
 
-/** Throttle interval for playback updates (ms) */
-const PLAYBACK_THROTTLE_MS = 250;
+/** Default throttle interval for playback updates (ms) */
+const DEFAULT_PLAYBACK_THROTTLE_MS = 250;
 
-/** Minimum position difference to trigger a seek sync (ms) */
-const SEEK_THRESHOLD_MS = 1000;
+/** Default minimum position difference to trigger a seek sync (ms) */
+const DEFAULT_SEEK_THRESHOLD_MS = 1000;
 
 /** Default interval for periodic position broadcasts while playing (ms) */
 const DEFAULT_POSITION_BROADCAST_INTERVAL_MS = 5000;
@@ -100,6 +100,23 @@ export interface UsePlaybackSyncOptions {
    * @default 5000
    */
   positionBroadcastInterval?: number;
+
+  /**
+   * Throttle interval in milliseconds for playback state broadcasts.
+   * Prevents excessive network traffic from rapid state changes.
+   *
+   * @default 250
+   */
+  playbackThrottleMs?: number;
+
+  /**
+   * Minimum position difference in milliseconds to trigger a seek sync.
+   * Position changes below this threshold are considered normal playback
+   * progression and won't trigger immediate broadcasts or remote seeks.
+   *
+   * @default 1000
+   */
+  seekThresholdMs?: number;
 }
 
 /**
@@ -164,6 +181,8 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
     stateSourceRef,
     onRemoteTrackChange,
     positionBroadcastInterval = DEFAULT_POSITION_BROADCAST_INTERVAL_MS,
+    playbackThrottleMs = DEFAULT_PLAYBACK_THROTTLE_MS,
+    seekThresholdMs = DEFAULT_SEEK_THRESHOLD_MS,
   } = options;
 
   // Get player state using useShallow for optimal re-render behavior
@@ -254,7 +273,7 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
       // Apply position with clock drift adjustment
       const adjustedPosition = adjustPositionForClockDrift(syncState);
       const localPositionMs = current.currentTime * 1000;
-      if (Math.abs(adjustedPosition - localPositionMs) > SEEK_THRESHOLD_MS) {
+      if (Math.abs(adjustedPosition - localPositionMs) > seekThresholdMs) {
         setCurrentTime(adjustedPosition / 1000);
       }
 
@@ -270,7 +289,7 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
         }
       });
     },
-    [isActiveDevice, play, pause, setVolume, toggleMute, setCurrentTime, onRemoteTrackChange, stateSourceRef]
+    [isActiveDevice, play, pause, setVolume, toggleMute, setCurrentTime, onRemoteTrackChange, stateSourceRef, seekThresholdMs]
   );
 
   // Handle incoming seek sync
@@ -296,7 +315,7 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
 
       // Skip seek if position difference is within threshold (avoid jitter)
       const localPositionMs = current.currentTime * 1000;
-      if (Math.abs(adjustedPosition - localPositionMs) <= SEEK_THRESHOLD_MS) {
+      if (Math.abs(adjustedPosition - localPositionMs) <= seekThresholdMs) {
         return;
       }
 
@@ -309,7 +328,7 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
         }
       });
     },
-    [isActiveDevice, setCurrentTime, stateSourceRef]
+    [isActiveDevice, setCurrentTime, stateSourceRef, seekThresholdMs]
   );
 
   // Broadcast playback state (throttled)
@@ -317,11 +336,11 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
     if (!isConnected || !isActiveDevice) return;
 
     const now = Date.now();
-    if (now - syncStateRef.current.lastBroadcast < PLAYBACK_THROTTLE_MS) return;
+    if (now - syncStateRef.current.lastBroadcast < playbackThrottleMs) return;
     syncStateRef.current.lastBroadcast = now;
 
     sendPlaybackUpdate(buildPlaybackState());
-  }, [isConnected, isActiveDevice, sendPlaybackUpdate, buildPlaybackState]);
+  }, [isConnected, isActiveDevice, sendPlaybackUpdate, buildPlaybackState, playbackThrottleMs]);
 
   // Auto-broadcast on state changes (only if we're active and change is local)
   useEffect(() => {
@@ -377,10 +396,10 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
 
     // Detect if this is a significant position jump (likely a seek)
     const deltaMs = Math.abs(currentTime - prev) * 1000;
-    if (deltaMs >= SEEK_THRESHOLD_MS) {
+    if (deltaMs >= seekThresholdMs) {
       broadcastPlaybackStateRef.current();
     }
-  }, [isConnected, isActiveDevice, currentTime, stateSourceRef]);
+  }, [isConnected, isActiveDevice, currentTime, stateSourceRef, seekThresholdMs]);
 
   return {
     handlePlaybackSync,
