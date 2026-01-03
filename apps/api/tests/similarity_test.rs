@@ -34,6 +34,13 @@ use uuid::Uuid;
 use resonance_api::error::ApiError;
 use resonance_api::services::similarity::{SimilarityService, SimilarityType};
 
+// Import our comprehensive fixtures
+#[allow(unused_imports)]
+use common::similarity_fixtures::{
+    generate_dissimilar_embedding, generate_test_embedding, AudioFeaturesFixture,
+    SimilarityTestFixtures, TrackFixture, TrackFixtureBuilder, EMBEDDING_DIMENSION,
+};
+
 // ========== Test Constants ==========
 
 /// Test JWT secret for authentication (must be at least 32 characters)
@@ -78,6 +85,7 @@ struct TestContext {
     track_ids: Vec<Uuid>,
 }
 
+#[allow(dead_code)]
 impl TestContext {
     /// Create test context with sample tracks for similarity testing
     async fn new(pool: PgPool) -> Self {
@@ -164,8 +172,8 @@ impl TestContext {
         track_id
     }
 
-    /// Add an embedding for a track
-    async fn add_embedding(&self, track_id: Uuid, embedding: &[f32; 768]) {
+    /// Add an embedding for a track using the standard 768-dimension vector
+    async fn add_embedding(&self, track_id: Uuid, embedding: &[f32; EMBEDDING_DIMENSION]) {
         // Convert f32 array to pgvector format string
         let embedding_str = format!(
             "[{}]",
@@ -188,6 +196,155 @@ impl TestContext {
         .execute(&self.pool)
         .await
         .expect("Failed to create track embedding");
+    }
+
+    // ========== Helper methods for creating tracks from fixtures ==========
+
+    /// Create a track from a TrackFixture
+    ///
+    /// This creates the track with all its attributes (genres, moods, tags, audio features)
+    /// and optionally adds an embedding if the fixture has one configured.
+    async fn create_track_from_fixture(&mut self, fixture: &TrackFixture) -> Uuid {
+        let track_id = self
+            .add_track(
+                &fixture.title,
+                &fixture.genres_as_refs(),
+                &fixture.moods_as_refs(),
+                &fixture.tags_as_refs(),
+                fixture.audio_features.to_json(),
+            )
+            .await;
+
+        // Add embedding if configured
+        if let Some(embedding) = fixture.get_embedding() {
+            self.add_embedding(track_id, &embedding).await;
+        }
+
+        track_id
+    }
+
+    /// Create a complete test track with embedding, audio features, and tags
+    ///
+    /// Convenience method that creates a track with standard characteristics.
+    async fn create_complete_test_track(
+        &mut self,
+        title: &str,
+        genres: &[&str],
+        moods: &[&str],
+        tags: &[&str],
+        features: AudioFeaturesFixture,
+        embedding_seed: u8,
+    ) -> Uuid {
+        let track_id = self
+            .add_track(title, genres, moods, tags, features.to_json())
+            .await;
+
+        let embedding = generate_test_embedding(embedding_seed);
+        self.add_embedding(track_id, &embedding).await;
+
+        track_id
+    }
+
+    /// Create a track with only audio features (no embedding)
+    async fn create_track_with_features(
+        &mut self,
+        title: &str,
+        genres: &[&str],
+        moods: &[&str],
+        tags: &[&str],
+        features: AudioFeaturesFixture,
+    ) -> Uuid {
+        self.add_track(title, genres, moods, tags, features.to_json())
+            .await
+    }
+
+    /// Create a track with only embedding (default audio features)
+    async fn create_track_with_embedding(
+        &mut self,
+        title: &str,
+        genres: &[&str],
+        moods: &[&str],
+        tags: &[&str],
+        embedding_seed: u8,
+    ) -> Uuid {
+        let track_id = self
+            .add_track(
+                title,
+                genres,
+                moods,
+                tags,
+                AudioFeaturesFixture::default().to_json(),
+            )
+            .await;
+
+        let embedding = generate_test_embedding(embedding_seed);
+        self.add_embedding(track_id, &embedding).await;
+
+        track_id
+    }
+
+    /// Create a track with a dissimilar embedding (for testing negative cases)
+    async fn create_track_with_dissimilar_embedding(
+        &mut self,
+        title: &str,
+        genres: &[&str],
+        moods: &[&str],
+        tags: &[&str],
+        embedding_seed: u8,
+    ) -> Uuid {
+        let track_id = self
+            .add_track(
+                title,
+                genres,
+                moods,
+                tags,
+                AudioFeaturesFixture::default().to_json(),
+            )
+            .await;
+
+        let embedding = generate_dissimilar_embedding(embedding_seed);
+        self.add_embedding(track_id, &embedding).await;
+
+        track_id
+    }
+
+    /// Create a minimal track with only required fields (no features, no embedding)
+    async fn create_minimal_track(&mut self, title: &str) -> Uuid {
+        self.add_track(
+            title,
+            &["unknown"],
+            &[],
+            &[],
+            AudioFeaturesFixture::empty().to_json(),
+        )
+        .await
+    }
+
+    /// Create all tracks from a SimilarityTestFixtures collection
+    ///
+    /// Returns a map of fixture title to track ID for easy lookup.
+    async fn create_all_fixtures(&mut self, fixtures: &SimilarityTestFixtures) -> std::collections::HashMap<String, Uuid> {
+        let mut ids = std::collections::HashMap::new();
+
+        for fixture in fixtures.all() {
+            let track_id = self.create_track_from_fixture(fixture).await;
+            ids.insert(fixture.title.clone(), track_id);
+        }
+
+        ids
+    }
+
+    /// Create tracks for a specific cluster (rock, electronic, classical, jazz)
+    async fn create_cluster(
+        &mut self,
+        fixtures: &[&TrackFixture],
+    ) -> Vec<Uuid> {
+        let mut ids = Vec::new();
+        for fixture in fixtures {
+            let track_id = self.create_track_from_fixture(fixture).await;
+            ids.push(track_id);
+        }
+        ids
     }
 
     /// Clean up all test data
@@ -217,30 +374,9 @@ impl TestContext {
     }
 }
 
-/// Generate a simple test embedding vector (768 dimensions)
-fn generate_test_embedding(seed: u8) -> [f32; 768] {
-    let mut embedding = [0.0f32; 768];
-    for (i, val) in embedding.iter_mut().enumerate() {
-        // Create a pattern based on seed so similar seeds = similar embeddings
-        *val = ((seed as f32 + i as f32 * 0.01) % 1.0) * 0.1;
-    }
-    embedding
-}
-
-/// Standard audio features for testing
+/// Standard audio features for testing (convenience function using fixtures)
 fn standard_audio_features() -> serde_json::Value {
-    json!({
-        "bpm": 120.0,
-        "key": "C",
-        "mode": "major",
-        "loudness": -8.0,
-        "energy": 0.7,
-        "danceability": 0.6,
-        "valence": 0.5,
-        "acousticness": 0.3,
-        "instrumentalness": 0.1,
-        "speechiness": 0.05
-    })
+    AudioFeaturesFixture::default().to_json()
 }
 
 // ========== Embedding Similarity Tests ==========

@@ -7,6 +7,8 @@
 
 pub mod fixtures;
 pub mod helpers;
+pub mod similarity_fixtures;
 
 pub use fixtures::*;
 pub use helpers::*;
+pub use similarity_fixtures::*;
