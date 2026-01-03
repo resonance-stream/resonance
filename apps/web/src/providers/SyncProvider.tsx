@@ -9,15 +9,14 @@
  * - Syncs playback state between devices
  * - Handles incoming sync commands
  * - Provides sync context to child components
- * - Emits sync events for UI effects (via syncEvents)
+ * - Emits sync events for UI effects (via useSyncEventEmitter)
  */
 
-import { createContext, useContext, useCallback, useMemo, useEffect, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
 import { useSyncState, type SyncStateValue } from '../sync/useSyncState';
 import { usePlayerStore } from '../stores/playerStore';
-import { useDeviceStore } from '../stores/deviceStore';
 import { fetchTrackById } from '../sync/fetchTrackById';
-import { syncEvents } from '../sync/syncEvents';
+import { useSyncEventEmitter } from '../sync/useSyncEventEmitter';
 
 interface SyncProviderProps {
   children: ReactNode;
@@ -85,68 +84,8 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
     autoConnect: enabled,
   });
 
-  // Get connection state and error from device store
-  const connectionState = useDeviceStore((s) => s.connectionState);
-  const connectionError = useDeviceStore((s) => s.lastError);
-  const deviceId = useDeviceStore((s) => s.deviceId);
-  const sessionId = useDeviceStore((s) => s.sessionId);
-
-  // Track previous connection state for event emission
-  const prevConnectionStateRef = useRef(connectionState);
-  const hasConnectedRef = useRef(false);
-
   // Emit sync events for connection state changes
-  useEffect(() => {
-    // Skip if sync is disabled
-    if (!enabled) return;
-
-    const prevState = prevConnectionStateRef.current;
-    prevConnectionStateRef.current = connectionState;
-
-    // Emit disconnected event when connection drops
-    if (connectionState === 'disconnected' && prevState === 'connected') {
-      syncEvents.emit('disconnected', {
-        reason: undefined,
-        wasClean: false,
-      });
-    }
-
-    // Emit reconnecting event
-    if (connectionState === 'reconnecting' && prevState !== 'reconnecting') {
-      syncEvents.emit('reconnecting', {
-        attempt: 1,
-      });
-    }
-
-    // Emit connected event when connection established
-    if (connectionState === 'connected' && prevState !== 'connected') {
-      const isReconnect = hasConnectedRef.current;
-      hasConnectedRef.current = true;
-
-      syncEvents.emit('connected', {
-        deviceId,
-        sessionId: sessionId ?? '',
-        isReconnect,
-      });
-    }
-  }, [connectionState, enabled, deviceId, sessionId]);
-
-  // Emit error event for connection errors
-  useEffect(() => {
-    if (!enabled || !connectionError) return;
-
-    // Check for auth-related errors
-    const isAuthError =
-      connectionError.toLowerCase().includes('auth') ||
-      connectionError.toLowerCase().includes('unauthorized') ||
-      connectionError.toLowerCase().includes('token') ||
-      connectionError.toLowerCase().includes('401');
-
-    syncEvents.emit('error', {
-      message: connectionError,
-      isAuthError,
-    });
-  }, [connectionError, enabled]);
+  useSyncEventEmitter({ enabled });
 
   // Memoize context value
   const contextValue = useMemo<SyncContextValue>(() => ({

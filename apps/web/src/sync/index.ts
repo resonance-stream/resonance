@@ -87,6 +87,10 @@ export type {
 export { useSyncNotifications } from './useSyncNotifications';
 export type { UseSyncNotificationsOptions } from './useSyncNotifications';
 
+// Sync Event Emitter Hook
+export { useSyncEventEmitter } from './useSyncEventEmitter';
+export type { UseSyncEventEmitterOptions } from './useSyncEventEmitter';
+
 // Utilities
 export {
   detectDeviceType,
@@ -95,3 +99,38 @@ export {
 } from './types';
 
 export { fetchTrackById } from './fetchTrackById';
+
+// Test utilities (exported for use in tests across the codebase)
+export {
+  // Factory functions
+  createPlaybackState as createTestPlaybackState,
+  createQueueState as createTestQueueState,
+  createSyncQueueTrack,
+  createLocalQueueTrack,
+  createLocalQueue,
+  createTrack,
+  // Store reset utilities
+  resetPlayerStore,
+  resetDeviceStore,
+  resetAllSyncStores,
+  // Mock option factories
+  createMockPlaybackSyncOptions,
+  createMockQueueSyncOptions,
+  createMockPlaybackSyncHandlers,
+  createMockQueueSyncHandlers,
+  // State source ref factory
+  createStateSourceRef,
+  // Test assertion helpers
+  getPlayerState,
+  getDeviceState,
+  setAsActiveDevice,
+  setAsPassiveDevice,
+} from './test-utils';
+
+export type {
+  LocalQueueTrack as TestLocalQueueTrack,
+  PlaybackSyncOptions,
+  QueueSyncOptions,
+  PlaybackSyncHandlers,
+  QueueSyncHandlers,
+} from './test-utils';
