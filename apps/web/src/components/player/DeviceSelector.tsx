@@ -9,7 +9,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Pencil, Check, X } from 'lucide-react';
 import { useDeviceStore, useIsConnected, useIsActiveDevice, useOtherDevices } from '../../stores/deviceStore';
-import { useSyncState } from '../../sync/useSyncState';
+import { useSync } from '../../providers/SyncProvider';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import type { DevicePresence } from '../../sync/types';
@@ -67,8 +67,8 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
   const deviceType = useDeviceStore((s) => s.deviceType);
   const setDeviceName = useDeviceStore((s) => s.setDeviceName);
 
-  // Get requestControl from sync state for taking control of playback
-  const { requestControl } = useSyncState();
+  // Get requestControl from sync context for taking control of playback
+  const { requestControl } = useSync();
 
   // Editing state for device nickname
   const [isEditing, setIsEditing] = useState(false);
