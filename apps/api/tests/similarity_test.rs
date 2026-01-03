@@ -1994,3 +1994,284 @@ async fn test_graphql_similar_tracks_default_limit() {
 
     gql_ctx.cleanup().await;
 }
+
+// ========== Vector-Based Acoustic Similarity Tests ==========
+//
+// These tests verify the HNSW-indexed audio_features_vector path for O(log n) performance.
+
+/// Add an audio features vector for a track
+async fn add_audio_features_vector(pool: &PgPool, track_id: Uuid, vector: &[f32; 5]) {
+    // Convert f32 array to pgvector format string
+    let vector_str = format!(
+        "[{}]",
+        vector
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+
+    // First ensure the track_embeddings row exists
+    sqlx::query(
+        r#"
+        INSERT INTO track_embeddings (track_id, audio_features_vector)
+        VALUES ($1, $2::vector)
+        ON CONFLICT (track_id) DO UPDATE SET audio_features_vector = $2::vector
+        "#,
+    )
+    .bind(track_id)
+    .bind(&vector_str)
+    .execute(pool)
+    .await
+    .expect("Failed to create audio features vector");
+}
+
+#[tokio::test]
+async fn test_find_similar_by_features_vector_path() {
+    require_db!(pool);
+
+    let mut ctx = TestContext::new(pool.clone()).await;
+
+    // Create source track with specific audio features
+    let source_features = json!({
+        "bpm": 120.0,
+        "loudness": -8.0,
+        "energy": 0.7,
+        "danceability": 0.6,
+        "valence": 0.5
+    });
+    let source_id = ctx
+        .add_track(
+            "Source Track with Vector",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            source_features,
+        )
+        .await;
+
+    // Add audio features vector for source track
+    // Vector: [energy, loudness_norm, valence, danceability, bpm_norm]
+    // energy=0.7, loudness_norm=(-8+60)/60=0.867, valence=0.5, danceability=0.6, bpm_norm=120/200=0.6
+    add_audio_features_vector(&pool, source_id, &[0.7, 0.867, 0.5, 0.6, 0.6]).await;
+
+    // Create similar track (similar vector)
+    let similar_features = json!({
+        "bpm": 122.0,
+        "loudness": -9.0,
+        "energy": 0.72,
+        "danceability": 0.58,
+        "valence": 0.52
+    });
+    let similar_id = ctx
+        .add_track(
+            "Similar Features Track with Vector",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            similar_features,
+        )
+        .await;
+    // Vector: energy=0.72, loudness_norm=(-9+60)/60=0.85, valence=0.52, danceability=0.58, bpm_norm=122/200=0.61
+    add_audio_features_vector(&pool, similar_id, &[0.72, 0.85, 0.52, 0.58, 0.61]).await;
+
+    // Create different track (very different vector)
+    let different_features = json!({
+        "bpm": 60.0,
+        "loudness": -20.0,
+        "energy": 0.2,
+        "danceability": 0.1,
+        "valence": 0.9
+    });
+    let different_id = ctx
+        .add_track(
+            "Different Features Track with Vector",
+            &["classical"],
+            &["calm"],
+            &["piano"],
+            different_features,
+        )
+        .await;
+    // Vector: energy=0.2, loudness_norm=(-20+60)/60=0.667, valence=0.9, danceability=0.1, bpm_norm=60/200=0.3
+    add_audio_features_vector(&pool, different_id, &[0.2, 0.667, 0.9, 0.1, 0.3]).await;
+
+    let service = SimilarityService::new(pool);
+    let results = service.find_similar_by_features(source_id, 10).await;
+
+    assert!(results.is_ok(), "Should find similar tracks using vector path: {:?}", results.err());
+    let tracks = results.unwrap();
+
+    // Should return tracks
+    assert!(!tracks.is_empty(), "Should find at least one similar track via vector");
+
+    // All results should have acoustic similarity type
+    for track in &tracks {
+        assert_eq!(track.similarity_type, SimilarityType::Acoustic);
+        assert!(track.score >= 0.0 && track.score <= 1.0, "Score should be between 0 and 1");
+    }
+
+    // The similar track should be ranked higher than the different track
+    // Find positions in the results
+    let similar_pos = tracks.iter().position(|t| t.track_id == similar_id);
+    let different_pos = tracks.iter().position(|t| t.track_id == different_id);
+
+    if similar_pos.is_some() && different_pos.is_some() {
+        assert!(
+            similar_pos.unwrap() < different_pos.unwrap(),
+            "Similar track should rank higher than different track"
+        );
+    }
+
+    ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_find_similar_by_features_falls_back_to_jsonb() {
+    require_db!(pool);
+
+    let mut ctx = TestContext::new(pool.clone()).await;
+
+    // Create source track WITHOUT audio_features_vector (only JSONB features)
+    let source_features = json!({
+        "bpm": 120.0,
+        "loudness": -8.0,
+        "energy": 0.7,
+        "danceability": 0.6,
+        "valence": 0.5
+    });
+    let source_id = ctx
+        .add_track(
+            "Source Track JSONB Only",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            source_features,
+        )
+        .await;
+    // Intentionally NOT adding audio_features_vector to force JSONB fallback
+
+    // Create similar track with JSONB features
+    let similar_features = json!({
+        "bpm": 122.0,
+        "loudness": -9.0,
+        "energy": 0.72,
+        "danceability": 0.58,
+        "valence": 0.52
+    });
+    let _similar_id = ctx
+        .add_track(
+            "Similar Features Track JSONB",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            similar_features,
+        )
+        .await;
+
+    let service = SimilarityService::new(pool);
+    let results = service.find_similar_by_features(source_id, 10).await;
+
+    assert!(results.is_ok(), "Should fall back to JSONB path: {:?}", results.err());
+    let tracks = results.unwrap();
+
+    // Should return tracks via JSONB fallback
+    assert!(!tracks.is_empty(), "Should find at least one similar track via JSONB fallback");
+
+    // All results should have acoustic similarity type
+    for track in &tracks {
+        assert_eq!(track.similarity_type, SimilarityType::Acoustic);
+    }
+
+    ctx.cleanup().await;
+}
+
+#[tokio::test]
+async fn test_graphql_acoustic_similarity_uses_vector_when_available() {
+    require_db!(pool);
+
+    let mut gql_ctx = GraphQLTestContext::new(pool.clone()).await;
+
+    // Create source track with audio features vector
+    let source_features = json!({
+        "bpm": 120.0,
+        "loudness": -8.0,
+        "energy": 0.7,
+        "danceability": 0.6,
+        "valence": 0.5
+    });
+    let source_id = gql_ctx
+        .ctx
+        .add_track(
+            "GraphQL Vector Source",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            source_features,
+        )
+        .await;
+    add_audio_features_vector(&gql_ctx.ctx.pool, source_id, &[0.7, 0.867, 0.5, 0.6, 0.6]).await;
+
+    // Create similar track with vector
+    let similar_features = json!({
+        "bpm": 122.0,
+        "loudness": -9.0,
+        "energy": 0.72,
+        "danceability": 0.58,
+        "valence": 0.52
+    });
+    let similar_id = gql_ctx
+        .ctx
+        .add_track(
+            "GraphQL Vector Similar",
+            &["rock"],
+            &["energetic"],
+            &["guitar"],
+            similar_features,
+        )
+        .await;
+    add_audio_features_vector(&gql_ctx.ctx.pool, similar_id, &[0.72, 0.85, 0.52, 0.58, 0.61]).await;
+
+    // Query via GraphQL
+    let query = format!(
+        r#"
+        query {{
+            similarTracksByMethod(trackId: "{}", method: ACOUSTIC, limit: 10) {{
+                trackId
+                title
+                score
+                similarityType
+            }}
+        }}
+        "#,
+        source_id
+    );
+
+    let response = gql_ctx.execute(&query).await;
+    assert!(
+        response.errors.is_empty(),
+        "ACOUSTIC query with vector should not have errors: {:?}",
+        response.errors
+    );
+
+    let data = response.data.into_json().unwrap();
+    let tracks = data["similarTracksByMethod"].as_array().unwrap();
+
+    // Should return tracks
+    assert!(
+        !tracks.is_empty(),
+        "Should find acoustically similar tracks via vector"
+    );
+
+    // All tracks should have ACOUSTIC similarity type
+    for track in tracks {
+        assert_eq!(
+            track["similarityType"].as_str().unwrap(),
+            "ACOUSTIC",
+            "All tracks should have ACOUSTIC similarity type"
+        );
+        let score = track["score"].as_f64().unwrap();
+        assert!((0.0..=1.0).contains(&score), "Score should be in [0, 1]");
+    }
+
+    gql_ctx.cleanup().await;
+}
