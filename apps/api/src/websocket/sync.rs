@@ -633,3 +633,858 @@ mod tests {
         ));
     }
 }
+
+/// Unit tests for SyncHandler methods
+#[cfg(test)]
+mod handler_tests {
+    use super::*;
+    use crate::websocket::connection::DeviceInfo;
+    use crate::websocket::messages::{QueueTrack, RepeatMode};
+    use tokio::sync::mpsc;
+
+    /// Helper to create a test setup with connection manager, pubsub, and handler
+    struct TestSetup {
+        user_id: Uuid,
+        device_id: String,
+        connection_manager: ConnectionManager,
+        pubsub: SyncPubSub,
+        handler: SyncHandler,
+        /// Receiver for messages sent to this device
+        rx: mpsc::UnboundedReceiver<ServerMessage>,
+    }
+
+    impl TestSetup {
+        fn new(device_id: &str) -> Self {
+            let user_id = Uuid::new_v4();
+            let device_id = device_id.to_string();
+            let connection_manager = ConnectionManager::new();
+            let pubsub = SyncPubSub::new_in_memory();
+
+            // Create channel and register connection
+            let (tx, rx) = mpsc::unbounded_channel();
+            let device_info = DeviceInfo::new(
+                device_id.clone(),
+                Some("Test Device".to_string()),
+                Some("desktop".to_string()),
+            );
+            connection_manager.add_connection(user_id, device_id.clone(), tx, device_info);
+
+            let handler = SyncHandler::new(
+                user_id,
+                device_id.clone(),
+                connection_manager.clone(),
+                pubsub.clone(),
+            );
+
+            Self {
+                user_id,
+                device_id,
+                connection_manager,
+                pubsub,
+                handler,
+                rx,
+            }
+        }
+
+        /// Add another device and return its receiver
+        fn add_device(&self, device_id: &str) -> mpsc::UnboundedReceiver<ServerMessage> {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let device_info = DeviceInfo::new(
+                device_id.to_string(),
+                Some("Other Device".to_string()),
+                Some("mobile".to_string()),
+            );
+            self.connection_manager
+                .add_connection(self.user_id, device_id.to_string(), tx, device_info);
+            rx
+        }
+
+        /// Make this device the active device
+        fn make_active(&self) {
+            self.connection_manager
+                .set_active_device(self.user_id, &self.device_id);
+        }
+
+        /// Create a handler for a different device
+        fn handler_for(&self, device_id: &str) -> SyncHandler {
+            SyncHandler::new(
+                self.user_id,
+                device_id.to_string(),
+                self.connection_manager.clone(),
+                self.pubsub.clone(),
+            )
+        }
+    }
+
+    // =========================================================================
+    // handle_playback_update tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_playback_update_as_active_device() {
+        let mut setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        // Subscribe to pubsub to verify broadcast
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        // Add another device to verify it receives the broadcast
+        let _other_rx = setup.add_device("device-2");
+
+        let state = PlaybackState {
+            track_id: Some("track-123".to_string()),
+            is_playing: true,
+            position_ms: 30000,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            volume: 0.8,
+            is_muted: false,
+            shuffle: false,
+            repeat: RepeatMode::Off,
+        };
+
+        let result = setup.handler.handle_playback_update(state.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify playback state was stored
+        let stored_state = setup.connection_manager.get_playback_state(setup.user_id);
+        assert!(stored_state.is_some());
+        let stored = stored_state.unwrap();
+        assert_eq!(stored.track_id, Some("track-123".to_string()));
+        assert!(stored.is_playing);
+
+        // Verify event was published to pubsub
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        if let Ok(SyncEvent::PlaybackUpdate { device_id, state: _ }) = event {
+            assert_eq!(device_id, "device-1");
+        } else {
+            panic!("Expected PlaybackUpdate event");
+        }
+
+        // Verify the sending device does NOT receive an error
+        assert!(setup.rx.try_recv().is_err()); // No error message
+    }
+
+    #[tokio::test]
+    async fn test_playback_update_as_non_active_device() {
+        let mut setup = TestSetup::new("device-1");
+
+        // Add device-2 and make it active
+        let _other_rx = setup.add_device("device-2");
+        setup
+            .connection_manager
+            .set_active_device(setup.user_id, "device-2");
+
+        // Subscribe to verify NO broadcast happens
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let state = PlaybackState::default();
+
+        let result = setup.handler.handle_playback_update(state).await;
+        assert!(result.is_ok());
+
+        // Verify error was sent to the non-active device
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "NOT_ACTIVE_DEVICE");
+        } else {
+            panic!("Expected Error message, got {:?}", msg);
+        }
+
+        // Verify NO event was published to pubsub
+        // Give a tiny bit of time for any async operations
+        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+        assert!(pubsub_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_playback_update_no_active_device() {
+        let mut setup = TestSetup::new("device-1");
+
+        // No device is active - playback update should be rejected
+        let state = PlaybackState::default();
+
+        let result = setup.handler.handle_playback_update(state).await;
+        assert!(result.is_ok());
+
+        // Verify error was sent (device is not active)
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "NOT_ACTIVE_DEVICE");
+        } else {
+            panic!("Expected Error message");
+        }
+    }
+
+    // =========================================================================
+    // handle_seek tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_seek_as_active_device_broadcasts() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        // Subscribe to pubsub to verify broadcast
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let position_ms = 45000u64;
+        let result = setup.handler.handle_seek(position_ms).await;
+        assert!(result.is_ok());
+
+        // Verify seek event was published
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        match event.unwrap() {
+            SyncEvent::SeekUpdate {
+                device_id,
+                position_ms: pos,
+                timestamp,
+            } => {
+                assert_eq!(device_id, "device-1");
+                assert_eq!(pos, 45000);
+                // Timestamp should be close to now
+                let now = chrono::Utc::now().timestamp_millis();
+                assert!((now - timestamp).abs() < 1000); // Within 1 second
+            }
+            _ => panic!("Expected SeekUpdate event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_seek_as_non_active_device_rejected() {
+        let mut setup = TestSetup::new("device-1");
+
+        // No active device, so seek should be rejected
+        let result = setup.handler.handle_seek(30000).await;
+        assert!(result.is_ok());
+
+        // Verify error was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "NOT_ACTIVE_DEVICE");
+        } else {
+            panic!("Expected Error message");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_seek_timestamp_is_current() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let before = chrono::Utc::now().timestamp_millis();
+        let _ = setup.handler.handle_seek(0).await;
+        let after = chrono::Utc::now().timestamp_millis();
+
+        if let Ok(SyncEvent::SeekUpdate { timestamp, .. }) = pubsub_rx.try_recv() {
+            assert!(timestamp >= before);
+            assert!(timestamp <= after);
+        } else {
+            panic!("Expected SeekUpdate event");
+        }
+    }
+
+    // =========================================================================
+    // handle_transfer_request tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_transfer_request_from_active_device() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+        let _device_2_rx = setup.add_device("device-2");
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        // Transfer from active device-1 to device-2
+        let result = setup
+            .handler
+            .handle_transfer_request("device-2".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify device-2 is now active
+        assert_eq!(
+            setup.connection_manager.get_active_device(setup.user_id),
+            Some("device-2".to_string())
+        );
+
+        // Verify events were published (TransferRequest, ActiveDeviceChanged, TransferAccept)
+        let mut events = Vec::new();
+        while let Ok(event) = pubsub_rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(events.len() >= 3);
+
+        // Check for TransferRequest
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::TransferRequest {
+                from_device_id,
+                to_device_id,
+            } if from_device_id == "device-1" && to_device_id == "device-2"
+        )));
+
+        // Check for ActiveDeviceChanged
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::ActiveDeviceChanged {
+                previous_device_id: Some(prev),
+                new_device_id: Some(new),
+            } if prev == "device-1" && new == "device-2"
+        )));
+
+        // Check for TransferAccept
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::TransferAccept {
+                to_device_id,
+                ..
+            } if to_device_id == "device-2"
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_transfer_request_from_non_active_device_rejected() {
+        let mut setup = TestSetup::new("device-1");
+
+        // Add device-2 and make it active
+        let _device_2_rx = setup.add_device("device-2");
+        setup
+            .connection_manager
+            .set_active_device(setup.user_id, "device-2");
+
+        // device-1 (non-active) tries to transfer - should be rejected
+        let result = setup
+            .handler
+            .handle_transfer_request("device-1".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify error was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "NOT_AUTHORIZED");
+        } else {
+            panic!("Expected Error message");
+        }
+
+        // Verify device-2 is still active
+        assert_eq!(
+            setup.connection_manager.get_active_device(setup.user_id),
+            Some("device-2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_first_device_claim_when_no_active() {
+        let setup = TestSetup::new("device-1");
+        let _device_2_rx = setup.add_device("device-2");
+
+        // No active device exists - device-1 can claim device-2 as active
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let result = setup
+            .handler
+            .handle_transfer_request("device-2".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify device-2 is now active
+        assert_eq!(
+            setup.connection_manager.get_active_device(setup.user_id),
+            Some("device-2".to_string())
+        );
+
+        // Verify ActiveDeviceChanged event with previous_device_id = None
+        let mut found_active_changed = false;
+        while let Ok(event) = pubsub_rx.try_recv() {
+            if let SyncEvent::ActiveDeviceChanged {
+                previous_device_id,
+                new_device_id,
+            } = event
+            {
+                assert!(previous_device_id.is_none());
+                assert_eq!(new_device_id, Some("device-2".to_string()));
+                found_active_changed = true;
+            }
+        }
+        assert!(found_active_changed);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_to_nonexistent_device_rejected() {
+        let mut setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        // Try to transfer to a device that doesn't exist
+        let result = setup
+            .handler
+            .handle_transfer_request("nonexistent".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify error was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "DEVICE_NOT_FOUND");
+            assert!(error.message.contains("nonexistent"));
+        } else {
+            panic!("Expected Error message");
+        }
+
+        // Verify device-1 is still active
+        assert_eq!(
+            setup.connection_manager.get_active_device(setup.user_id),
+            Some("device-1".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transfer_to_self_when_active_rejected() {
+        let mut setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        // Try to transfer to self while already active
+        let result = setup
+            .handler
+            .handle_transfer_request("device-1".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify error was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "INVALID_TARGET");
+            assert!(error.message.contains("Already"));
+        } else {
+            panic!("Expected Error message");
+        }
+    }
+
+    // =========================================================================
+    // handle_queue_update tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_queue_update_broadcasts_as_active_device() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let queue = QueueState {
+            tracks: vec![QueueTrack {
+                id: Uuid::new_v4().to_string(),
+                title: "Test Track".to_string(),
+                artist: "Test Artist".to_string(),
+                album_id: None,
+                album_title: "Test Album".to_string(),
+                duration_ms: 180000,
+                cover_url: None,
+            }],
+            current_index: 0,
+        };
+
+        let result = setup.handler.handle_queue_update(queue.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify QueueUpdate event was published
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        match event.unwrap() {
+            SyncEvent::QueueUpdate { device_id, state } => {
+                assert_eq!(device_id, "device-1");
+                assert_eq!(state.tracks.len(), 1);
+                assert_eq!(state.current_index, 0);
+            }
+            _ => panic!("Expected QueueUpdate event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_queue_update_rejected_as_non_active_device() {
+        let mut setup = TestSetup::new("device-1");
+
+        // No active device
+        let queue = QueueState::default();
+
+        let result = setup.handler.handle_queue_update(queue).await;
+        assert!(result.is_ok());
+
+        // Verify error was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        if let Ok(ServerMessage::Error(error)) = msg {
+            assert_eq!(error.code, "NOT_ACTIVE_DEVICE");
+        } else {
+            panic!("Expected Error message");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_queue_update_with_multiple_tracks() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let queue = QueueState {
+            tracks: vec![
+                QueueTrack {
+                    id: Uuid::new_v4().to_string(),
+                    title: "Track 1".to_string(),
+                    artist: "Artist 1".to_string(),
+                    album_id: None,
+                    album_title: "Album 1".to_string(),
+                    duration_ms: 180000,
+                    cover_url: None,
+                },
+                QueueTrack {
+                    id: Uuid::new_v4().to_string(),
+                    title: "Track 2".to_string(),
+                    artist: "Artist 2".to_string(),
+                    album_id: None,
+                    album_title: "Album 2".to_string(),
+                    duration_ms: 200000,
+                    cover_url: None,
+                },
+                QueueTrack {
+                    id: Uuid::new_v4().to_string(),
+                    title: "Track 3".to_string(),
+                    artist: "Artist 3".to_string(),
+                    album_id: None,
+                    album_title: "Album 3".to_string(),
+                    duration_ms: 220000,
+                    cover_url: None,
+                },
+            ],
+            current_index: 1, // Currently on track 2
+        };
+
+        let result = setup.handler.handle_queue_update(queue).await;
+        assert!(result.is_ok());
+
+        // Verify queue state in broadcast
+        if let Ok(SyncEvent::QueueUpdate { state, .. }) = pubsub_rx.try_recv() {
+            assert_eq!(state.tracks.len(), 3);
+            assert_eq!(state.current_index, 1);
+            assert_eq!(state.tracks[1].title, "Track 2");
+        } else {
+            panic!("Expected QueueUpdate event");
+        }
+    }
+
+    // =========================================================================
+    // handle_heartbeat tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_heartbeat_returns_pong() {
+        let mut setup = TestSetup::new("device-1");
+
+        let before = chrono::Utc::now().timestamp_millis();
+        let result = setup.handler.handle_heartbeat().await;
+        let after = chrono::Utc::now().timestamp_millis();
+
+        assert!(result.is_ok());
+
+        // Verify Pong message was sent
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        match msg.unwrap() {
+            ServerMessage::Pong { server_time } => {
+                // Server time should be between before and after
+                assert!(server_time >= before);
+                assert!(server_time <= after);
+            }
+            other => panic!("Expected Pong message, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_works_without_active_device() {
+        let mut setup = TestSetup::new("device-1");
+
+        // No active device - heartbeat should still work
+        let result = setup.handler.handle_heartbeat().await;
+        assert!(result.is_ok());
+
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        assert!(matches!(msg.unwrap(), ServerMessage::Pong { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_server_time_is_current() {
+        let mut setup = TestSetup::new("device-1");
+
+        let now_before = chrono::Utc::now().timestamp_millis();
+        let _ = setup.handler.handle_heartbeat().await;
+        let now_after = chrono::Utc::now().timestamp_millis();
+
+        if let Ok(ServerMessage::Pong { server_time }) = setup.rx.try_recv() {
+            // The server_time should be within the window
+            assert!(
+                server_time >= now_before && server_time <= now_after,
+                "server_time {} should be between {} and {}",
+                server_time,
+                now_before,
+                now_after
+            );
+        } else {
+            panic!("Expected Pong message");
+        }
+    }
+
+    // =========================================================================
+    // handle_device_list_request tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_device_list_request_returns_connected_devices() {
+        let mut setup = TestSetup::new("device-1");
+        setup.make_active();
+        let _device_2_rx = setup.add_device("device-2");
+
+        let result = setup.handler.handle_device_list_request().await;
+        assert!(result.is_ok());
+
+        let msg = setup.rx.try_recv();
+        assert!(msg.is_ok());
+        match msg.unwrap() {
+            ServerMessage::DeviceList(devices) => {
+                assert_eq!(devices.len(), 2);
+                let device_ids: Vec<&str> = devices.iter().map(|d| d.device_id.as_str()).collect();
+                assert!(device_ids.contains(&"device-1"));
+                assert!(device_ids.contains(&"device-2"));
+
+                // Verify active device flag is set correctly
+                let active_device = devices.iter().find(|d| d.device_id == "device-1").unwrap();
+                assert!(active_device.is_active);
+
+                let other_device = devices.iter().find(|d| d.device_id == "device-2").unwrap();
+                assert!(!other_device.is_active);
+            }
+            other => panic!("Expected DeviceList message, got {:?}", other),
+        }
+    }
+
+    // =========================================================================
+    // handle_settings_update tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_settings_update_broadcasts() {
+        let setup = TestSetup::new("device-1");
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let settings = SyncedSettings {
+            crossfade_enabled: Some(true),
+            crossfade_duration: Some(5.0),
+            gapless_enabled: Some(true),
+            normalize_volume: Some(false),
+        };
+
+        let result = setup.handler.handle_settings_update(settings.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify settings event was published
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        match event.unwrap() {
+            SyncEvent::SettingsUpdate { device_id, settings } => {
+                assert_eq!(device_id, "device-1");
+                assert_eq!(settings.crossfade_enabled, Some(true));
+                assert_eq!(settings.crossfade_duration, Some(5.0));
+            }
+            _ => panic!("Expected SettingsUpdate event"),
+        }
+    }
+
+    // =========================================================================
+    // handle_message tests (integration of all handlers)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_handle_message_routes_correctly() {
+        let mut setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        // Test Heartbeat routing
+        let result = setup.handler.handle_message(ClientMessage::Heartbeat).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            setup.rx.try_recv().unwrap(),
+            ServerMessage::Pong { .. }
+        ));
+
+        // Test RequestDeviceList routing
+        let result = setup
+            .handler
+            .handle_message(ClientMessage::RequestDeviceList)
+            .await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            setup.rx.try_recv().unwrap(),
+            ServerMessage::DeviceList(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_rejects_stale_connection() {
+        let setup = TestSetup::new("device-1");
+
+        // Remove the connection to simulate stale state
+        setup
+            .connection_manager
+            .remove_connection(setup.user_id, "device-1");
+
+        // Message should be rejected because device is not found
+        let result = setup.handler.handle_message(ClientMessage::Heartbeat).await;
+        assert!(result.is_err());
+        match result {
+            Err(SyncError::Internal(msg)) => {
+                assert!(msg.contains("device not found"));
+            }
+            _ => panic!("Expected Internal error"),
+        }
+    }
+
+    // =========================================================================
+    // handle_device_connected / handle_device_disconnected tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_device_connected_broadcasts() {
+        let setup = TestSetup::new("device-1");
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        let device_info = DeviceInfo::new(
+            "device-1".to_string(),
+            Some("My Device".to_string()),
+            Some("desktop".to_string()),
+        );
+
+        setup.handler.handle_device_connected(device_info).await;
+
+        // Verify DeviceConnected event was published
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        match event.unwrap() {
+            SyncEvent::DeviceConnected { presence } => {
+                assert_eq!(presence.device_id, "device-1");
+                assert_eq!(presence.device_name, "My Device");
+            }
+            _ => panic!("Expected DeviceConnected event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_device_disconnected_broadcasts() {
+        let setup = TestSetup::new("device-1");
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        // Disconnect without being active
+        setup.handler.handle_device_disconnected(false).await;
+
+        // Verify DeviceDisconnected event was published
+        let event = pubsub_rx.try_recv();
+        assert!(event.is_ok());
+        match event.unwrap() {
+            SyncEvent::DeviceDisconnected { device_id } => {
+                assert_eq!(device_id, "device-1");
+            }
+            _ => panic!("Expected DeviceDisconnected event"),
+        }
+
+        // Verify NO ActiveDeviceChanged event (not active)
+        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+        assert!(pubsub_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_active_device_disconnected_clears_and_broadcasts() {
+        let setup = TestSetup::new("device-1");
+        setup.make_active();
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        // Disconnect as active device
+        setup.handler.handle_device_disconnected(true).await;
+
+        // Collect all events
+        let mut events = Vec::new();
+        while let Ok(event) = pubsub_rx.try_recv() {
+            events.push(event);
+        }
+
+        // Should have DeviceDisconnected and ActiveDeviceChanged events
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::DeviceDisconnected { device_id } if device_id == "device-1")));
+
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SyncEvent::ActiveDeviceChanged {
+                previous_device_id: Some(prev),
+                new_device_id: None,
+            } if prev == "device-1"
+        )));
+
+        // Verify active device was cleared
+        assert!(setup
+            .connection_manager
+            .get_active_device(setup.user_id)
+            .is_none());
+    }
+
+    // =========================================================================
+    // Edge case tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_multiple_handlers_same_user() {
+        let setup = TestSetup::new("device-1");
+        let _device_2_rx = setup.add_device("device-2");
+
+        let handler_1 = setup.handler_for("device-1");
+        let handler_2 = setup.handler_for("device-2");
+
+        // Make device-1 active
+        setup
+            .connection_manager
+            .set_active_device(setup.user_id, "device-1");
+
+        let mut pubsub_rx = setup.pubsub.subscribe(setup.user_id).await;
+
+        // Handler 1 (active) sends playback update
+        let state = PlaybackState::default();
+        let result = handler_1.handle_playback_update(state).await;
+        assert!(result.is_ok());
+
+        // Handler 2 (not active) tries to send - should be rejected
+        let state2 = PlaybackState::default();
+        let result = handler_2.handle_playback_update(state2).await;
+        assert!(result.is_ok()); // Returns Ok but sends error
+
+        // Only one PlaybackUpdate should be in pubsub (from handler_1)
+        let event_count = std::iter::from_fn(|| pubsub_rx.try_recv().ok())
+            .filter(|e| matches!(e, SyncEvent::PlaybackUpdate { .. }))
+            .count();
+        assert_eq!(event_count, 1);
+    }
+}
