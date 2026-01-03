@@ -69,3 +69,5 @@ export {
   getOrCreateDeviceId,
   getDefaultDeviceName,
 } from './types';
+
+export { fetchTrackById } from './fetchTrackById';
