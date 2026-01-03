@@ -35,7 +35,7 @@ vi.mock('../stores/deviceStore', async (importOriginal) => {
 });
 
 // Alias factory to match existing test patterns
-const createHookOptions = createMockQueueSyncOptions;
+const createMockOptions = createMockQueueSyncOptions;
 
 describe('useQueueSync', () => {
   beforeEach(() => {
@@ -56,7 +56,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -73,7 +73,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -93,7 +93,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -130,7 +130,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       const albumIdValue = 'important-album-id-12345';
@@ -160,7 +160,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -190,7 +190,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -204,7 +204,7 @@ describe('useQueueSync', () => {
       mockUseIsActiveDevice.mockReturnValue(false);
 
       const stateSourceRef = { current: null as StateChangeSource };
-      const options = createHookOptions({ stateSourceRef });
+      const options = createMockOptions({ stateSourceRef });
       const { result } = renderHook(() => useQueueSync(options));
 
       // Before sync, should be null
@@ -223,7 +223,7 @@ describe('useQueueSync', () => {
       mockUseIsActiveDevice.mockReturnValue(false);
 
       const stateSourceRef = { current: null as StateChangeSource };
-      const options = createHookOptions({ stateSourceRef });
+      const options = createMockOptions({ stateSourceRef });
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -247,7 +247,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: createLocalQueue(), queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({
+      const options = createMockOptions({
         isConnected: false,
         sendQueueUpdate,
       });
@@ -267,7 +267,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: createLocalQueue(), queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -285,7 +285,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: localQueue, queueIndex: 1 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -337,7 +337,7 @@ describe('useQueueSync', () => {
       });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -369,7 +369,7 @@ describe('useQueueSync', () => {
       });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -399,7 +399,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -431,7 +431,7 @@ describe('useQueueSync', () => {
       });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -454,7 +454,7 @@ describe('useQueueSync', () => {
 
       const stateSourceRef = { current: null as StateChangeSource };
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ stateSourceRef, sendQueueUpdate });
+      const options = createMockOptions({ stateSourceRef, sendQueueUpdate });
 
       const { result } = renderHook(() => useQueueSync(options));
 
@@ -481,7 +481,7 @@ describe('useQueueSync', () => {
 
       const stateSourceRef = { current: 'remote' as StateChangeSource };
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({
+      const options = createMockOptions({
         stateSourceRef,
         sendQueueUpdate,
         isConnected: true,
@@ -524,7 +524,7 @@ describe('useQueueSync', () => {
 
       const stateSourceRef = { current: null as StateChangeSource };
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({
+      const options = createMockOptions({
         stateSourceRef,
         sendQueueUpdate,
         isConnected: true,
@@ -562,7 +562,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       renderHook(() => useQueueSync(options));
       sendQueueUpdate.mockClear();
@@ -581,7 +581,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: createLocalQueue(), queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       renderHook(() => useQueueSync(options));
       sendQueueUpdate.mockClear();
@@ -599,7 +599,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({
+      const options = createMockOptions({
         sendQueueUpdate,
         isConnected: false,
       });
@@ -620,7 +620,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       renderHook(() => useQueueSync(options));
       sendQueueUpdate.mockClear();
@@ -639,7 +639,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       act(() => {
@@ -671,7 +671,7 @@ describe('useQueueSync', () => {
 
       usePlayerStore.setState({ queue: [], queueIndex: 0 });
 
-      const options = createHookOptions();
+      const options = createMockOptions();
       const { result } = renderHook(() => useQueueSync(options));
 
       // Create a queue with 100 tracks
@@ -716,7 +716,7 @@ describe('useQueueSync', () => {
       usePlayerStore.setState({ queue: [originalTrack], queueIndex: 0 });
 
       const sendQueueUpdate = vi.fn();
-      const options = createHookOptions({ sendQueueUpdate });
+      const options = createMockOptions({ sendQueueUpdate });
 
       const { result, unmount } = renderHook(() => useQueueSync(options));
 
@@ -735,7 +735,7 @@ describe('useQueueSync', () => {
         usePlayerStore.setState({ queue: [], queueIndex: 0 });
       });
 
-      const options2 = createHookOptions();
+      const options2 = createMockOptions();
       const { result: result2 } = renderHook(() => useQueueSync(options2));
 
       act(() => {
