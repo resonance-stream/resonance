@@ -26,6 +26,22 @@ const PLAYBACK_THROTTLE_MS = 250;
 /** Minimum position difference to trigger a seek sync (ms) */
 const SEEK_THRESHOLD_MS = 1000;
 
+/**
+ * Consolidated ref state for playback sync internal tracking.
+ * Groups related state into a single ref object for cleaner state management
+ * and more explicit state transitions.
+ */
+interface PlaybackSyncRefs {
+  /** Timestamp of last broadcast (for throttling) */
+  lastBroadcast: number;
+  /** Previous track ID (for detecting track changes) */
+  prevTrackId: string | undefined;
+  /** Last known local position (for detecting local seeks) */
+  lastLocalPosition: number;
+  /** Flag to indicate if the ref has been initialized with current values */
+  initialized: boolean;
+}
+
 export interface UsePlaybackSyncOptions {
   /** Whether sync connection is active */
   isConnected: boolean;
@@ -52,9 +68,7 @@ export interface UsePlaybackSyncValue {
 export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyncValue {
   const { isConnected, sendPlaybackUpdate, stateSourceRef, onRemoteTrackChange } = options;
 
-  const lastBroadcastRef = useRef<number>(0);
-
-  // Get player state
+  // Get player state (needs to be before ref initialization for proper defaults)
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const currentTime = usePlayerStore((s) => s.currentTime);
@@ -62,6 +76,23 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
   const isMuted = usePlayerStore((s) => s.isMuted);
   const shuffle = usePlayerStore((s) => s.shuffle);
   const repeat = usePlayerStore((s) => s.repeat);
+
+  // Consolidated ref for internal playback sync state tracking
+  // Uses lazy initialization pattern to set prevTrackId and lastLocalPosition
+  // to current values, avoiding spurious broadcasts on initial mount
+  const syncStateRef = useRef<PlaybackSyncRefs>({
+    lastBroadcast: 0,
+    prevTrackId: undefined,
+    lastLocalPosition: 0,
+    initialized: false,
+  });
+
+  // Lazy initialization with current values (only runs once)
+  if (!syncStateRef.current.initialized) {
+    syncStateRef.current.prevTrackId = currentTrack?.id;
+    syncStateRef.current.lastLocalPosition = currentTime;
+    syncStateRef.current.initialized = true;
+  }
 
   // Get player actions
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
@@ -183,8 +214,8 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
     if (!isConnected || !isActiveDevice) return;
 
     const now = Date.now();
-    if (now - lastBroadcastRef.current < PLAYBACK_THROTTLE_MS) return;
-    lastBroadcastRef.current = now;
+    if (now - syncStateRef.current.lastBroadcast < PLAYBACK_THROTTLE_MS) return;
+    syncStateRef.current.lastBroadcast = now;
 
     sendPlaybackUpdate(buildPlaybackState());
   }, [isConnected, isActiveDevice, sendPlaybackUpdate, buildPlaybackState]);
@@ -199,10 +230,9 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
 
   // Immediate broadcast on track changes (bypass throttle for critical state)
   // Track changes need instant sync to ensure all devices switch together
-  const prevTrackIdRef = useRef<string | undefined>(currentTrack?.id);
   useEffect(() => {
-    const prevTrackId = prevTrackIdRef.current;
-    prevTrackIdRef.current = currentTrack?.id;
+    const prevTrackId = syncStateRef.current.prevTrackId;
+    syncStateRef.current.prevTrackId = currentTrack?.id;
 
     // Skip if track hasn't changed or no connection
     if (!isConnected || !isActiveDevice) return;
@@ -234,16 +264,13 @@ export function usePlaybackSync(options: UsePlaybackSyncOptions): UsePlaybackSyn
     return () => clearInterval(interval);
   }, [isConnected, isActiveDevice, isPlaying, stateSourceRef]);
 
-  // Track last position to detect local seeks
-  const lastLocalPositionRef = useRef<number>(currentTime);
-
   // Broadcast immediately on large local seeks to reduce sync lag
   useEffect(() => {
     if (!isConnected || !isActiveDevice) return;
     if (stateSourceRef.current === 'remote') return;
 
-    const prev = lastLocalPositionRef.current;
-    lastLocalPositionRef.current = currentTime;
+    const prev = syncStateRef.current.lastLocalPosition;
+    syncStateRef.current.lastLocalPosition = currentTime;
 
     // Detect if this is a significant position jump (likely a seek)
     const deltaMs = Math.abs(currentTime - prev) * 1000;
