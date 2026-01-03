@@ -1217,7 +1217,7 @@ async fn test_graphql_similar_tracks_query() {
         assert!(track["score"].is_number(), "score should be a number");
 
         let score = track["score"].as_f64().unwrap();
-        assert!(score >= 0.0 && score <= 1.0, "Score should be in [0, 1]");
+        assert!((0.0..=1.0).contains(&score), "Score should be in [0, 1]");
     }
 
     gql_ctx.cleanup().await;
@@ -1451,7 +1451,7 @@ async fn test_graphql_similar_tracks_by_method_acoustic() {
             "All tracks should have ACOUSTIC similarity type"
         );
         let score = track["score"].as_f64().unwrap();
-        assert!(score >= 0.0 && score <= 1.0, "Score should be in [0, 1]");
+        assert!((0.0..=1.0).contains(&score), "Score should be in [0, 1]");
     }
 
     gql_ctx.cleanup().await;
