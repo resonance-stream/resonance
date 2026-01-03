@@ -200,12 +200,74 @@ export interface ChatToolResult {
   success: boolean;
 }
 
-/** Action the UI should execute */
-export interface ChatAction {
-  /** Action type */
-  type: 'play_track' | 'add_to_queue' | 'create_playlist' | 'search_library' | 'get_recommendations';
-  /** Action payload (varies by type) */
-  payload: Record<string, unknown>;
+// ============================================================================
+// Chat Action Types (Discriminated Union)
+// ============================================================================
+
+/** Play a single track */
+export interface PlayTrackAction {
+  type: 'play_track'
+  payload: {
+    track_id: string
+  }
+}
+
+/** Add tracks to queue */
+export interface AddToQueueAction {
+  type: 'add_to_queue'
+  payload: {
+    track_ids: string[]
+  }
+}
+
+/** Create a new playlist */
+export interface CreatePlaylistAction {
+  type: 'create_playlist'
+  payload: {
+    name: string
+    track_ids?: string[]
+  }
+}
+
+/** Navigate to search with query */
+export interface SearchLibraryAction {
+  type: 'search_library'
+  payload: {
+    query: string
+  }
+}
+
+/** Get recommendations for a track */
+export interface GetRecommendationsAction {
+  type: 'get_recommendations'
+  payload: {
+    track_id: string
+  }
+}
+
+/** Action the UI should execute (discriminated union for type safety) */
+export type ChatAction =
+  | PlayTrackAction
+  | AddToQueueAction
+  | CreatePlaylistAction
+  | SearchLibraryAction
+  | GetRecommendationsAction
+
+/**
+ * Type guard to check if action has a specific type
+ *
+ * @example
+ * ```ts
+ * if (isChatActionType(action, 'play_track')) {
+ *   // action.payload.track_id is now typed as string
+ * }
+ * ```
+ */
+export function isChatActionType<T extends ChatAction['type']>(
+  action: ChatAction,
+  type: T
+): action is Extract<ChatAction, { type: T }> {
+  return action.type === type
 }
 
 /** Complete AI response */

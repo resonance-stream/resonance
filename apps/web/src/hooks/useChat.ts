@@ -30,12 +30,21 @@ import type {
 } from '../sync/types';
 import { usePlayerStore } from '../stores/playerStore';
 import { fetchTrackById } from '../sync/fetchTrackById';
+import type { Track } from '../stores/playerStore';
 import {
   CREATE_PLAYLIST_MUTATION,
   ADD_TRACKS_TO_PLAYLIST_MUTATION,
 } from '../lib/graphql/playlist';
 import { SIMILAR_TRACKS_QUERY } from '../lib/graphql/similarity';
-import { libraryKeys } from '../lib/queryKeys';
+import {
+  CHAT_CONVERSATIONS_QUERY,
+  CHAT_CONVERSATION_QUERY,
+  DELETE_CONVERSATION_MUTATION,
+  DELETE_ALL_CONVERSATIONS_MUTATION,
+  type ChatConversationsResponse,
+  type ChatConversationDetailResponse,
+} from '../lib/graphql/chat';
+import { libraryKeys, chatKeys } from '../lib/queryKeys';
 import { mapScoredTrackToPlayerTrack } from '../lib/mappers';
 import type {
   CreatePlaylistInput,
@@ -44,96 +53,8 @@ import type {
 } from '../types/playlist';
 import type { SimilarTracksResponse } from '../types/similarity';
 
-// =============================================================================
-// GraphQL Queries
-// =============================================================================
-
-const CHAT_CONVERSATIONS_QUERY = `
-  query ChatConversations($limit: Int, $offset: Int) {
-    chatConversations(limit: $limit, offset: $offset) {
-      id
-      title
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
-const CHAT_CONVERSATION_QUERY = `
-  query ChatConversation($id: ID!, $messageLimit: Int) {
-    chatConversation(id: $id, messageLimit: $messageLimit) {
-      conversation {
-        id
-        title
-        createdAt
-        updatedAt
-      }
-      messages {
-        id
-        conversationId
-        role
-        content
-        modelUsed
-        tokenCount
-        createdAt
-      }
-    }
-  }
-`;
-
-const DELETE_CONVERSATION_MUTATION = `
-  mutation DeleteConversation($id: ID!) {
-    deleteConversation(id: $id)
-  }
-`;
-
-const DELETE_ALL_CONVERSATIONS_MUTATION = `
-  mutation DeleteAllConversations {
-    deleteAllConversations
-  }
-`;
-
-// =============================================================================
-// Query Keys
-// =============================================================================
-
-export const chatKeys = {
-  all: ['chat'] as const,
-  conversations: () => [...chatKeys.all, 'conversations'] as const,
-  conversation: (id: string) => [...chatKeys.all, 'conversation', id] as const,
-};
-
-// =============================================================================
-// Types
-// =============================================================================
-
-interface ChatConversationResponse {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ChatMessageResponse {
-  id: string;
-  conversationId: string;
-  role: 'USER' | 'ASSISTANT' | 'SYSTEM' | 'TOOL';
-  content: string | null;
-  modelUsed: string | null;
-  tokenCount: number | null;
-  createdAt: string;
-}
-
-interface ChatConversationsResponse {
-  chatConversations: ChatConversationResponse[];
-}
-
-interface ChatConversationDetailResponse {
-  chatConversation: {
-    conversation: ChatConversationResponse;
-    messages: ChatMessageResponse[];
-  } | null;
-}
+// Re-export chatKeys for backwards compatibility
+export { chatKeys } from '../lib/queryKeys';
 
 // =============================================================================
 // Hook
@@ -217,14 +138,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   // Navigation for action execution
   const navigate = useNavigate();
 
+  // Type guard for filtering tracks
+  const isValidTrack = (track: Track | null): track is Track => track !== null;
+
   // Execute a chat action (play track, add to queue, etc.)
   const executeAction = useCallback(async (action: ChatAction) => {
     console.log('[Chat] Executing action:', action);
 
     switch (action.type) {
       case 'play_track': {
-        const trackId = action.payload.track_id as string | undefined;
-        if (!trackId) break;
+        const { track_id: trackId } = action.payload;
+        if (!trackId) {
+          console.warn('[Chat] play_track action missing track_id');
+          break;
+        }
 
         try {
           const track = await fetchTrackById(trackId);
@@ -242,12 +169,15 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'add_to_queue': {
-        const trackIds = action.payload.track_ids as string[] | undefined;
-        if (!trackIds?.length) break;
+        const { track_ids: trackIds } = action.payload;
+        if (!trackIds?.length) {
+          console.warn('[Chat] add_to_queue action has empty track_ids');
+          break;
+        }
 
         try {
           // Fetch all tracks in parallel for better performance
-          const tracks = await Promise.all(
+          const results = await Promise.all(
             trackIds.map(async (trackId) => {
               try {
                 return await fetchTrackById(trackId);
@@ -258,8 +188,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             })
           );
 
-          // Add successfully fetched tracks to queue
-          tracks.filter(Boolean).forEach((track) => addToQueue(track!));
+          // Add successfully fetched tracks to queue using type guard
+          const validTracks = results.filter(isValidTrack);
+          validTracks.forEach((track) => addToQueue(track));
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to add to queue:', err);
@@ -271,8 +202,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'create_playlist': {
-        const name = action.payload.name as string | undefined;
-        const trackIds = action.payload.track_ids as string[] | undefined;
+        const { name, track_ids: trackIds } = action.payload;
 
         if (!name) {
           console.warn('[Chat] create_playlist action missing name');
@@ -321,15 +251,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'search_library': {
-        const query = action.payload.query as string | undefined;
-        if (query) {
-          navigate(`/search?q=${encodeURIComponent(query)}`);
+        const { query } = action.payload;
+        if (!query) {
+          console.warn('[Chat] search_library action missing query');
+          break;
         }
+        navigate(`/search?q=${encodeURIComponent(query)}`);
         break;
       }
       case 'get_recommendations': {
-        const trackId = action.payload.track_id as string | undefined;
-        if (!trackId) break;
+        const { track_id: trackId } = action.payload;
+        if (!trackId) {
+          console.warn('[Chat] get_recommendations action missing track_id');
+          break;
+        }
 
         try {
           // Fetch similar tracks using the combined similarity algorithm
@@ -357,8 +292,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }
         break;
       }
-      default:
-        console.warn('[Chat] Unknown action type:', action);
+      default: {
+        // This should never happen with discriminated unions, but handle gracefully
+        const _exhaustiveCheck: never = action;
+        console.warn('[Chat] Unknown action type:', _exhaustiveCheck);
+      }
     }
   }, [setTrack, addToQueue, setQueue, navigate, handleError, queryClient]);
 
@@ -370,13 +308,15 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
     onChatComplete: useCallback((payload: ChatCompletePayload) => {
       completeResponse(payload);
-      // Execute any actions sequentially
+      // Execute any actions sequentially with proper error handling
       if (payload.actions?.length) {
         (async () => {
           for (const action of payload.actions) {
             await executeAction(action);
           }
-        })();
+        })().catch((err) => {
+          console.error('[Chat] Unhandled error in action execution:', err);
+        });
       }
     }, [completeResponse, executeAction]),
 
