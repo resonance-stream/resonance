@@ -479,6 +479,7 @@ impl std::error::Error for SendError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::websocket::messages::RepeatMode;
 
     #[test]
     fn test_connection_manager_add_remove() {
@@ -590,5 +591,484 @@ mod tests {
         assert_eq!(info.device_id, "test-id");
         assert_eq!(info.device_name, "Unknown Device");
         assert_eq!(info.device_type, DeviceType::Unknown);
+    }
+
+    #[test]
+    fn test_connection_manager_remove_clears_active_device() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let device_id = "active-device".to_string();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, device_id.clone(), tx, DeviceInfo::default());
+
+        // Set this device as active
+        manager.set_active_device(user_id, &device_id);
+        assert_eq!(
+            manager.get_active_device(user_id),
+            Some(device_id.clone())
+        );
+
+        // Remove the active device
+        let removed = manager.remove_connection(user_id, &device_id);
+        assert!(removed);
+
+        // Active device should be cleared
+        assert!(manager.get_active_device(user_id).is_none());
+
+        // User entry should be cleaned up since no connections remain
+        assert!(!manager.has_connections(user_id));
+    }
+
+    #[test]
+    fn test_connection_manager_remove_preserves_active_device_for_other_devices() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+
+        manager.add_connection(user_id, "device-1".to_string(), tx1, DeviceInfo::default());
+        manager.add_connection(user_id, "device-2".to_string(), tx2, DeviceInfo::default());
+
+        // Set device-1 as active
+        manager.set_active_device(user_id, "device-1");
+
+        // Remove device-2 (not the active device)
+        manager.remove_connection(user_id, "device-2");
+
+        // Active device should still be device-1
+        assert_eq!(
+            manager.get_active_device(user_id),
+            Some("device-1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_connection_manager_cleanup_stale_connections() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx1, rx1) = mpsc::unbounded_channel();
+        let (tx2, rx2) = mpsc::unbounded_channel();
+
+        manager.add_connection(user_id, "device-1".to_string(), tx1, DeviceInfo::default());
+        manager.add_connection(user_id, "device-2".to_string(), tx2, DeviceInfo::default());
+
+        assert_eq!(manager.connection_count(user_id), 2);
+
+        // Drop receivers to close the connections - closed connections should be removed
+        // regardless of idle time
+        drop(rx1);
+        drop(rx2);
+
+        // Cleanup should remove closed connections (is_alive() returns false)
+        let removed = manager.cleanup_stale_connections(1_000_000_000);
+        assert_eq!(removed, 2);
+
+        // User entry should be cleaned up
+        assert!(!manager.has_connections(user_id));
+        assert_eq!(manager.total_users(), 0);
+    }
+
+    #[test]
+    fn test_connection_manager_cleanup_stale_preserves_active_connections() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+
+        manager.add_connection(user_id, "device-1".to_string(), tx1, DeviceInfo::default());
+        manager.add_connection(user_id, "device-2".to_string(), tx2, DeviceInfo::default());
+
+        // Touch device-1 to update its timestamp
+        manager.touch_device(user_id, "device-1");
+
+        // Use a large idle time that won't expire fresh connections
+        let removed = manager.cleanup_stale_connections(1_000_000_000); // ~11.5 days
+        assert_eq!(removed, 0);
+
+        assert_eq!(manager.connection_count(user_id), 2);
+    }
+
+    #[test]
+    fn test_connection_manager_cleanup_removes_closed_connections() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx1, rx1) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+
+        manager.add_connection(user_id, "device-1".to_string(), tx1, DeviceInfo::default());
+        manager.add_connection(user_id, "device-2".to_string(), tx2, DeviceInfo::default());
+
+        // Drop the receiver to close device-1's connection
+        drop(rx1);
+
+        // Even with a large idle time, closed connections should be removed
+        let removed = manager.cleanup_stale_connections(1_000_000_000);
+        assert_eq!(removed, 1);
+
+        assert_eq!(manager.connection_count(user_id), 1);
+        assert!(manager.device_exists(user_id, "device-2"));
+        assert!(!manager.device_exists(user_id, "device-1"));
+    }
+
+    #[test]
+    fn test_connection_manager_send_to_device_user_not_found() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 123 });
+
+        assert_eq!(result, Err(SendError::UserNotFound));
+    }
+
+    #[test]
+    fn test_connection_manager_send_to_device_device_not_found() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        let result = manager.send_to_device(
+            user_id,
+            "nonexistent-device",
+            ServerMessage::Pong { server_time: 123 },
+        );
+
+        assert_eq!(result, Err(SendError::DeviceNotFound));
+    }
+
+    #[test]
+    fn test_connection_manager_send_to_device_connection_closed() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        // Drop the receiver to close the connection
+        drop(rx);
+
+        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 123 });
+
+        assert_eq!(result, Err(SendError::ConnectionClosed));
+    }
+
+    #[test]
+    fn test_connection_manager_send_to_device_success() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 456 });
+
+        assert!(result.is_ok());
+
+        // Verify message was received
+        let received = rx.try_recv().unwrap();
+        assert!(matches!(received, ServerMessage::Pong { server_time: 456 }));
+    }
+
+    #[test]
+    fn test_connection_manager_playback_state_crud() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        // Initially no playback state
+        assert!(manager.get_playback_state(user_id).is_none());
+
+        // Create playback state
+        let state = PlaybackState {
+            track_id: Some("track-123".to_string()),
+            is_playing: true,
+            position_ms: 5000,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            volume: 0.8,
+            is_muted: false,
+            shuffle: true,
+            repeat: RepeatMode::Queue,
+        };
+
+        // Set playback state
+        manager.set_playback_state(user_id, state.clone());
+
+        // Read playback state
+        let retrieved = manager.get_playback_state(user_id).unwrap();
+        assert_eq!(retrieved.track_id, Some("track-123".to_string()));
+        assert!(retrieved.is_playing);
+        assert_eq!(retrieved.position_ms, 5000);
+        assert_eq!(retrieved.volume, 0.8);
+        assert!(retrieved.shuffle);
+        assert_eq!(retrieved.repeat, RepeatMode::Queue);
+
+        // Update playback state
+        let updated_state = PlaybackState {
+            track_id: Some("track-456".to_string()),
+            is_playing: false,
+            position_ms: 10000,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            volume: 0.5,
+            is_muted: true,
+            shuffle: false,
+            repeat: RepeatMode::Track,
+        };
+
+        manager.update_playback_state(user_id, updated_state);
+
+        let retrieved = manager.get_playback_state(user_id).unwrap();
+        assert_eq!(retrieved.track_id, Some("track-456".to_string()));
+        assert!(!retrieved.is_playing);
+        assert_eq!(retrieved.position_ms, 10000);
+        assert_eq!(retrieved.volume, 0.5);
+        assert!(retrieved.is_muted);
+        assert!(!retrieved.shuffle);
+        assert_eq!(retrieved.repeat, RepeatMode::Track);
+    }
+
+    #[test]
+    fn test_connection_manager_playback_state_no_user() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        // Trying to get/set playback state for non-existent user should not panic
+        assert!(manager.get_playback_state(user_id).is_none());
+
+        // Setting playback state for non-existent user is a no-op (no panic)
+        let state = PlaybackState::default();
+        manager.set_playback_state(user_id, state.clone());
+
+        // Still no state because user doesn't exist
+        assert!(manager.get_playback_state(user_id).is_none());
+    }
+
+    #[test]
+    fn test_connection_handle_touch_updates_timestamp() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handle = ConnectionHandle::new(tx, DeviceInfo::default());
+
+        let initial_timestamp = handle.last_seen();
+
+        // Small delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        handle.touch();
+
+        let updated_timestamp = handle.last_seen();
+        assert!(
+            updated_timestamp > initial_timestamp,
+            "Timestamp should increase after touch: {} vs {}",
+            updated_timestamp,
+            initial_timestamp
+        );
+    }
+
+    #[test]
+    fn test_connection_handle_send_updates_timestamp() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = ConnectionHandle::new(tx, DeviceInfo::default());
+
+        let initial_timestamp = handle.last_seen();
+
+        // Small delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        let result = handle.send(ServerMessage::Pong { server_time: 123 });
+        assert!(result.is_ok());
+
+        let updated_timestamp = handle.last_seen();
+        assert!(
+            updated_timestamp > initial_timestamp,
+            "Timestamp should increase after send: {} vs {}",
+            updated_timestamp,
+            initial_timestamp
+        );
+
+        // Verify message was sent
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_connection_handle_is_alive_when_receiver_active() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handle = ConnectionHandle::new(tx, DeviceInfo::default());
+
+        // Connection should be alive when receiver is active
+        assert!(handle.is_alive());
+    }
+
+    #[test]
+    fn test_connection_handle_is_alive_when_receiver_dropped() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = ConnectionHandle::new(tx, DeviceInfo::default());
+
+        assert!(handle.is_alive());
+
+        // Drop the receiver
+        drop(rx);
+
+        // Connection should now be dead
+        assert!(!handle.is_alive());
+    }
+
+    #[test]
+    fn test_connection_handle_send_fails_when_closed() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = ConnectionHandle::new(tx, DeviceInfo::default());
+
+        // Drop the receiver to close the channel
+        drop(rx);
+
+        let result = handle.send(ServerMessage::Pong { server_time: 123 });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_send_error_display() {
+        assert_eq!(SendError::UserNotFound.to_string(), "user not found");
+        assert_eq!(SendError::DeviceNotFound.to_string(), "device not found");
+        assert_eq!(SendError::ConnectionClosed.to_string(), "connection closed");
+    }
+
+    #[test]
+    fn test_touch_device_returns_true_for_existing_device() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        assert!(manager.touch_device(user_id, "device-1"));
+    }
+
+    #[test]
+    fn test_touch_device_returns_false_for_nonexistent_user() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        assert!(!manager.touch_device(user_id, "device-1"));
+    }
+
+    #[test]
+    fn test_touch_device_returns_false_for_nonexistent_device() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        assert!(!manager.touch_device(user_id, "nonexistent-device"));
+    }
+
+    #[test]
+    fn test_device_info_with_user_agent() {
+        let info = DeviceInfo::new(
+            "test-id".to_string(),
+            Some("My Device".to_string()),
+            Some("web".to_string()),
+        )
+        .with_user_agent(Some("Mozilla/5.0".to_string()));
+
+        assert_eq!(info.user_agent, Some("Mozilla/5.0".to_string()));
+    }
+
+    #[test]
+    fn test_user_connection_state_get_device_presences() {
+        let user_state = UserConnectionState::new();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let device_info = DeviceInfo::new(
+            "device-1".to_string(),
+            Some("My Phone".to_string()),
+            Some("mobile".to_string()),
+        );
+        let handle = ConnectionHandle::new(tx, device_info);
+        user_state.connections.insert("device-1".to_string(), handle);
+
+        let presences = user_state.get_device_presences();
+        assert_eq!(presences.len(), 1);
+        assert_eq!(presences[0].device_id, "device-1");
+        assert_eq!(presences[0].device_name, "My Phone");
+        assert_eq!(presences[0].device_type, DeviceType::Mobile);
+        assert!(!presences[0].is_active);
+    }
+
+    #[test]
+    fn test_user_connection_state_get_device_presences_with_active_device() {
+        let mut user_state = UserConnectionState::new();
+        user_state.active_device_id = Some("device-1".to_string());
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let device_info = DeviceInfo::new(
+            "device-1".to_string(),
+            Some("My Phone".to_string()),
+            Some("mobile".to_string()),
+        );
+        let handle = ConnectionHandle::new(tx, device_info);
+        user_state.connections.insert("device-1".to_string(), handle);
+
+        let presences = user_state.get_device_presences();
+        assert_eq!(presences.len(), 1);
+        assert!(presences[0].is_active);
+    }
+
+    #[test]
+    fn test_total_connections_and_users() {
+        let manager = ConnectionManager::new();
+
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        assert_eq!(manager.total_connections(), 0);
+        assert_eq!(manager.total_users(), 0);
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (tx3, _rx3) = mpsc::unbounded_channel();
+
+        manager.add_connection(user1, "device-1".to_string(), tx1, DeviceInfo::default());
+        manager.add_connection(user1, "device-2".to_string(), tx2, DeviceInfo::default());
+        manager.add_connection(user2, "device-3".to_string(), tx3, DeviceInfo::default());
+
+        assert_eq!(manager.total_connections(), 3);
+        assert_eq!(manager.total_users(), 2);
+    }
+
+    #[test]
+    fn test_clear_active_device() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
+
+        manager.set_active_device(user_id, "device-1");
+        assert!(manager.get_active_device(user_id).is_some());
+
+        manager.clear_active_device(user_id);
+        assert!(manager.get_active_device(user_id).is_none());
+    }
+
+    #[test]
+    fn test_get_device_list_alias() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let device_info = DeviceInfo::new("device-1".to_string(), Some("My Device".to_string()), None);
+        manager.add_connection(user_id, "device-1".to_string(), tx, device_info);
+
+        // get_device_list is an alias for get_device_presences
+        let presences = manager.get_device_list(user_id);
+        assert_eq!(presences.len(), 1);
+        assert_eq!(presences[0].device_id, "device-1");
     }
 }
