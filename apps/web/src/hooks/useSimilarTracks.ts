@@ -25,13 +25,15 @@ import {
   SIMILAR_TRACKS_BY_METHOD_QUERY,
 } from '../lib/graphql/similarity'
 import type {
+  ScoredTrack,
   SimilarTrack,
   SimilarTracksResponse,
+  SimilarTracksByMethodResponse,
   SimilarityMethod,
 } from '../types/similarity'
 
 // Re-export types for consumers
-export type { SimilarTrack, SimilarityMethod } from '../types/similarity'
+export type { ScoredTrack, SimilarTrack, SimilarityMethod } from '../types/similarity'
 
 /**
  * Find tracks similar to a given track using combined similarity
@@ -69,14 +71,14 @@ export type { SimilarTrack, SimilarityMethod } from '../types/similarity'
 export function useSimilarTracks(
   trackId: string,
   limit = 10,
-  options?: Omit<UseQueryOptions<SimilarTrack[], Error>, 'queryKey' | 'queryFn'>
+  options?: Omit<UseQueryOptions<ScoredTrack[], Error>, 'queryKey' | 'queryFn'>
 ) {
   // Clamp limit to valid range (1-50)
   const clampedLimit = Math.min(Math.max(limit, 1), 50)
 
   return useQuery({
     queryKey: libraryKeys.tracks.similar(trackId, { limit: clampedLimit }),
-    queryFn: async (): Promise<SimilarTrack[]> => {
+    queryFn: async (): Promise<ScoredTrack[]> => {
       const response = await graphqlClient.request<SimilarTracksResponse>(
         SIMILAR_TRACKS_QUERY,
         { trackId, limit: clampedLimit }
@@ -140,11 +142,11 @@ export function useSimilarTracksByMethod(
   return useQuery({
     queryKey: libraryKeys.tracks.similar(trackId, { limit: clampedLimit, method }),
     queryFn: async (): Promise<SimilarTrack[]> => {
-      const response = await graphqlClient.request<SimilarTracksResponse>(
+      const response = await graphqlClient.request<SimilarTracksByMethodResponse>(
         SIMILAR_TRACKS_BY_METHOD_QUERY,
         { trackId, method, limit: clampedLimit }
       )
-      return response.similarTracks ?? []
+      return response.similarTracksByMethod ?? []
     },
     enabled: !!trackId.trim(),
     staleTime: 5 * 60 * 1000, // 5 minutes - similarity data is relatively stable

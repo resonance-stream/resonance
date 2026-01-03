@@ -23,7 +23,7 @@ import { useSimilarTracks } from '../../hooks/useSimilarTracks'
 import { usePlayerStore } from '../../stores/playerStore'
 import { mapGqlTrackToPlayerTrack } from '../../lib/mappers'
 import { cn } from '../../lib/utils'
-import type { SimilarTrack } from '../../types/similarity'
+import type { ScoredTrack } from '../../types/similarity'
 
 export interface SimilarTracksSectionProps {
   /** UUID of the track to find similar tracks for */
@@ -59,7 +59,7 @@ export function SimilarTracksSection({
   const setTrack = usePlayerStore((s) => s.setTrack)
 
   const handlePlayTrack = useCallback(
-    (similarTrack: SimilarTrack) => {
+    (similarTrack: ScoredTrack) => {
       // Similar tracks include embedded track data when available
       if (similarTrack.track) {
         const playerTrack = mapGqlTrackToPlayerTrack(similarTrack.track)

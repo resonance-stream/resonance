@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react'
-import { useSimilarTracks, type SimilarTrack } from '../../hooks/useSimilarTracks'
+import { useSimilarTracks, type ScoredTrack } from '../../hooks/useSimilarTracks'
 import { usePlayerStore, type Track } from '../../stores/playerStore'
 import { AlbumArt } from '../media/AlbumArt'
 import { Skeleton } from '../ui/Skeleton'
@@ -11,7 +11,7 @@ export interface SimilarTracksPanelProps {
   /** Maximum number of similar tracks to display */
   limit?: number
   /** Callback when a track is played */
-  onTrackPlay?: (track: SimilarTrack) => void
+  onTrackPlay?: (track: ScoredTrack) => void
   /** Additional CSS classes */
   className?: string
 }
@@ -32,7 +32,7 @@ export const SimilarTracksPanel = memo(function SimilarTracksPanel({
   const setQueue = usePlayerStore((s) => s.setQueue)
 
   const handlePlayTrack = useCallback(
-    (similarTrack: SimilarTrack, index: number) => {
+    (similarTrack: ScoredTrack, index: number) => {
       if (!similarTracks) return
 
       // Convert SimilarTrack[] to Track[] for the player queue
@@ -149,7 +149,7 @@ export const SimilarTracksPanel = memo(function SimilarTracksPanel({
 // ============================================================================
 
 interface SimilarTrackRowProps {
-  track: SimilarTrack
+  track: ScoredTrack
   onPlay: () => void
 }
 
@@ -162,6 +162,10 @@ const SimilarTrackRow = memo(function SimilarTrackRow({
 }: SimilarTrackRowProps): JSX.Element {
   // Format similarity score as percentage
   const similarityPercent = Math.round(track.score * 100)
+
+  // Get similarity type from track (SimilarTrack has it, ScoredTrack doesn't)
+  // Default to 'Combined' for basic similarity results
+  const similarityType = 'similarityType' in track ? (track as { similarityType: string }).similarityType : 'Combined'
 
   // Get similarity type badge color
   const getBadgeColor = (type: string): string => {
@@ -223,9 +227,9 @@ const SimilarTrackRow = memo(function SimilarTrackRow({
         <span
           className={cn(
             'px-2 py-0.5 rounded-full text-xs font-medium',
-            getBadgeColor(track.similarityType)
+            getBadgeColor(similarityType)
           )}
-          title={`${track.similarityType} similarity`}
+          title={`${similarityType} similarity`}
         >
           {similarityPercent}%
         </span>

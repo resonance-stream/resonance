@@ -85,10 +85,17 @@ export interface SimilarTrack {
 // ============================================================================
 
 /**
- * Response for similarTracks query
+ * Response for similarTracks query (returns ScoredTrack without similarityType)
  */
 export interface SimilarTracksResponse {
-  similarTracks: SimilarTrack[]
+  similarTracks: ScoredTrack[]
+}
+
+/**
+ * Response for similarTracksByMethod query (returns SimilarTrack with similarityType)
+ */
+export interface SimilarTracksByMethodResponse {
+  similarTracksByMethod: SimilarTrack[]
 }
 
 /**
