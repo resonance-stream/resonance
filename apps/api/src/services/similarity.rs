@@ -8,10 +8,12 @@
 //! This service is used by the semantic search GraphQL API.
 
 use std::collections::HashMap;
+use std::env;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use tracing::{info_span, instrument, warn, Instrument};
+use tracing::{info, info_span, instrument, warn, Instrument};
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
@@ -22,10 +24,161 @@ const QUERY_TIMEOUT_SECONDS: u64 = 5;
 /// Maximum number of similar tracks that can be requested
 const MAX_SIMILARITY_RESULTS: i32 = 100;
 
-/// Similarity weights for combined scoring
-const WEIGHT_SEMANTIC: f64 = 0.5;
-const WEIGHT_ACOUSTIC: f64 = 0.3;
-const WEIGHT_CATEGORICAL: f64 = 0.2;
+/// Default similarity weights for combined scoring (kept for backward compatibility)
+const DEFAULT_WEIGHT_SEMANTIC: f64 = 0.5;
+const DEFAULT_WEIGHT_ACOUSTIC: f64 = 0.3;
+const DEFAULT_WEIGHT_CATEGORICAL: f64 = 0.2;
+
+/// Epsilon tolerance for weight validation (floating point comparison)
+const WEIGHT_EPSILON: f64 = 0.001;
+
+// =============================================================================
+// Similarity Configuration
+// =============================================================================
+
+/// Configuration for similarity scoring weights
+///
+/// Weights control how much each similarity dimension contributes to the combined score.
+/// By default: semantic (50%), acoustic (30%), categorical (20%).
+///
+/// Configure via environment variables:
+/// - `SIMILARITY_WEIGHT_SEMANTIC` (default: 0.5)
+/// - `SIMILARITY_WEIGHT_ACOUSTIC` (default: 0.3)
+/// - `SIMILARITY_WEIGHT_CATEGORICAL` (default: 0.2)
+#[derive(Debug, Clone)]
+pub struct SimilarityConfig {
+    /// Weight for semantic (embedding) similarity (0.0 - 1.0)
+    pub weight_semantic: f64,
+    /// Weight for acoustic (audio feature) similarity (0.0 - 1.0)
+    pub weight_acoustic: f64,
+    /// Weight for categorical (genre/mood/tags) similarity (0.0 - 1.0)
+    pub weight_categorical: f64,
+}
+
+impl Default for SimilarityConfig {
+    fn default() -> Self {
+        Self {
+            weight_semantic: DEFAULT_WEIGHT_SEMANTIC,
+            weight_acoustic: DEFAULT_WEIGHT_ACOUSTIC,
+            weight_categorical: DEFAULT_WEIGHT_CATEGORICAL,
+        }
+    }
+}
+
+impl SimilarityConfig {
+    /// Create a new SimilarityConfig with custom weights
+    ///
+    /// # Errors
+    /// Returns an error if the weights don't sum to 1.0 (within epsilon tolerance)
+    pub fn new(
+        weight_semantic: f64,
+        weight_acoustic: f64,
+        weight_categorical: f64,
+    ) -> Result<Self, SimilarityConfigError> {
+        let config = Self {
+            weight_semantic,
+            weight_acoustic,
+            weight_categorical,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Load configuration from environment variables
+    ///
+    /// Environment variables:
+    /// - `SIMILARITY_WEIGHT_SEMANTIC` (default: 0.5)
+    /// - `SIMILARITY_WEIGHT_ACOUSTIC` (default: 0.3)
+    /// - `SIMILARITY_WEIGHT_CATEGORICAL` (default: 0.2)
+    ///
+    /// If any environment variable is set, all three should be configured.
+    /// The weights must sum to 1.0 (within epsilon tolerance).
+    pub fn from_env() -> Result<Self, SimilarityConfigError> {
+        let weight_semantic =
+            Self::parse_env_weight("SIMILARITY_WEIGHT_SEMANTIC", DEFAULT_WEIGHT_SEMANTIC)?;
+        let weight_acoustic =
+            Self::parse_env_weight("SIMILARITY_WEIGHT_ACOUSTIC", DEFAULT_WEIGHT_ACOUSTIC)?;
+        let weight_categorical =
+            Self::parse_env_weight("SIMILARITY_WEIGHT_CATEGORICAL", DEFAULT_WEIGHT_CATEGORICAL)?;
+
+        let config = Self {
+            weight_semantic,
+            weight_acoustic,
+            weight_categorical,
+        };
+
+        config.validate()?;
+
+        // Log if custom weights are being used
+        if (config.weight_semantic - DEFAULT_WEIGHT_SEMANTIC).abs() > f64::EPSILON
+            || (config.weight_acoustic - DEFAULT_WEIGHT_ACOUSTIC).abs() > f64::EPSILON
+            || (config.weight_categorical - DEFAULT_WEIGHT_CATEGORICAL).abs() > f64::EPSILON
+        {
+            info!(
+                weight_semantic = config.weight_semantic,
+                weight_acoustic = config.weight_acoustic,
+                weight_categorical = config.weight_categorical,
+                "Using custom similarity weights from environment"
+            );
+        }
+
+        Ok(config)
+    }
+
+    /// Parse a weight value from an environment variable
+    fn parse_env_weight(var_name: &str, default: f64) -> Result<f64, SimilarityConfigError> {
+        match env::var(var_name) {
+            Ok(value) => {
+                let weight: f64 =
+                    value
+                        .parse()
+                        .map_err(|_| SimilarityConfigError::InvalidWeight {
+                            var_name: var_name.to_string(),
+                            value: value.clone(),
+                        })?;
+
+                if !(0.0..=1.0).contains(&weight) {
+                    return Err(SimilarityConfigError::WeightOutOfRange {
+                        var_name: var_name.to_string(),
+                        value: weight,
+                    });
+                }
+
+                Ok(weight)
+            }
+            Err(_) => Ok(default),
+        }
+    }
+
+    /// Validate that weights sum to 1.0 (within epsilon tolerance)
+    pub fn validate(&self) -> Result<(), SimilarityConfigError> {
+        let total = self.weight_semantic + self.weight_acoustic + self.weight_categorical;
+        if (total - 1.0).abs() > WEIGHT_EPSILON {
+            return Err(SimilarityConfigError::WeightsSumInvalid { total });
+        }
+        Ok(())
+    }
+}
+
+/// Errors that can occur when loading similarity configuration
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SimilarityConfigError {
+    /// Weight value could not be parsed as a float
+    #[error("Invalid weight value for {var_name}: '{value}' is not a valid number")]
+    InvalidWeight { var_name: String, value: String },
+
+    /// Weight value is out of the valid range [0.0, 1.0]
+    #[error("Weight {var_name} value {value} is out of range (must be 0.0 - 1.0)")]
+    WeightOutOfRange { var_name: String, value: f64 },
+
+    /// Weights don't sum to 1.0
+    #[error("Similarity weights must sum to 1.0 (got {total:.4})")]
+    WeightsSumInvalid { total: f64 },
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 /// Validate and clamp the limit parameter to safe bounds
 fn validate_limit(limit: i32) -> i32 {
@@ -54,6 +207,7 @@ fn handle_query_error(error: sqlx::Error, query_name: &str) -> ApiError {
 #[derive(Clone)]
 pub struct SimilarityService {
     db: PgPool,
+    config: Arc<SimilarityConfig>,
 }
 
 /// A track with its similarity score
@@ -99,9 +253,22 @@ struct AudioFeatures {
 }
 
 impl SimilarityService {
-    /// Create a new similarity service
+    /// Create a new similarity service with default configuration
     pub fn new(db: PgPool) -> Self {
-        Self { db }
+        Self::with_config(db, SimilarityConfig::default())
+    }
+
+    /// Create a new similarity service with custom configuration
+    pub fn with_config(db: PgPool, config: SimilarityConfig) -> Self {
+        Self {
+            db,
+            config: Arc::new(config),
+        }
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &SimilarityConfig {
+        &self.config
     }
 
     /// Find similar tracks using embedding similarity (pgvector)
@@ -195,10 +362,12 @@ impl SimilarityService {
     /// Find similar tracks based on audio features
     ///
     /// Uses Euclidean distance on normalized audio features.
+    /// Has a 5-second query timeout for protection against slow queries.
     ///
     /// # Errors
     /// - `ApiError::NotFound` - If the track doesn't exist or has no audio features
     /// - `ApiError::Database` - If the database query fails
+    /// - `ApiError::QueryTimeout` - If the query exceeds the timeout
     #[instrument(skip(self), fields(similarity_type = "acoustic"))]
     pub async fn find_similar_by_features(
         &self,
@@ -236,6 +405,18 @@ impl SimilarityService {
                 format!("{} (run feature extraction first)", track_id),
             ));
         }
+
+        // Use a transaction to set statement timeout for this query
+        let mut tx = self.db.begin().await?;
+
+        // Set statement timeout for this transaction (in seconds)
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            QUERY_TIMEOUT_SECONDS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "set_timeout_acoustic"))?;
 
         // Find similar tracks using SQL-based feature distance
         // This calculates Euclidean distance on available features
@@ -286,8 +467,12 @@ impl SimilarityService {
         )
         .bind(track_id)
         .bind(limit)
-        .fetch_all(&self.db)
-        .await?;
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "find_similar_by_features"))?;
+
+        // Commit the transaction (timeout is automatically reset)
+        tx.commit().await?;
 
         Ok(similar
             .into_iter()
@@ -472,15 +657,15 @@ impl SimilarityService {
             }
         };
 
-        // Apply weights from constants
+        // Apply weights from configuration
         if let Some(tracks) = semantic {
-            merge_tracks(&mut combined, tracks, WEIGHT_SEMANTIC);
+            merge_tracks(&mut combined, tracks, self.config.weight_semantic);
         }
         if let Some(tracks) = acoustic {
-            merge_tracks(&mut combined, tracks, WEIGHT_ACOUSTIC);
+            merge_tracks(&mut combined, tracks, self.config.weight_acoustic);
         }
         if let Some(tracks) = categorical {
-            merge_tracks(&mut combined, tracks, WEIGHT_CATEGORICAL);
+            merge_tracks(&mut combined, tracks, self.config.weight_categorical);
         }
 
         // Sort by combined score and take top N
@@ -558,12 +743,198 @@ mod tests {
     }
 
     #[test]
-    fn test_weights_sum_to_one() {
-        // Verify weights are properly balanced
-        let total = WEIGHT_SEMANTIC + WEIGHT_ACOUSTIC + WEIGHT_CATEGORICAL;
+    fn test_default_weights_sum_to_one() {
+        // Verify default weights are properly balanced
+        let total = DEFAULT_WEIGHT_SEMANTIC + DEFAULT_WEIGHT_ACOUSTIC + DEFAULT_WEIGHT_CATEGORICAL;
         assert!(
             (total - 1.0).abs() < f64::EPSILON,
-            "Weights should sum to 1.0"
+            "Default weights should sum to 1.0"
         );
+    }
+
+    // ==========================================================================
+    // SimilarityConfig Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_similarity_config_default() {
+        let config = SimilarityConfig::default();
+        assert!((config.weight_semantic - 0.5).abs() < f64::EPSILON);
+        assert!((config.weight_acoustic - 0.3).abs() < f64::EPSILON);
+        assert!((config.weight_categorical - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_similarity_config_new_valid() {
+        let config = SimilarityConfig::new(0.4, 0.4, 0.2).unwrap();
+        assert!((config.weight_semantic - 0.4).abs() < f64::EPSILON);
+        assert!((config.weight_acoustic - 0.4).abs() < f64::EPSILON);
+        assert!((config.weight_categorical - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_similarity_config_new_invalid_sum() {
+        let result = SimilarityConfig::new(0.5, 0.5, 0.5);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, SimilarityConfigError::WeightsSumInvalid { .. }));
+    }
+
+    #[test]
+    fn test_similarity_config_validate_valid() {
+        let config = SimilarityConfig {
+            weight_semantic: 0.6,
+            weight_acoustic: 0.3,
+            weight_categorical: 0.1,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_similarity_config_validate_invalid() {
+        let config = SimilarityConfig {
+            weight_semantic: 0.5,
+            weight_acoustic: 0.4,
+            weight_categorical: 0.2,
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        if let Err(SimilarityConfigError::WeightsSumInvalid { total }) = result {
+            assert!((total - 1.1).abs() < 0.01);
+        } else {
+            panic!("Expected WeightsSumInvalid error");
+        }
+    }
+
+    #[test]
+    fn test_similarity_config_validate_within_epsilon() {
+        // Test that small floating point errors within epsilon are accepted
+        let config = SimilarityConfig {
+            weight_semantic: 0.333333,
+            weight_acoustic: 0.333333,
+            weight_categorical: 0.333334, // Sum is 1.0 within epsilon
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_similarity_config_from_env_defaults() {
+        // When env vars are not set, should use defaults
+        // Clear any existing env vars first (for isolation)
+        std::env::remove_var("SIMILARITY_WEIGHT_SEMANTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_ACOUSTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_CATEGORICAL");
+
+        let config = SimilarityConfig::from_env().unwrap();
+        assert!((config.weight_semantic - 0.5).abs() < f64::EPSILON);
+        assert!((config.weight_acoustic - 0.3).abs() < f64::EPSILON);
+        assert!((config.weight_categorical - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_similarity_config_from_env_custom() {
+        // Set custom env vars
+        std::env::set_var("SIMILARITY_WEIGHT_SEMANTIC", "0.6");
+        std::env::set_var("SIMILARITY_WEIGHT_ACOUSTIC", "0.25");
+        std::env::set_var("SIMILARITY_WEIGHT_CATEGORICAL", "0.15");
+
+        let config = SimilarityConfig::from_env().unwrap();
+        // Use a larger epsilon for float comparison since we're parsing from strings
+        let epsilon = 0.0001;
+        assert!(
+            (config.weight_semantic - 0.6).abs() < epsilon,
+            "weight_semantic was {}, expected 0.6",
+            config.weight_semantic
+        );
+        assert!(
+            (config.weight_acoustic - 0.25).abs() < epsilon,
+            "weight_acoustic was {}, expected 0.25",
+            config.weight_acoustic
+        );
+        assert!(
+            (config.weight_categorical - 0.15).abs() < epsilon,
+            "weight_categorical was {}, expected 0.15",
+            config.weight_categorical
+        );
+
+        // Clean up
+        std::env::remove_var("SIMILARITY_WEIGHT_SEMANTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_ACOUSTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_CATEGORICAL");
+    }
+
+    #[test]
+    fn test_similarity_config_from_env_invalid_format() {
+        std::env::set_var("SIMILARITY_WEIGHT_SEMANTIC", "not_a_number");
+
+        let result = SimilarityConfig::from_env();
+        assert!(result.is_err());
+        if let Err(SimilarityConfigError::InvalidWeight { var_name, value }) = result {
+            assert_eq!(var_name, "SIMILARITY_WEIGHT_SEMANTIC");
+            assert_eq!(value, "not_a_number");
+        } else {
+            panic!("Expected InvalidWeight error");
+        }
+
+        // Clean up
+        std::env::remove_var("SIMILARITY_WEIGHT_SEMANTIC");
+    }
+
+    #[test]
+    fn test_similarity_config_from_env_out_of_range() {
+        std::env::set_var("SIMILARITY_WEIGHT_SEMANTIC", "1.5");
+        std::env::remove_var("SIMILARITY_WEIGHT_ACOUSTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_CATEGORICAL");
+
+        let result = SimilarityConfig::from_env();
+        assert!(result.is_err());
+        if let Err(SimilarityConfigError::WeightOutOfRange { var_name, value }) = result {
+            assert_eq!(var_name, "SIMILARITY_WEIGHT_SEMANTIC");
+            assert!((value - 1.5).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected WeightOutOfRange error");
+        }
+
+        // Clean up
+        std::env::remove_var("SIMILARITY_WEIGHT_SEMANTIC");
+    }
+
+    #[test]
+    fn test_similarity_config_from_env_negative_weight() {
+        std::env::set_var("SIMILARITY_WEIGHT_ACOUSTIC", "-0.1");
+        std::env::remove_var("SIMILARITY_WEIGHT_SEMANTIC");
+        std::env::remove_var("SIMILARITY_WEIGHT_CATEGORICAL");
+
+        let result = SimilarityConfig::from_env();
+        assert!(result.is_err());
+        if let Err(SimilarityConfigError::WeightOutOfRange { var_name, value }) = result {
+            assert_eq!(var_name, "SIMILARITY_WEIGHT_ACOUSTIC");
+            assert!((value + 0.1).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected WeightOutOfRange error");
+        }
+
+        // Clean up
+        std::env::remove_var("SIMILARITY_WEIGHT_ACOUSTIC");
+    }
+
+    #[test]
+    fn test_similarity_config_error_display() {
+        let err = SimilarityConfigError::InvalidWeight {
+            var_name: "TEST_VAR".to_string(),
+            value: "bad".to_string(),
+        };
+        assert!(err.to_string().contains("TEST_VAR"));
+        assert!(err.to_string().contains("bad"));
+
+        let err = SimilarityConfigError::WeightOutOfRange {
+            var_name: "TEST_VAR".to_string(),
+            value: 1.5,
+        };
+        assert!(err.to_string().contains("TEST_VAR"));
+        assert!(err.to_string().contains("1.5"));
+
+        let err = SimilarityConfigError::WeightsSumInvalid { total: 0.8 };
+        assert!(err.to_string().contains("0.8"));
     }
 }
