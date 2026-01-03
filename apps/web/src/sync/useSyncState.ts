@@ -186,14 +186,13 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
 
     const { tracks, currentIndex } = fromSyncQueueState(syncQueue);
 
-    // Convert to playerStore track format (adding missing fields)
-    // NOTE: Tracks from sync have empty albumId - requires API fetch for album navigation
-    // This is a known limitation. Full implementation would fetch track metadata.
+    // Convert to playerStore track format
+    // albumId is now properly synced from the active device
     const playerTracks = tracks.map((t) => ({
       id: t.id,
       title: t.title,
       artist: t.artist,
-      albumId: '', // SYNC_INCOMPLETE: Would need API fetch for album features
+      albumId: t.albumId ?? '',
       albumTitle: t.albumTitle,
       duration: t.duration,
       coverUrl: t.coverUrl,
@@ -240,6 +239,7 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
       id: t.id,
       title: t.title,
       artist: t.artist,
+      albumId: t.albumId,
       albumTitle: t.albumTitle,
       duration: t.duration,
       coverUrl: t.coverUrl,
