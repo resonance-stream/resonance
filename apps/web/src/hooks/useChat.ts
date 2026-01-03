@@ -34,12 +34,15 @@ import {
   CREATE_PLAYLIST_MUTATION,
   ADD_TRACKS_TO_PLAYLIST_MUTATION,
 } from '../lib/graphql/playlist';
+import { SIMILAR_TRACKS_QUERY } from '../lib/graphql/similarity';
 import { libraryKeys } from '../lib/queryKeys';
+import { mapScoredTrackToPlayerTrack } from '../lib/mappers';
 import type {
   CreatePlaylistInput,
   CreatePlaylistResponse,
   AddTracksResponse,
 } from '../types/playlist';
+import type { SimilarTracksResponse } from '../types/similarity';
 
 // =============================================================================
 // GraphQL Queries
@@ -209,6 +212,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   // Player store for action execution
   const setTrack = usePlayerStore((s) => s.setTrack);
   const addToQueue = usePlayerStore((s) => s.addToQueue);
+  const setQueue = usePlayerStore((s) => s.setQueue);
 
   // Navigation for action execution
   const navigate = useNavigate();
@@ -317,15 +321,38 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       }
       case 'get_recommendations': {
         const trackId = action.payload.track_id as string | undefined;
-        if (trackId) {
-          navigate(`/track/${trackId}/similar`);
+        if (!trackId) break;
+
+        try {
+          // Fetch similar tracks using the combined similarity algorithm
+          const response = await graphqlClient.request<SimilarTracksResponse>(
+            SIMILAR_TRACKS_QUERY,
+            { trackId, limit: 15 }
+          );
+
+          const similarTracks = response.similarTracks ?? [];
+          if (similarTracks.length === 0) {
+            console.log('[Chat] No similar tracks found for', trackId);
+            break;
+          }
+
+          // Convert to player tracks and set as queue, starting playback
+          const playerTracks = similarTracks.map(mapScoredTrackToPlayerTrack);
+          setQueue(playerTracks, 0);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          console.error('[Chat] Failed to get recommendations:', err);
+          handleError({
+            conversation_id: useChatStore.getState().conversationId,
+            error: `Failed to get recommendations: ${errorMsg}`,
+          });
         }
         break;
       }
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, [setTrack, addToQueue, navigate, handleError, queryClient]);
+  }, [setTrack, addToQueue, setQueue, navigate, handleError, queryClient]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
