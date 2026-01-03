@@ -15,8 +15,13 @@ import { renderHook, act } from '@testing-library/react';
 import { useQueueSync } from './useQueueSync';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
-import type { QueueState } from './types';
 import type { StateChangeSource } from './usePlaybackSync';
+import {
+  createQueueState,
+  createLocalQueue,
+  createMockQueueSyncOptions,
+  resetAllSyncStores,
+} from './test-utils';
 
 // Mock useIsActiveDevice - we'll control this per test
 const mockUseIsActiveDevice = vi.fn(() => false);
@@ -29,102 +34,12 @@ vi.mock('../stores/deviceStore', async (importOriginal) => {
   };
 });
 
-// Helper to reset stores between tests
-function resetStores(): void {
-  usePlayerStore.setState({
-    currentTrack: null,
-    isPlaying: false,
-    currentTime: 0,
-    volume: 0.75,
-    isMuted: false,
-    queue: [],
-    queueIndex: 0,
-    shuffle: false,
-    repeat: 'off',
-  });
-
-  useDeviceStore.setState({
-    connectionState: 'connected',
-    sessionId: 'test-session',
-    lastError: null,
-    reconnectAttempt: 0,
-    deviceId: 'mock-device-id',
-    deviceName: 'Mock Device',
-    deviceType: 'web',
-    devices: [],
-    activeDeviceId: 'mock-device-id',
-  });
-}
-
-// Factory for creating test queue state (sync format with snake_case)
-function createQueueState(overrides: Partial<QueueState> = {}): QueueState {
-  return {
-    tracks: [
-      {
-        id: 'track-1',
-        title: 'Song One',
-        artist: 'Artist A',
-        album_id: 'album-1',
-        album_title: 'Album X',
-        duration_ms: 180000, // 180 seconds in ms
-        cover_url: 'https://example.com/cover1.jpg',
-      },
-      {
-        id: 'track-2',
-        title: 'Song Two',
-        artist: 'Artist B',
-        album_id: null,
-        album_title: 'Album Y',
-        duration_ms: 240000, // 240 seconds in ms
-        cover_url: null,
-      },
-    ],
-    current_index: 0,
-    ...overrides,
-  };
-}
-
-// Factory for creating local queue tracks (playerStore format with camelCase)
-function createLocalQueue() {
-  return [
-    {
-      id: 'track-1',
-      title: 'Local Song One',
-      artist: 'Local Artist A',
-      albumId: 'local-album-1',
-      albumTitle: 'Local Album X',
-      duration: 120, // seconds
-      coverUrl: 'https://example.com/local1.jpg',
-    },
-    {
-      id: 'track-2',
-      title: 'Local Song Two',
-      artist: 'Local Artist B',
-      albumId: 'local-album-2',
-      albumTitle: 'Local Album Y',
-      duration: 200, // seconds
-      coverUrl: undefined,
-    },
-  ];
-}
-
-// Factory for creating hook options
-function createHookOptions(overrides: Partial<{
-  isConnected: boolean;
-  sendQueueUpdate: (state: QueueState) => void;
-  stateSourceRef: React.MutableRefObject<StateChangeSource>;
-}> = {}) {
-  return {
-    isConnected: true,
-    sendQueueUpdate: vi.fn(),
-    stateSourceRef: { current: null as StateChangeSource },
-    ...overrides,
-  };
-}
+// Alias factory to match existing test patterns
+const createHookOptions = createMockQueueSyncOptions;
 
 describe('useQueueSync', () => {
   beforeEach(() => {
-    resetStores();
+    resetAllSyncStores();
     vi.clearAllMocks();
     vi.useFakeTimers();
     // Reset mock to default (passive device)

@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTransferControl } from './useTransferControl';
 import { useDeviceStore } from '../stores/deviceStore';
+import { resetDeviceStore as resetDeviceStoreBase } from './test-utils';
 
 // Mock the sync/types module functions
 vi.mock('../sync/types', async (importOriginal) => {
@@ -23,17 +24,12 @@ vi.mock('../sync/types', async (importOriginal) => {
   };
 });
 
-// Helper to reset store between tests
+// Helper to reset store between tests with test-specific overrides
 function resetDeviceStore(): void {
+  resetDeviceStoreBase();
+  // Override with test-specific values
   useDeviceStore.setState({
-    connectionState: 'connected',
-    sessionId: 'test-session',
-    lastError: null,
-    reconnectAttempt: 0,
     deviceId: 'test-device-id',
-    deviceName: 'Test Device',
-    deviceType: 'web',
-    devices: [],
     activeDeviceId: null,
   });
 }
