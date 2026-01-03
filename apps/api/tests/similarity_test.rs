@@ -92,6 +92,11 @@ impl TestContext {
         let artist_id = Uuid::new_v4();
         let album_id = Uuid::new_v4();
 
+        // Use UUID suffix to make names unique across parallel tests
+        let id_suffix = &artist_id.to_string()[..8];
+        let artist_name = format!("Test Artist {}", id_suffix);
+        let album_name = format!("Test Album {}", id_suffix);
+
         // Create a test artist
         sqlx::query(
             r#"
@@ -101,7 +106,7 @@ impl TestContext {
             "#,
         )
         .bind(artist_id)
-        .bind("Test Artist for Similarity")
+        .bind(&artist_name)
         .bind(&["rock", "indie"] as &[&str])
         .execute(&pool)
         .await
@@ -116,7 +121,7 @@ impl TestContext {
             "#,
         )
         .bind(album_id)
-        .bind("Test Album for Similarity")
+        .bind(&album_name)
         .bind(artist_id)
         .bind(&["rock", "indie"] as &[&str])
         .execute(&pool)
