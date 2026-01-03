@@ -154,7 +154,7 @@ impl TestContext {
                 id, title, artist_id, album_id, file_path, file_size,
                 file_format, duration_ms, genres, ai_mood, ai_tags, audio_features
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::audio_format, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(track_id)
