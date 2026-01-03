@@ -28,7 +28,19 @@ import { useEffect, useRef } from 'react';
 // Event Types
 // =============================================================================
 
-/** Sync event types */
+/**
+ * Union type of all sync event names.
+ *
+ * Events are emitted by the sync system at various lifecycle points:
+ * - `connected`: WebSocket connection established successfully
+ * - `disconnected`: WebSocket connection closed
+ * - `reconnecting`: Attempting to reconnect after connection loss
+ * - `error`: An error occurred in the sync system
+ * - `deviceJoined`: Another device joined the sync session
+ * - `deviceLeft`: A device left the sync session
+ * - `transferReceived`: This device received playback control from another device
+ * - `transferSent`: This device transferred playback control to another device
+ */
 export type SyncEventType =
   | 'connected'
   | 'disconnected'
@@ -39,56 +51,102 @@ export type SyncEventType =
   | 'transferReceived'
   | 'transferSent';
 
-/** Payload for 'connected' event */
+/**
+ * Payload for the 'connected' event.
+ * Emitted when the WebSocket connection is established successfully.
+ */
 export interface ConnectedEventPayload {
+  /** The unique identifier of this device */
   deviceId: string;
+  /** The sync session ID this device joined */
   sessionId: string;
+  /** True if this is a reconnection after a previous disconnect */
   isReconnect: boolean;
 }
 
-/** Payload for 'disconnected' event */
+/**
+ * Payload for the 'disconnected' event.
+ * Emitted when the WebSocket connection is closed.
+ */
 export interface DisconnectedEventPayload {
+  /** Human-readable reason for the disconnect, if available */
   reason?: string;
+  /** True if the disconnect was intentional (clean close) */
   wasClean: boolean;
 }
 
-/** Payload for 'reconnecting' event */
+/**
+ * Payload for the 'reconnecting' event.
+ * Emitted when the sync system is attempting to reconnect after connection loss.
+ */
 export interface ReconnectingEventPayload {
+  /** The current reconnection attempt number (1-indexed) */
   attempt: number;
+  /** The maximum number of attempts before giving up, if configured */
   maxAttempts?: number;
 }
 
-/** Payload for 'error' event */
+/**
+ * Payload for the 'error' event.
+ * Emitted when an error occurs in the sync system.
+ */
 export interface ErrorEventPayload {
+  /** Human-readable error message */
   message: string;
+  /** Machine-readable error code, if available */
   code?: string;
+  /** True if the error is related to authentication (e.g., expired token) */
   isAuthError: boolean;
 }
 
-/** Payload for 'deviceJoined' event */
+/**
+ * Payload for the 'deviceJoined' event.
+ * Emitted when another device joins the sync session.
+ */
 export interface DeviceJoinedEventPayload {
+  /** The unique identifier of the device that joined */
   deviceId: string;
+  /** The human-readable name of the device (e.g., "Living Room Speaker") */
   deviceName: string;
 }
 
-/** Payload for 'deviceLeft' event */
+/**
+ * Payload for the 'deviceLeft' event.
+ * Emitted when a device leaves the sync session.
+ */
 export interface DeviceLeftEventPayload {
+  /** The unique identifier of the device that left */
   deviceId: string;
 }
 
-/** Payload for 'transferReceived' event */
+/**
+ * Payload for the 'transferReceived' event.
+ * Emitted when this device receives playback control from another device.
+ * This device is now the active (controlling) device.
+ */
 export interface TransferReceivedEventPayload {
+  /** The unique identifier of the device that transferred control */
   fromDeviceId: string;
+  /** The human-readable name of the device, if available */
   fromDeviceName?: string;
 }
 
-/** Payload for 'transferSent' event */
+/**
+ * Payload for the 'transferSent' event.
+ * Emitted when this device transfers playback control to another device.
+ * This device is no longer the active device.
+ */
 export interface TransferSentEventPayload {
+  /** The unique identifier of the device receiving control */
   toDeviceId: string;
+  /** The human-readable name of the device, if available */
   toDeviceName?: string;
 }
 
-/** Map of event types to their payloads */
+/**
+ * Type-safe mapping of event names to their payload interfaces.
+ * Used internally by the SyncEventEmitter for type inference.
+ */
 export interface SyncEventPayloads {
   connected: ConnectedEventPayload;
   disconnected: DisconnectedEventPayload;
@@ -104,13 +162,41 @@ export interface SyncEventPayloads {
 // Event Emitter Class
 // =============================================================================
 
+/** Type-safe event handler function for a specific event type */
 type SyncEventHandler<T extends SyncEventType> = (payload: SyncEventPayloads[T]) => void;
+
+/** Wildcard event handler that receives all events */
 type AnyEventHandler = (event: SyncEventType, payload: unknown) => void;
 
 /**
- * Typed event emitter for sync events
+ * Type-safe event emitter for sync-related events.
  *
- * Provides type-safe event emission and subscription for sync-related events.
+ * Provides a publish/subscribe pattern for decoupling sync logic from UI effects.
+ * Components can subscribe to events (e.g., to show toast notifications) without
+ * the sync system needing to know about the UI layer.
+ *
+ * ## Features:
+ * - **Type-safe**: Events and payloads are fully typed via generics
+ * - **Specific subscriptions**: Subscribe to individual event types via `on()`
+ * - **Wildcard subscriptions**: Subscribe to all events via `onAny()`
+ * - **One-time subscriptions**: Subscribe once via `once()`
+ * - **Error isolation**: Handler errors are caught and logged, not propagated
+ *
+ * @example
+ * ```typescript
+ * const emitter = new SyncEventEmitter();
+ *
+ * // Subscribe to a specific event
+ * const unsubscribe = emitter.on('connected', (payload) => {
+ *   console.log('Connected:', payload.deviceId);
+ * });
+ *
+ * // Emit an event
+ * emitter.emit('connected', { deviceId: '123', sessionId: 'abc', isReconnect: false });
+ *
+ * // Cleanup
+ * unsubscribe();
+ * ```
  */
 export class SyncEventEmitter {
   private handlers: Map<SyncEventType, Set<SyncEventHandler<SyncEventType>>> = new Map();
