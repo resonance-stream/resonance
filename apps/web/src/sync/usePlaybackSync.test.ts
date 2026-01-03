@@ -22,9 +22,6 @@ import {
   createPlaybackState,
   createMockPlaybackSyncOptions,
   resetAllSyncStores,
-  createStateSourceRef,
-  setAsActiveDevice,
-  setAsPassiveDevice,
 } from './test-utils';
 
 // Alias factory to match existing test patterns

@@ -7,6 +7,7 @@
 
 import type { Track } from '../stores/playerStore'
 import type { GqlTrack, GqlAlbum } from '../types/library'
+import type { ScoredTrack } from '../types/similarity'
 
 /**
  * Album context for mapping tracks
@@ -107,6 +108,42 @@ export function mapAlbumToPlayerTracks(album: GqlAlbum): Track[] {
   }
 
   return mapGqlTracksToPlayerTracks(album.tracks, albumContext)
+}
+
+/**
+ * Map a ScoredTrack (from similarity queries) to the player Track type
+ *
+ * ScoredTrack has minimal data by default, but may include a nested GqlTrack
+ * with full details. When the nested track is available, we use it for
+ * duration and cover art.
+ *
+ * @param scoredTrack - ScoredTrack from similarity API
+ * @returns Track compatible with playerStore
+ *
+ * @example
+ * ```ts
+ * const playerTrack = mapScoredTrackToPlayerTrack(scoredTrack)
+ * playerStore.setTrack(playerTrack)
+ * ```
+ */
+export function mapScoredTrackToPlayerTrack(scoredTrack: ScoredTrack): Track {
+  const { track } = scoredTrack
+
+  // If we have the full track data, use it for complete information
+  if (track) {
+    return mapGqlTrackToPlayerTrack(track)
+  }
+
+  // Fallback when nested track is not available
+  return {
+    id: scoredTrack.trackId,
+    title: scoredTrack.title,
+    artist: scoredTrack.artistName ?? 'Unknown Artist',
+    albumId: '',
+    albumTitle: scoredTrack.albumTitle ?? 'Unknown Album',
+    duration: 0, // Duration unavailable without full track data
+    coverUrl: undefined,
+  }
 }
 
 /**

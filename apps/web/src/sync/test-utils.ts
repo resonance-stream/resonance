@@ -230,14 +230,14 @@ export function createLocalQueueTrack(
 /**
  * Create a default local queue array for testing
  *
- * @returns Array of LocalQueueTrack for use in playerStore
+ * @returns Array of Track for use in playerStore
  *
  * @example
  * ```typescript
  * usePlayerStore.setState({ queue: createLocalQueue() });
  * ```
  */
-export function createLocalQueue(): LocalQueueTrack[] {
+export function createLocalQueue(): Track[] {
   return [
     {
       id: 'track-1',

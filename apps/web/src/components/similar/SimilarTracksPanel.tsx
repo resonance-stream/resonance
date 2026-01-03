@@ -1,6 +1,8 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useMemo } from 'react'
+import { AlertTriangle, Music } from 'lucide-react'
 import { useSimilarTracks, type ScoredTrack } from '../../hooks/useSimilarTracks'
-import { usePlayerStore, type Track } from '../../stores/playerStore'
+import { usePlayerStore } from '../../stores/playerStore'
+import { mapScoredTrackToPlayerTrack } from '../../lib/mappers'
 import { AlbumArt } from '../media/AlbumArt'
 import { Skeleton } from '../ui/Skeleton'
 import { cn } from '../../lib/utils'
@@ -31,28 +33,23 @@ export const SimilarTracksPanel = memo(function SimilarTracksPanel({
   const { data: similarTracks, isLoading, error } = useSimilarTracks(trackId, limit)
   const setQueue = usePlayerStore((s) => s.setQueue)
 
+  // Pre-compute player tracks array for efficient queue updates
+  const playerTracks = useMemo(
+    () => similarTracks?.map(mapScoredTrackToPlayerTrack) ?? [],
+    [similarTracks]
+  )
+
   const handlePlayTrack = useCallback(
     (similarTrack: ScoredTrack, index: number) => {
-      if (!similarTracks) return
-
-      // Convert SimilarTrack[] to Track[] for the player queue
-      const tracks: Track[] = similarTracks.map((st) => ({
-        id: st.trackId,
-        title: st.title,
-        artist: st.artistName ?? 'Unknown Artist',
-        albumId: st.track?.albumId ?? '',
-        albumTitle: st.albumTitle ?? 'Unknown Album',
-        duration: st.track?.durationMs ? st.track.durationMs / 1000 : 0,
-        coverUrl: st.track?.album?.coverArtUrl,
-      }))
+      if (playerTracks.length === 0) return
 
       // Set queue starting from the clicked track
-      setQueue(tracks, index)
+      setQueue(playerTracks, index)
 
       // Trigger callback if provided
       onTrackPlay?.(similarTrack)
     },
-    [similarTracks, setQueue, onTrackPlay]
+    [playerTracks, setQueue, onTrackPlay]
   )
 
   // Loading state with skeleton
@@ -76,19 +73,10 @@ export const SimilarTracksPanel = memo(function SimilarTracksPanel({
         )}
         role="alert"
       >
-        <svg
+        <AlertTriangle
           className="w-12 h-12 text-text-muted mb-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-          />
-        </svg>
+          strokeWidth={1.5}
+        />
         <p className="text-text-muted text-sm">Could not load similar tracks</p>
         <p className="text-text-muted/60 text-xs mt-1">
           {error instanceof Error ? error.message : 'Please try again later'}
@@ -106,19 +94,10 @@ export const SimilarTracksPanel = memo(function SimilarTracksPanel({
           className
         )}
       >
-        <svg
+        <Music
           className="w-12 h-12 text-text-muted mb-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
-          />
-        </svg>
+          strokeWidth={1.5}
+        />
         <p className="text-text-muted text-sm">No similar tracks found</p>
         <p className="text-text-muted/60 text-xs mt-1">
           Try a different track or check back later

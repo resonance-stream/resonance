@@ -14,8 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useQueueSync } from './useQueueSync';
 import { usePlayerStore } from '../stores/playerStore';
-import { useDeviceStore } from '../stores/deviceStore';
-import type { StateChangeSource } from './types';
+import type { StateChangeSource, QueueState } from './types';
 import {
   createQueueState,
   createLocalQueue,
@@ -297,23 +296,23 @@ describe('useQueueSync', () => {
       });
 
       expect(sendQueueUpdate).toHaveBeenCalledTimes(1);
-      const sentState = sendQueueUpdate.mock.calls[0][0];
+      const sentState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
 
       // Verify correct structure (snake_case for sync format)
       expect(sentState.current_index).toBe(1);
       expect(sentState.tracks).toHaveLength(2);
 
       // Verify first track conversion
-      expect(sentState.tracks[0].id).toBe('track-1');
-      expect(sentState.tracks[0].title).toBe('Local Song One');
-      expect(sentState.tracks[0].artist).toBe('Local Artist A');
-      expect(sentState.tracks[0].album_id).toBe('local-album-1');
-      expect(sentState.tracks[0].album_title).toBe('Local Album X');
-      expect(sentState.tracks[0].duration_ms).toBe(120000); // Converted to ms
-      expect(sentState.tracks[0].cover_url).toBe('https://example.com/local1.jpg');
+      expect(sentState.tracks[0]!.id).toBe('track-1');
+      expect(sentState.tracks[0]!.title).toBe('Local Song One');
+      expect(sentState.tracks[0]!.artist).toBe('Local Artist A');
+      expect(sentState.tracks[0]!.album_id).toBe('local-album-1');
+      expect(sentState.tracks[0]!.album_title).toBe('Local Album X');
+      expect(sentState.tracks[0]!.duration_ms).toBe(120000); // Converted to ms
+      expect(sentState.tracks[0]!.cover_url).toBe('https://example.com/local1.jpg');
 
       // Verify second track with undefined coverUrl becomes null
-      expect(sentState.tracks[1].cover_url).toBe(null);
+      expect(sentState.tracks[1]!.cover_url).toBe(null);
     });
   });
 
@@ -345,9 +344,9 @@ describe('useQueueSync', () => {
         result.current.broadcastQueueState();
       });
 
-      const sentState = sendQueueUpdate.mock.calls[0][0];
+      const sentState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
       // Duration should be converted to milliseconds
-      expect(sentState.tracks[0].duration_ms).toBe(90000);
+      expect(sentState.tracks[0]!.duration_ms).toBe(90000);
     });
 
     it('converts camelCase to snake_case for sync format', () => {
@@ -377,7 +376,7 @@ describe('useQueueSync', () => {
         result.current.broadcastQueueState();
       });
 
-      const sentState = sendQueueUpdate.mock.calls[0][0];
+      const sentState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
       const track = sentState.tracks[0];
 
       // Verify snake_case keys
@@ -407,7 +406,7 @@ describe('useQueueSync', () => {
         result.current.broadcastQueueState();
       });
 
-      const sentState = sendQueueUpdate.mock.calls[0][0];
+      const sentState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
       expect(sentState.tracks).toEqual([]);
       expect(sentState.current_index).toBe(0);
     });
@@ -439,10 +438,10 @@ describe('useQueueSync', () => {
         result.current.broadcastQueueState();
       });
 
-      const sentState = sendQueueUpdate.mock.calls[0][0];
+      const sentState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
       // undefined should become null in sync format
-      expect(sentState.tracks[0].album_id).toBe(null);
-      expect(sentState.tracks[0].cover_url).toBe(null);
+      expect(sentState.tracks[0]!.album_id).toBe(null);
+      expect(sentState.tracks[0]!.cover_url).toBe(null);
     });
   });
 
@@ -724,7 +723,7 @@ describe('useQueueSync', () => {
         result.current.broadcastQueueState();
       });
 
-      const syncState = sendQueueUpdate.mock.calls[0][0];
+      const syncState = sendQueueUpdate.mock.calls[0]![0] as QueueState;
 
       // Unmount first hook before changing mock
       unmount();

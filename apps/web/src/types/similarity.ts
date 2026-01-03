@@ -63,21 +63,9 @@ export interface ScoredTrack {
  * Extends ScoredTrack with information about which similarity
  * algorithm produced this match.
  */
-export interface SimilarTrack {
-  /** Track UUID */
-  trackId: string
-  /** Track title */
-  title: string
-  /** Artist name (if available) */
-  artistName: string | null
-  /** Album title (if available) */
-  albumTitle: string | null
-  /** Similarity score (0.0 - 1.0, higher = more similar) */
-  score: number
+export type SimilarTrack = ScoredTrack & {
   /** The type of similarity used for this match */
   similarityType: SimilarityType
-  /** Full track details (when requested via resolver) */
-  track?: GqlTrack | null
 }
 
 // ============================================================================
