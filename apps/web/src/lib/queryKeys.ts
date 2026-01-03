@@ -14,6 +14,8 @@
  * ```
  */
 
+import type { SimilarityMethod } from '../types/similarity'
+
 export const libraryKeys = {
   /** Root key for all library queries */
   all: ['library'] as const,
@@ -59,6 +61,8 @@ export const libraryKeys = {
       [...libraryKeys.tracks.all(), 'search', query, limit] as const,
     seedSearch: (query: string, limit?: number) =>
       [...libraryKeys.tracks.all(), 'seedSearch', query, limit] as const,
+    similar: (trackId: string, params: { limit?: number; method?: SimilarityMethod } = {}) =>
+      [...libraryKeys.tracks.all(), 'similar', trackId, params] as const,
     byAlbum: (albumId: string, params: { limit?: number; offset?: number } = {}) =>
       [...libraryKeys.tracks.all(), 'album', albumId, params] as const,
     byArtist: (artistId: string, params: { limit?: number; offset?: number } = {}) =>
@@ -132,6 +136,7 @@ export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.tracks.top
   | typeof libraryKeys.tracks.search
   | typeof libraryKeys.tracks.seedSearch
+  | typeof libraryKeys.tracks.similar
   | typeof libraryKeys.tracks.byAlbum
   | typeof libraryKeys.tracks.byArtist
   | typeof libraryKeys.playlists.all
