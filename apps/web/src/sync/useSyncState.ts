@@ -16,16 +16,15 @@ import { useRef, useCallback, useEffect } from 'react';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore, useIsActiveDevice } from '../stores/deviceStore';
 import { useSyncConnection, type UseSyncConnectionOptions } from './useSyncConnection';
+import type { PlaybackState, QueueState } from './types';
 import {
   toSyncPlaybackState,
   fromSyncPlaybackState,
   toSyncQueueState,
   fromSyncQueueState,
   adjustPositionForClockDrift,
-  type PlaybackState,
-  type QueueState,
   type LocalQueueTrack,
-} from './types';
+} from './adapters';
 
 /** Source of a state change */
 type StateChangeSource = 'local' | 'remote' | null;

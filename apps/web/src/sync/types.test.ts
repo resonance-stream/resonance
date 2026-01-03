@@ -1,8 +1,15 @@
 /**
- * Tests for sync type utilities
+ * Tests for sync type utilities and adapters
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  detectDeviceType,
+  getOrCreateDeviceId,
+  getDefaultDeviceName,
+  type PlaybackState,
+  type QueueState,
+} from './types';
 import {
   createPlaybackState,
   adjustPositionForClockDrift,
@@ -10,14 +17,9 @@ import {
   fromSyncPlaybackState,
   toSyncQueueState,
   fromSyncQueueState,
-  detectDeviceType,
-  getOrCreateDeviceId,
-  getDefaultDeviceName,
-  type PlaybackState,
   type LocalPlayerState,
   type LocalQueueTrack,
-  type QueueState,
-} from './types';
+} from './adapters';
 
 describe('createPlaybackState', () => {
   it('creates state with defaults', () => {

@@ -36,21 +36,21 @@ export type {
   SyncedSettings,
   ConnectionState,
   DeviceInfo,
-  // State adapters
-  LocalPlayerState,
-  LocalQueueTrack,
 } from './types';
 
+export { ErrorCodes } from './types';
+
+// State adapters (separated for better modularity)
+export type { LocalPlayerState, LocalQueueTrack } from './adapters';
+
 export {
-  ErrorCodes,
   createPlaybackState,
   adjustPositionForClockDrift,
-  // State adapters
   toSyncPlaybackState,
   fromSyncPlaybackState,
   toSyncQueueState,
   fromSyncQueueState,
-} from './types';
+} from './adapters';
 
 // WebSocket Client
 export { WebSocketClient } from './WebSocketClient';
@@ -62,6 +62,30 @@ export type { UseSyncConnectionOptions, SyncConnectionState } from './useSyncCon
 
 export { useSyncState } from './useSyncState';
 export type { UseSyncStateOptions, SyncStateValue } from './useSyncState';
+
+// Sync Events
+export {
+  syncEvents,
+  SyncEventEmitter,
+  useSyncEvents,
+  useSyncEventsAll,
+} from './syncEvents';
+export type {
+  SyncEventType,
+  SyncEventPayloads,
+  ConnectedEventPayload,
+  DisconnectedEventPayload,
+  ReconnectingEventPayload,
+  ErrorEventPayload,
+  DeviceJoinedEventPayload,
+  DeviceLeftEventPayload,
+  TransferReceivedEventPayload,
+  TransferSentEventPayload,
+} from './syncEvents';
+
+// Sync Notifications
+export { useSyncNotifications } from './useSyncNotifications';
+export type { UseSyncNotificationsOptions } from './useSyncNotifications';
 
 // Utilities
 export {
