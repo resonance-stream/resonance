@@ -361,7 +361,17 @@ impl SimilarityService {
 
     /// Find similar tracks based on audio features
     ///
-    /// Uses Euclidean distance on normalized audio features.
+    /// Uses the pre-computed audio_features_vector with pgvector's L2 distance operator (<->)
+    /// for O(log n) performance via HNSW index. Falls back to JSONB-based calculation
+    /// if the vector is not available.
+    ///
+    /// Vector dimensions (all normalized to 0-1 range):
+    /// - [0] energy (already 0-1)
+    /// - [1] loudness_norm ((loudness + 60) / 60, maps -60..0 dB to 0..1)
+    /// - [2] valence (already 0-1)
+    /// - [3] danceability (already 0-1)
+    /// - [4] bpm_norm (bpm / 200, normalizes typical 60-180 BPM range)
+    ///
     /// Has a 5-second query timeout for protection against slow queries.
     ///
     /// # Errors
@@ -376,7 +386,31 @@ impl SimilarityService {
     ) -> ApiResult<Vec<SimilarTrack>> {
         let limit = validate_limit(limit);
 
-        // Load source track's audio features
+        // First, check if we have a pre-computed audio_features_vector (fast path)
+        let has_vector: Option<(bool,)> = sqlx::query_as(
+            "SELECT audio_features_vector IS NOT NULL FROM track_embeddings WHERE track_id = $1",
+        )
+        .bind(track_id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        let use_vector_path = has_vector.map_or(false, |(has,)| has);
+
+        if use_vector_path {
+            info!(
+                track_id = %track_id,
+                "Using vector-based acoustic similarity (HNSW indexed, O(log n))"
+            );
+            return self.find_similar_by_features_vector(track_id, limit).await;
+        }
+
+        // Fallback: Check JSONB audio features
+        info!(
+            track_id = %track_id,
+            "Using JSONB fallback for acoustic similarity (full table scan, O(n))"
+        );
+
+        // Load source track's audio features from JSONB
         let source_features: Option<(serde_json::Value,)> =
             sqlx::query_as("SELECT audio_features FROM tracks WHERE id = $1")
                 .bind(track_id)
@@ -406,17 +440,96 @@ impl SimilarityService {
             ));
         }
 
+        self.find_similar_by_features_jsonb(track_id, limit).await
+    }
+
+    /// Find similar tracks using pre-computed audio_features_vector with HNSW index
+    ///
+    /// This is the fast path using pgvector's L2 distance operator (<->).
+    /// The HNSW index provides O(log n) performance.
+    async fn find_similar_by_features_vector(
+        &self,
+        track_id: Uuid,
+        limit: i32,
+    ) -> ApiResult<Vec<SimilarTrack>> {
         // Use a transaction to set statement timeout for this query
         let mut tx = self.db.begin().await?;
 
-        // Set statement timeout for this transaction (in seconds)
+        // Set statement timeout for this transaction
         sqlx::query(&format!(
             "SET LOCAL statement_timeout = '{}s'",
             QUERY_TIMEOUT_SECONDS
         ))
         .execute(&mut *tx)
         .await
-        .map_err(|e| handle_query_error(e, "set_timeout_acoustic"))?;
+        .map_err(|e| handle_query_error(e, "set_timeout_acoustic_vector"))?;
+
+        // Find similar tracks using pgvector L2 distance on audio_features_vector
+        // Lower distance = more similar, so we order ascending and convert to similarity score
+        let similar: Vec<SimilarTrackRow> = sqlx::query_as(
+            r#"
+            SELECT
+                t.id as track_id,
+                t.title,
+                a.name as artist_name,
+                al.title as album_title,
+                -- Convert L2 distance to similarity score (0-1 range)
+                -- Max theoretical L2 distance for 5D unit vectors is sqrt(5) ≈ 2.236
+                -- Using 2.0 as normalization factor for practical range
+                GREATEST(0.0, 1.0 - (te.audio_features_vector <-> source.audio_features_vector) / 2.0) as score
+            FROM track_embeddings te
+            JOIN track_embeddings source ON source.track_id = $1
+            JOIN tracks t ON t.id = te.track_id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            LEFT JOIN albums al ON t.album_id = al.id
+            WHERE te.track_id != $1
+              AND te.audio_features_vector IS NOT NULL
+            ORDER BY te.audio_features_vector <-> source.audio_features_vector
+            LIMIT $2
+            "#,
+        )
+        .bind(track_id)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "find_similar_by_features_vector"))?;
+
+        // Commit the transaction (timeout is automatically reset)
+        tx.commit().await?;
+
+        Ok(similar
+            .into_iter()
+            .map(|r| SimilarTrack {
+                track_id: r.track_id,
+                title: r.title,
+                artist_name: r.artist_name,
+                album_title: r.album_title,
+                score: r.score.unwrap_or(0.0).clamp(0.0, 1.0),
+                similarity_type: SimilarityType::Acoustic,
+            })
+            .collect())
+    }
+
+    /// Find similar tracks using JSONB-based feature distance (fallback path)
+    ///
+    /// This is the slow path using a full table scan with manual distance calculation.
+    /// Used when audio_features_vector is not available for the source track.
+    async fn find_similar_by_features_jsonb(
+        &self,
+        track_id: Uuid,
+        limit: i32,
+    ) -> ApiResult<Vec<SimilarTrack>> {
+        // Use a transaction to set statement timeout for this query
+        let mut tx = self.db.begin().await?;
+
+        // Set statement timeout for this transaction
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            QUERY_TIMEOUT_SECONDS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "set_timeout_acoustic_jsonb"))?;
 
         // Find similar tracks using SQL-based feature distance
         // This calculates Euclidean distance on available features
@@ -469,7 +582,7 @@ impl SimilarityService {
         .bind(limit)
         .fetch_all(&mut *tx)
         .await
-        .map_err(|e| handle_query_error(e, "find_similar_by_features"))?;
+        .map_err(|e| handle_query_error(e, "find_similar_by_features_jsonb"))?;
 
         // Commit the transaction (timeout is automatically reset)
         tx.commit().await?;
@@ -490,9 +603,11 @@ impl SimilarityService {
     /// Find similar tracks based on genre and mood tags
     ///
     /// Uses weighted Jaccard similarity with mood weighted 2x (mood is more specific).
+    /// Has a 5-second query timeout for protection against slow queries.
     ///
     /// # Errors
     /// - `ApiError::Database` - If the database query fails
+    /// - `ApiError::QueryTimeout` - If the query exceeds the timeout
     #[instrument(skip(self), fields(similarity_type = "categorical"))]
     pub async fn find_similar_by_tags(
         &self,
@@ -500,6 +615,18 @@ impl SimilarityService {
         limit: i32,
     ) -> ApiResult<Vec<SimilarTrack>> {
         let limit = validate_limit(limit);
+
+        // Use a transaction to set statement timeout for this query
+        let mut tx = self.db.begin().await?;
+
+        // Set statement timeout for this transaction (in seconds)
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            QUERY_TIMEOUT_SECONDS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "set_timeout_categorical"))?;
 
         // Find tracks with overlapping genres or moods
         let similar: Vec<SimilarTrackRow> = sqlx::query_as(
@@ -541,8 +668,12 @@ impl SimilarityService {
         )
         .bind(track_id)
         .bind(limit)
-        .fetch_all(&self.db)
-        .await?;
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| handle_query_error(e, "find_similar_by_tags"))?;
+
+        // Commit the transaction (timeout is automatically reset)
+        tx.commit().await?;
 
         Ok(similar
             .into_iter()

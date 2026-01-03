@@ -139,6 +139,11 @@ pub enum ApiError {
     #[error("rate limit exceeded, retry after {retry_after} seconds")]
     RateLimited { retry_after: u64 },
 
+    // ========== Timeout Errors ==========
+    /// Query execution timeout
+    #[error("query timeout exceeded ({timeout_seconds}s)")]
+    QueryTimeout { timeout_seconds: u64 },
+
     // ========== Configuration Errors ==========
     /// Configuration error
     #[error("configuration error: {0}")]
@@ -195,6 +200,9 @@ impl ApiError {
             // 429 Too Many Requests
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
 
+            // 504 Gateway Timeout
+            Self::QueryTimeout { .. } => StatusCode::GATEWAY_TIMEOUT,
+
             // 503 Service Unavailable
             Self::DatabaseUnavailable | Self::ServiceBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
 
@@ -245,6 +253,7 @@ impl ApiError {
             Self::InvalidRange(_) => "INVALID_RANGE",
             Self::RangeNotSatisfiable { .. } => "RANGE_NOT_SATISFIABLE",
             Self::RateLimited { .. } => "RATE_LIMITED",
+            Self::QueryTimeout { .. } => "QUERY_TIMEOUT",
             Self::Configuration(_) => "CONFIGURATION_ERROR",
             Self::Internal(_) => "INTERNAL_ERROR",
             Self::Serialization(_) => "SERIALIZATION_ERROR",
