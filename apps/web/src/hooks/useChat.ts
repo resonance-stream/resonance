@@ -278,8 +278,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'get_recommendations': {
-        console.log('[Chat] get_recommendations action:', action.payload);
-        // Would fetch recommendations
+        const trackId = action.payload.track_id as string | undefined;
+        if (trackId) {
+          navigate(`/track/${trackId}/similar`);
+        }
         break;
       }
       default:
