@@ -1,8 +1,11 @@
 /**
- * Sync State Management Hook
+ * Sync State Management Hook (Facade)
  *
  * Provides bidirectional synchronization between local player state and
- * remote devices. Implements loop prevention to avoid sync cycles.
+ * remote devices. This is a facade that composes three specialized hooks:
+ * - usePlaybackSync: Playback state sync (play/pause, volume, position)
+ * - useQueueSync: Queue state sync (tracks, current index)
+ * - useTransferControl: Device transfer logic
  *
  * The key pattern is tracking the "source" of each state change:
  * - 'local': User action on this device -> broadcast to others
@@ -12,203 +15,170 @@
  * an incoming sync message from being re-broadcast back out.
  */
 
-import { useRef, useCallback, useEffect } from 'react';
-import { usePlayerStore } from '../stores/playerStore';
-import { useDeviceStore, useIsActiveDevice } from '../stores/deviceStore';
+import { useRef } from 'react';
+import { useIsActiveDevice } from '../stores/deviceStore';
 import { useSyncConnection, type UseSyncConnectionOptions } from './useSyncConnection';
-import {
-  toSyncPlaybackState,
-  fromSyncPlaybackState,
-  toSyncQueueState,
-  fromSyncQueueState,
-  adjustPositionForClockDrift,
-  type PlaybackState,
-  type QueueState,
-  type LocalQueueTrack,
-} from './types';
+import { usePlaybackSync } from './usePlaybackSync';
+import type { StateChangeSource } from './types';
+import { useQueueSync } from './useQueueSync';
+import { useTransferControl } from './useTransferControl';
 
-/** Source of a state change */
-type StateChangeSource = 'local' | 'remote' | null;
-
-/** Throttle interval for playback updates (ms) */
-const PLAYBACK_THROTTLE_MS = 250;
-
-/** Minimum position difference to trigger a seek sync (ms) */
-const SEEK_THRESHOLD_MS = 1000;
-
+/**
+ * Configuration options for the useSyncState hook.
+ *
+ * Extends the base sync connection options while omitting internal callbacks
+ * that are managed by the composed sync hooks.
+ *
+ * @example
+ * ```tsx
+ * const syncState = useSyncState({
+ *   enabled: true,
+ *   onRemoteTrackChange: (trackId) => loadTrack(trackId),
+ * });
+ * ```
+ */
 export interface UseSyncStateOptions extends Omit<UseSyncConnectionOptions, 'onPlaybackSync' | 'onSeekSync' | 'onQueueSync'> {
-  /** Callback when remote device changes the track */
+  /**
+   * Callback invoked when a remote device changes the current track.
+   * Use this to load the new track in the local player.
+   *
+   * @param trackId - The ID of the track to load
+   */
   onRemoteTrackChange?: (trackId: string) => void;
 }
 
+/**
+ * Return value interface for the useSyncState hook.
+ *
+ * Provides access to sync connection status, device control state,
+ * and functions for broadcasting state and transferring control.
+ */
 export interface SyncStateValue {
-  /** Whether sync is enabled and connected */
+  /**
+   * Whether sync is enabled and the WebSocket connection is active.
+   * Use this to conditionally render sync-related UI elements.
+   */
   isSyncActive: boolean;
-  /** Whether this device is controlling playback */
+
+  /**
+   * Whether this device is currently controlling playback.
+   * Only the active device broadcasts state changes; other devices receive them.
+   */
   isActiveDevice: boolean;
-  /** Manually trigger a playback state broadcast */
+
+  /**
+   * Manually trigger a playback state broadcast to all connected devices.
+   * Normally called automatically on state changes, but can be used for
+   * forced re-sync scenarios.
+   */
   broadcastPlaybackState: () => void;
-  /** Manually trigger a queue state broadcast */
+
+  /**
+   * Manually trigger a queue state broadcast to all connected devices.
+   * Normally called automatically on queue changes.
+   */
   broadcastQueueState: () => void;
-  /** Transfer control to another device */
+
+  /**
+   * Transfer playback control to another device.
+   * The target device will become the active device and start broadcasting state.
+   *
+   * @param deviceId - The ID of the device to transfer control to
+   */
   transferToDevice: (deviceId: string) => void;
-  /** Request to become the active device */
+
+  /**
+   * Request to become the active device (take control from the current active device).
+   * Equivalent to calling `transferToDevice` with the local device ID.
+   */
   requestControl: () => void;
 }
 
 /**
- * Hook for syncing playback state across devices
+ * Facade hook for cross-device playback synchronization.
  *
- * Integrates with playerStore and provides loop-free bidirectional sync.
+ * Provides bidirectional state sync between the local player and remote devices
+ * through a WebSocket connection. This is a composition of three specialized hooks:
+ * - {@link usePlaybackSync}: Playback state (play/pause, volume, position, etc.)
+ * - {@link useQueueSync}: Queue state (track list, current index)
+ * - {@link useTransferControl}: Device transfer logic
+ *
+ * ## Loop Prevention Pattern (stateSourceRef)
+ *
+ * A critical aspect of bidirectional sync is preventing infinite loops where:
+ * 1. Device A changes state → broadcasts to Device B
+ * 2. Device B receives and applies state → triggers a "change" event
+ * 3. Device B broadcasts back to Device A → infinite loop!
+ *
+ * The `stateSourceRef` ref tracks the origin of each state change:
+ * - `'local'`: Change originated from user action on this device
+ * - `'remote'`: Change came from a sync message from another device
+ * - `null`: No change in progress
+ *
+ * When applying remote state, the ref is set to `'remote'` before updating
+ * local state, then cleared after a microtask. The broadcast effects check
+ * this ref and skip broadcasting when the source is `'remote'`.
+ *
+ * @param options - Configuration options for sync behavior
+ * @returns Object containing sync state and control functions
+ *
+ * @example
+ * ```tsx
+ * function PlayerComponent() {
+ *   const {
+ *     isSyncActive,
+ *     isActiveDevice,
+ *     requestControl,
+ *   } = useSyncState({
+ *     onRemoteTrackChange: (trackId) => loadTrack(trackId),
+ *   });
+ *
+ *   return (
+ *     <div>
+ *       <span>{isSyncActive ? 'Connected' : 'Disconnected'}</span>
+ *       {!isActiveDevice && (
+ *         <button onClick={requestControl}>Take Control</button>
+ *       )}
+ *     </div>
+ *   );
+ * }
+ * ```
  */
 export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue {
   const { onRemoteTrackChange, ...syncOptions } = options;
 
-  // Track state change source to prevent loops
+  /**
+   * Shared ref tracking the source of state changes to prevent sync loops.
+   *
+   * This ref is passed to all composed sync hooks. When a remote sync message
+   * is received, the handler sets this to 'remote' before applying state changes.
+   * The broadcast effects check this value and skip broadcasting when it's 'remote',
+   * preventing the received state from being re-broadcast back to other devices.
+   *
+   * The ref is cleared to `null` via `queueMicrotask()` after state updates,
+   * allowing subsequent local changes to broadcast normally.
+   *
+   * @see usePlaybackSync - Uses this for playback state loop prevention
+   * @see useQueueSync - Uses this for queue state loop prevention
+   */
   const stateSourceRef = useRef<StateChangeSource>(null);
-  const lastBroadcastRef = useRef<number>(0);
-
-  // Get player state
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const currentTime = usePlayerStore((s) => s.currentTime);
-  const volume = usePlayerStore((s) => s.volume);
-  const isMuted = usePlayerStore((s) => s.isMuted);
-  const shuffle = usePlayerStore((s) => s.shuffle);
-  const repeat = usePlayerStore((s) => s.repeat);
-  const queue = usePlayerStore((s) => s.queue);
-  const queueIndex = usePlayerStore((s) => s.queueIndex);
-
-  // Get player actions
-  const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
-  const play = usePlayerStore((s) => s.play);
-  const pause = usePlayerStore((s) => s.pause);
-  const setVolume = usePlayerStore((s) => s.setVolume);
-  const toggleMute = usePlayerStore((s) => s.toggleMute);
-  const setQueue = usePlayerStore((s) => s.setQueue);
 
   // Device state
-  const deviceId = useDeviceStore((s) => s.deviceId);
-  const activeDeviceId = useDeviceStore((s) => s.activeDeviceId);
   const isActiveDevice = useIsActiveDevice();
 
-  // Handle incoming playback sync
-  const handlePlaybackSync = useCallback((syncState: PlaybackState) => {
-    // Don't apply if we're the active device (we're the source of truth)
-    if (isActiveDevice) return;
+  // Refs for forwarding handlers to useSyncConnection callbacks
+  // This is needed because we need to set up useSyncConnection first to get
+  // the send functions, but we also need to pass handlers to useSyncConnection
+  const playbackSyncHandlersRef = useRef<{
+    handlePlaybackSync: ReturnType<typeof usePlaybackSync>['handlePlaybackSync'];
+    handleSeekSync: ReturnType<typeof usePlaybackSync>['handleSeekSync'];
+  } | null>(null);
 
-    stateSourceRef.current = 'remote';
+  const queueSyncHandlersRef = useRef<{
+    handleQueueSync: ReturnType<typeof useQueueSync>['handleQueueSync'];
+  } | null>(null);
 
-    const local = fromSyncPlaybackState(syncState);
-
-    // Get current state from store to avoid stale closure values
-    const current = usePlayerStore.getState();
-
-    // Apply playback state
-    if (local.isPlaying && !current.isPlaying) {
-      play();
-    } else if (!local.isPlaying && current.isPlaying) {
-      pause();
-    }
-
-    // Apply volume if significantly different
-    if (Math.abs(local.volume - current.volume) > 0.01) {
-      setVolume(local.volume);
-    }
-
-    // Apply mute state - check current state to ensure idempotency
-    // (toggleMute is not a setter, so we verify state before calling)
-    if (local.isMuted !== current.isMuted) {
-      toggleMute();
-    }
-
-    // Apply position with clock drift adjustment
-    const adjustedPosition = adjustPositionForClockDrift(syncState);
-    const localPositionMs = current.currentTime * 1000;
-    if (Math.abs(adjustedPosition - localPositionMs) > SEEK_THRESHOLD_MS) {
-      setCurrentTime(adjustedPosition / 1000);
-    }
-
-    // Handle track change (need external handler since we don't have track loading logic)
-    if (syncState.track_id !== current.currentTrack?.id && syncState.track_id) {
-      onRemoteTrackChange?.(syncState.track_id);
-    }
-
-    // Clear source after microtask
-    queueMicrotask(() => {
-      if (stateSourceRef.current === 'remote') {
-        stateSourceRef.current = null;
-      }
-    });
-  }, [isActiveDevice, play, pause, setVolume, toggleMute, setCurrentTime, onRemoteTrackChange]);
-
-  // Handle incoming seek sync
-  const handleSeekSync = useCallback((positionMs: number, timestamp: number) => {
-    if (isActiveDevice) return;
-
-    // Get current state from store to avoid stale closure values
-    const current = usePlayerStore.getState();
-
-    // Reuse clock drift adjustment logic from types.ts
-    const seekState: PlaybackState = {
-      track_id: null,
-      is_playing: current.isPlaying,
-      position_ms: positionMs,
-      timestamp,
-      volume: 0,
-      is_muted: false,
-      shuffle: false,
-      repeat: 'off',
-    };
-    const adjustedPosition = adjustPositionForClockDrift(seekState);
-
-    // Skip seek if position difference is within threshold (avoid jitter)
-    const localPositionMs = current.currentTime * 1000;
-    if (Math.abs(adjustedPosition - localPositionMs) <= SEEK_THRESHOLD_MS) {
-      return;
-    }
-
-    stateSourceRef.current = 'remote';
-    setCurrentTime(adjustedPosition / 1000);
-
-    queueMicrotask(() => {
-      if (stateSourceRef.current === 'remote') {
-        stateSourceRef.current = null;
-      }
-    });
-  }, [isActiveDevice, setCurrentTime]);
-
-  // Handle incoming queue sync
-  const handleQueueSync = useCallback((syncQueue: QueueState) => {
-    if (isActiveDevice) return;
-
-    stateSourceRef.current = 'remote';
-
-    const { tracks, currentIndex } = fromSyncQueueState(syncQueue);
-
-    // Convert to playerStore track format (adding missing fields)
-    // NOTE: Tracks from sync have empty albumId - requires API fetch for album navigation
-    // This is a known limitation. Full implementation would fetch track metadata.
-    const playerTracks = tracks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      artist: t.artist,
-      albumId: '', // SYNC_INCOMPLETE: Would need API fetch for album features
-      albumTitle: t.albumTitle,
-      duration: t.duration,
-      coverUrl: t.coverUrl,
-    }));
-
-    setQueue(playerTracks, currentIndex);
-
-    queueMicrotask(() => {
-      if (stateSourceRef.current === 'remote') {
-        stateSourceRef.current = null;
-      }
-    });
-  }, [isActiveDevice, setQueue]);
-
-  // Set up sync connection with handlers
+  // Set up sync connection with handlers that forward to our hooks
   const {
     isConnected,
     sendPlaybackUpdate,
@@ -216,125 +186,47 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
     requestTransfer,
   } = useSyncConnection({
     ...syncOptions,
-    onPlaybackSync: handlePlaybackSync,
-    onSeekSync: handleSeekSync,
-    onQueueSync: handleQueueSync,
+    onPlaybackSync: (state) => playbackSyncHandlersRef.current?.handlePlaybackSync(state),
+    onSeekSync: (positionMs, timestamp) => playbackSyncHandlersRef.current?.handleSeekSync(positionMs, timestamp),
+    onQueueSync: (state) => queueSyncHandlersRef.current?.handleQueueSync(state),
   });
 
-  // Build current playback state
-  const buildPlaybackState = useCallback((): PlaybackState => {
-    return toSyncPlaybackState({
-      trackId: currentTrack?.id ?? null,
-      isPlaying,
-      currentTime,
-      volume,
-      isMuted,
-      shuffle,
-      repeat,
-    });
-  }, [currentTrack?.id, isPlaying, currentTime, volume, isMuted, shuffle, repeat]);
+  // Set up playback sync
+  const {
+    handlePlaybackSync,
+    handleSeekSync,
+    broadcastPlaybackState,
+  } = usePlaybackSync({
+    isConnected,
+    sendPlaybackUpdate,
+    stateSourceRef,
+    onRemoteTrackChange,
+  });
 
-  // Build current queue state
-  const buildQueueState = useCallback((): QueueState => {
-    const localTracks: LocalQueueTrack[] = queue.map((t) => ({
-      id: t.id,
-      title: t.title,
-      artist: t.artist,
-      albumTitle: t.albumTitle,
-      duration: t.duration,
-      coverUrl: t.coverUrl,
-    }));
-    return toSyncQueueState(localTracks, queueIndex);
-  }, [queue, queueIndex]);
+  // Store handlers in ref for useSyncConnection callbacks
+  playbackSyncHandlersRef.current = { handlePlaybackSync, handleSeekSync };
 
-  // Broadcast playback state (throttled)
-  const broadcastPlaybackState = useCallback(() => {
-    if (!isConnected || !isActiveDevice) return;
+  // Set up queue sync
+  const {
+    handleQueueSync,
+    broadcastQueueState,
+  } = useQueueSync({
+    isConnected,
+    sendQueueUpdate,
+    stateSourceRef,
+  });
 
-    const now = Date.now();
-    if (now - lastBroadcastRef.current < PLAYBACK_THROTTLE_MS) return;
-    lastBroadcastRef.current = now;
+  // Store handlers in ref for useSyncConnection callbacks
+  queueSyncHandlersRef.current = { handleQueueSync };
 
-    sendPlaybackUpdate(buildPlaybackState());
-  }, [isConnected, isActiveDevice, sendPlaybackUpdate, buildPlaybackState]);
-
-  // Broadcast queue state
-  const broadcastQueueState = useCallback(() => {
-    if (!isConnected || !isActiveDevice) return;
-    sendQueueUpdate(buildQueueState());
-  }, [isConnected, isActiveDevice, sendQueueUpdate, buildQueueState]);
-
-  // Auto-broadcast on state changes (only if we're active and change is local)
-  useEffect(() => {
-    if (!isConnected || !isActiveDevice) return;
-    if (stateSourceRef.current === 'remote') return;
-
-    broadcastPlaybackState();
-  }, [isConnected, isActiveDevice, isPlaying, volume, isMuted, shuffle, repeat, broadcastPlaybackState]);
-
-  // Ref for broadcast function to avoid recreating interval on every change
-  const broadcastPlaybackStateRef = useRef(broadcastPlaybackState);
-  useEffect(() => {
-    broadcastPlaybackStateRef.current = broadcastPlaybackState;
-  }, [broadcastPlaybackState]);
-
-  // Periodic position broadcast while playing (every 5 seconds)
-  // This keeps other devices in sync even without explicit seeks
-  useEffect(() => {
-    if (!isConnected || !isActiveDevice || !isPlaying) return;
-
-    const interval = setInterval(() => {
-      // Only broadcast if not processing a remote update
-      if (stateSourceRef.current !== 'remote') {
-        broadcastPlaybackStateRef.current();
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [isConnected, isActiveDevice, isPlaying]);
-
-  // Track last position to detect local seeks
-  const lastLocalPositionRef = useRef<number>(currentTime);
-
-  // Broadcast immediately on large local seeks to reduce sync lag
-  useEffect(() => {
-    if (!isConnected || !isActiveDevice) return;
-    if (stateSourceRef.current === 'remote') return;
-
-    const prev = lastLocalPositionRef.current;
-    lastLocalPositionRef.current = currentTime;
-
-    // Detect if this is a significant position jump (likely a seek)
-    const deltaMs = Math.abs(currentTime - prev) * 1000;
-    if (deltaMs >= SEEK_THRESHOLD_MS) {
-      broadcastPlaybackStateRef.current();
-    }
-  }, [isConnected, isActiveDevice, currentTime]);
-
-  // Broadcast queue changes
-  useEffect(() => {
-    if (!isConnected || !isActiveDevice) return;
-    if (stateSourceRef.current === 'remote') return;
-
-    broadcastQueueState();
-  }, [isConnected, isActiveDevice, queue, queueIndex, broadcastQueueState]);
-
-  // Transfer to another device
-  const transferToDevice = useCallback((targetDeviceId: string) => {
-    if (!isConnected) return;
-    // Skip if target is already the active device
-    if (targetDeviceId === activeDeviceId) return;
-    requestTransfer(targetDeviceId);
-  }, [isConnected, activeDeviceId, requestTransfer]);
-
-  // Request to become active device
-  const requestControl = useCallback(() => {
-    if (!isConnected) return;
-    // Skip if already the active device
-    if (isActiveDevice) return;
-    // Transfer to self
-    requestTransfer(deviceId);
-  }, [isConnected, isActiveDevice, requestTransfer, deviceId]);
+  // Set up transfer control
+  const {
+    transferToDevice,
+    requestControl,
+  } = useTransferControl({
+    isConnected,
+    requestTransfer,
+  });
 
   return {
     isSyncActive: isConnected,

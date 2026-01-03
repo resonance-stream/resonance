@@ -304,6 +304,96 @@ Device C ──┘     └─────────────┘
 - **Client State**: Zustand for player, UI state
 - **Sync State**: WebSocket subscription for cross-device
 
+### Sync Architecture (Frontend)
+
+The cross-device sync system (`apps/web/src/sync/`) uses three key patterns:
+
+#### 1. Loop Prevention with stateSourceRef
+
+Bidirectional sync creates a loop risk: Device A changes state → broadcasts → Device B receives → applies state → triggers broadcast → loops forever.
+
+The `stateSourceRef` pattern prevents this:
+
+```typescript
+// Shared across sync hooks
+const stateSourceRef = useRef<'local' | 'remote' | null>(null);
+
+// When receiving remote state:
+const handleSync = (syncState: PlaybackState) => {
+  stateSourceRef.current = 'remote';       // Mark as remote
+  applyStateToPlayer(syncState);           // Apply state (triggers effects)
+
+  queueMicrotask(() => {                   // Clear after microtask
+    if (stateSourceRef.current === 'remote') {
+      stateSourceRef.current = null;
+    }
+  });
+};
+
+// In broadcast effect:
+useEffect(() => {
+  if (stateSourceRef.current === 'remote') return;  // Skip if remote origin
+  broadcastState();
+}, [playbackState]);
+```
+
+The `queueMicrotask` timing ensures the ref stays `'remote'` through React's state batching, then clears for subsequent local changes.
+
+#### 2. Hook Composition with Refs
+
+`useSyncState` is a facade composing specialized hooks. A circular dependency exists: `useSyncConnection` needs message handlers, but handlers need `useSyncConnection`'s send functions.
+
+Solution: Forward handlers via refs:
+
+```
+useSyncState (facade)
+    ├── useSyncConnection ────────────────┐
+    │   (provides: sendPlaybackUpdate)    │
+    │   (needs: onPlaybackSync handler)   │
+    │                                     │
+    ├── usePlaybackSync ◄─────────────────┤
+    │   (provides: handlePlaybackSync)    │
+    │   (needs: sendPlaybackUpdate)       │
+    │                                     │
+    └── Refs bridge the gap: ─────────────┘
+        playbackSyncHandlersRef.current = { handlePlaybackSync }
+        onPlaybackSync: (state) => playbackSyncHandlersRef.current?.handlePlaybackSync(state)
+```
+
+This pattern allows hooks to be initialized in order while still connecting them.
+
+#### 3. Event-Driven Notification System
+
+Sync events are decoupled from UI via `SyncEventEmitter`:
+
+```typescript
+// syncEvents.ts - Singleton emitter
+export const syncEvents = new SyncEventEmitter();
+
+// In sync connection logic:
+syncEvents.emit('connected', { deviceId, sessionId, isReconnect });
+syncEvents.emit('transferReceived', { fromDeviceId, fromDeviceName });
+
+// useSyncNotifications.ts - Subscribes to events for toasts
+function useSyncNotifications() {
+  useSyncEvents('connected', (payload) => {
+    if (payload.isReconnect) {
+      addToast({ type: 'success', title: 'Sync restored' });
+    }
+  });
+
+  useSyncEvents('transferReceived', (payload) => {
+    addToast({ title: 'Playback transferred', description: payload.fromDeviceName });
+  });
+}
+```
+
+Benefits:
+- Sync logic doesn't know about UI (toast system)
+- Multiple consumers can subscribe to same events
+- Easy to add/remove notification types without touching sync code
+- Testable: mock the emitter to test sync logic in isolation
+
 ### Background Worker Jobs
 The worker (`apps/worker`) handles scheduled background tasks:
 - `library_scan.rs` - Scans music library for new/changed files

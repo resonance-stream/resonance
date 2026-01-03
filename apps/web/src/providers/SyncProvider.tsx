@@ -9,11 +9,14 @@
  * - Syncs playback state between devices
  * - Handles incoming sync commands
  * - Provides sync context to child components
+ * - Emits sync events for UI effects (via useSyncEventEmitter)
  */
 
 import { createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
 import { useSyncState, type SyncStateValue } from '../sync/useSyncState';
 import { usePlayerStore } from '../stores/playerStore';
+import { fetchTrackById } from '../sync/fetchTrackById';
+import { useSyncEventEmitter } from '../sync/useSyncEventEmitter';
 
 interface SyncProviderProps {
   children: ReactNode;
@@ -57,7 +60,7 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
   // Handle remote track changes
   // When another device changes the track, we need to load it locally
   // Uses getState() to avoid stale closure issues with queue
-  const handleRemoteTrackChange = useCallback((trackId: string) => {
+  const handleRemoteTrackChange = useCallback(async (trackId: string) => {
     // Get current queue at execution time to avoid stale closures
     const currentQueue = usePlayerStore.getState().queue;
     const trackIndex = currentQueue.findIndex((t) => t.id === trackId);
@@ -65,12 +68,13 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
       // Track is in queue, jump to it
       jumpToIndex(trackIndex);
     } else {
-      // Track not in queue - would need to fetch and load
-      // For now, log a warning. Full implementation would:
-      // 1. Fetch track metadata from API
-      // 2. Add to queue or replace queue
-      // 3. Start playback
-      console.warn('[SyncProvider] Remote track not in queue:', trackId);
+      // Track not in queue - fetch from API and play it
+      const track = await fetchTrackById(trackId);
+      if (track) {
+        usePlayerStore.getState().setTrack(track);
+      } else {
+        console.warn('[SyncProvider] Failed to fetch remote track:', trackId);
+      }
     }
   }, [jumpToIndex]);
 
@@ -79,6 +83,9 @@ export function SyncProvider({ children, enabled = true }: SyncProviderProps): J
     onRemoteTrackChange: handleRemoteTrackChange,
     autoConnect: enabled,
   });
+
+  // Emit sync events for connection state changes
+  useSyncEventEmitter({ enabled });
 
   // Memoize context value
   const contextValue = useMemo<SyncContextValue>(() => ({

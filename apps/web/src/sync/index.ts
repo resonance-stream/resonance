@@ -36,21 +36,22 @@ export type {
   SyncedSettings,
   ConnectionState,
   DeviceInfo,
-  // State adapters
-  LocalPlayerState,
-  LocalQueueTrack,
+  StateChangeSource,
 } from './types';
 
+export { ErrorCodes } from './types';
+
+// State adapters (separated for better modularity)
+export type { LocalPlayerState, LocalQueueTrack } from './adapters';
+
 export {
-  ErrorCodes,
   createPlaybackState,
   adjustPositionForClockDrift,
-  // State adapters
   toSyncPlaybackState,
   fromSyncPlaybackState,
   toSyncQueueState,
   fromSyncQueueState,
-} from './types';
+} from './adapters';
 
 // WebSocket Client
 export { WebSocketClient } from './WebSocketClient';
@@ -63,9 +64,74 @@ export type { UseSyncConnectionOptions, SyncConnectionState } from './useSyncCon
 export { useSyncState } from './useSyncState';
 export type { UseSyncStateOptions, SyncStateValue } from './useSyncState';
 
+// Sync Events
+export {
+  syncEvents,
+  SyncEventEmitter,
+  useSyncEvents,
+  useSyncEventsAll,
+} from './syncEvents';
+export type {
+  SyncEventType,
+  SyncEventPayloads,
+  ConnectedEventPayload,
+  DisconnectedEventPayload,
+  ReconnectingEventPayload,
+  ErrorEventPayload,
+  DeviceJoinedEventPayload,
+  DeviceLeftEventPayload,
+  TransferReceivedEventPayload,
+  TransferSentEventPayload,
+} from './syncEvents';
+
+// Sync Notifications
+export { useSyncNotifications } from './useSyncNotifications';
+export type { UseSyncNotificationsOptions } from './useSyncNotifications';
+
+// Sync Event Emitter Hook
+export { useSyncEventEmitter } from './useSyncEventEmitter';
+export type { UseSyncEventEmitterOptions } from './useSyncEventEmitter';
+
 // Utilities
 export {
   detectDeviceType,
   getOrCreateDeviceId,
   getDefaultDeviceName,
 } from './types';
+
+export { fetchTrackById } from './fetchTrackById';
+
+// Test utilities (exported for use in tests across the codebase)
+export {
+  // Factory functions
+  createPlaybackState as createTestPlaybackState,
+  createQueueState as createTestQueueState,
+  createSyncQueueTrack,
+  createLocalQueueTrack,
+  createLocalQueue,
+  createTrack,
+  // Store reset utilities
+  resetPlayerStore,
+  resetDeviceStore,
+  resetAllSyncStores,
+  // Mock option factories
+  createMockPlaybackSyncOptions,
+  createMockQueueSyncOptions,
+  createMockPlaybackSyncHandlers,
+  createMockQueueSyncHandlers,
+  // State source ref factory
+  createStateSourceRef,
+  // Test assertion helpers
+  getPlayerState,
+  getDeviceState,
+  setAsActiveDevice,
+  setAsPassiveDevice,
+} from './test-utils';
+
+export type {
+  LocalQueueTrack as TestLocalQueueTrack,
+  PlaybackSyncOptions,
+  QueueSyncOptions,
+  PlaybackSyncHandlers,
+  QueueSyncHandlers,
+} from './test-utils';

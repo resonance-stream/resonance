@@ -25,6 +25,9 @@ pub use playlist::{
     Playlist, PlaylistTrackEntry, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRules,
     SortOrder,
 };
-pub use search::{ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist};
+pub use search::{
+    ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack,
+    SimilarityMethod, SimilarityType,
+};
 pub use track::{AudioFeatures, Track};
 pub use user::{AuthPayload, RefreshPayload, User, UserRole};

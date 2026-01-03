@@ -36,7 +36,10 @@ pub use listenbrainz::{ListenBrainzService, ScrobbleTrack};
 #[allow(unused_imports)]
 pub use search::SearchService;
 #[allow(unused_imports)]
-pub use similarity::SimilarityService;
+pub use similarity::{
+    CachedSimilarityService, SimilarityCacheConfig, SimilarityConfig, SimilarityConfigError,
+    SimilarityService,
+};
 
 // AuthConfig is available for custom configuration
 #[allow(unused_imports)]

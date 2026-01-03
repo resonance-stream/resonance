@@ -243,6 +243,126 @@
   .nav-item-active {
     @apply text-text-primary bg-navy/10 border-l-2 border-navy;
   }
+
+  /* Device selector styles */
+  .device-selector {
+    @apply p-4;
+  }
+
+  .device-selector-header {
+    @apply flex items-center justify-between mb-4;
+  }
+
+  .device-selector-header h3 {
+    @apply text-lg font-semibold text-text-primary;
+  }
+
+  .connection-status {
+    @apply text-sm px-2 py-1 rounded;
+  }
+
+  .connection-status--connected {
+    @apply text-green-400 bg-green-500/10;
+  }
+
+  .connection-status--connecting,
+  .connection-status--reconnecting {
+    @apply text-yellow-400 bg-yellow-500/10;
+  }
+
+  .connection-status--disconnected {
+    @apply text-red-400 bg-red-500/10;
+  }
+
+  .device-list {
+    @apply space-y-2;
+  }
+
+  .device-item {
+    @apply flex items-center gap-3 p-3 rounded-lg
+           bg-background-secondary/50 border border-white/5
+           transition-all duration-150;
+  }
+
+  .device-item--active {
+    @apply bg-navy/10 border-navy/30;
+  }
+
+  .device-item--current {
+    @apply bg-background-tertiary/50;
+  }
+
+  .device-icon {
+    @apply text-text-secondary text-lg;
+  }
+
+  .device-info {
+    @apply flex-1 min-w-0;
+  }
+
+  .device-name {
+    @apply flex items-center gap-2 text-text-primary font-medium truncate;
+  }
+
+  .device-name-edit-btn {
+    @apply p-1 rounded text-text-muted hover:text-text-primary hover:bg-background-elevated
+           opacity-0 transition-all duration-150;
+  }
+
+  .device-item:hover .device-name-edit-btn {
+    @apply opacity-100;
+  }
+
+  .device-name-edit {
+    @apply flex items-center gap-2;
+  }
+
+  .device-name-input {
+    @apply py-1 px-2 text-sm h-8;
+  }
+
+  .device-name-actions {
+    @apply flex items-center gap-1;
+  }
+
+  .device-name-save {
+    @apply text-green-400 hover:text-green-300 hover:bg-green-500/10;
+  }
+
+  .device-name-cancel {
+    @apply text-red-400 hover:text-red-300 hover:bg-red-500/10;
+  }
+
+  .device-label {
+    @apply text-sm text-text-muted truncate block;
+  }
+
+  .device-transfer-btn {
+    @apply px-3 py-1.5 text-sm rounded-lg
+           bg-navy/20 text-navy hover:bg-navy/30
+           transition-all duration-150;
+  }
+
+  .device-empty {
+    @apply text-center py-6 text-text-muted space-y-1;
+  }
+
+  .device-empty-hint {
+    @apply text-xs text-text-muted/70 block;
+  }
+
+  .device-selector-compact {
+    @apply relative flex items-center justify-center p-2 rounded-lg
+           text-text-secondary hover:text-text-primary hover:bg-background-tertiary
+           transition-all duration-150 disabled:opacity-50;
+  }
+
+  .device-count {
+    @apply absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1
+           flex items-center justify-center
+           text-[10px] font-semibold text-white
+           bg-navy rounded-full;
+  }
 }
 
 @layer utilities {

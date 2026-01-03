@@ -1,8 +1,15 @@
 /**
- * Tests for sync type utilities
+ * Tests for sync type utilities and adapters
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  detectDeviceType,
+  getOrCreateDeviceId,
+  getDefaultDeviceName,
+  type PlaybackState,
+  type QueueState,
+} from './types';
 import {
   createPlaybackState,
   adjustPositionForClockDrift,
@@ -10,13 +17,9 @@ import {
   fromSyncPlaybackState,
   toSyncQueueState,
   fromSyncQueueState,
-  detectDeviceType,
-  getOrCreateDeviceId,
-  getDefaultDeviceName,
-  type PlaybackState,
   type LocalPlayerState,
   type LocalQueueTrack,
-} from './types';
+} from './adapters';
 
 describe('createPlaybackState', () => {
   it('creates state with defaults', () => {
@@ -220,6 +223,7 @@ describe('toSyncQueueState', () => {
       id: 'track-1',
       title: 'Song One',
       artist: 'Artist A',
+      album_id: null,
       album_title: 'Album X',
       duration_ms: 180500,
       cover_url: 'https://example.com/cover1.jpg',
@@ -237,12 +241,13 @@ describe('toSyncQueueState', () => {
 
 describe('fromSyncQueueState', () => {
   it('converts sync queue to local format', () => {
-    const sync = {
+    const sync: QueueState = {
       tracks: [
         {
           id: 'track-1',
           title: 'Song One',
           artist: 'Artist A',
+          album_id: 'album-1',
           album_title: 'Album X',
           duration_ms: 180500,
           cover_url: 'https://example.com/cover1.jpg',
@@ -251,6 +256,7 @@ describe('fromSyncQueueState', () => {
           id: 'track-2',
           title: 'Song Two',
           artist: 'Artist B',
+          album_id: null,
           album_title: 'Album Y',
           duration_ms: 240000,
           cover_url: null,
@@ -267,6 +273,7 @@ describe('fromSyncQueueState', () => {
       id: 'track-1',
       title: 'Song One',
       artist: 'Artist A',
+      albumId: 'album-1',
       albumTitle: 'Album X',
       duration: 180.5, // Converted to seconds
       coverUrl: 'https://example.com/cover1.jpg',

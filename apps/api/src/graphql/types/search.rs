@@ -3,11 +3,13 @@
 //! This module defines types for semantic search, mood-based discovery,
 //! and similar artist queries.
 
-use async_graphql::{ComplexObject, Context, Result, SimpleObject};
+use async_graphql::{ComplexObject, Context, Enum, Result, SimpleObject};
 use uuid::Uuid;
 
 use crate::services::search::{MoodTag as ServiceMoodTag, ScoredTrack as ServiceScoredTrack};
-use crate::services::similarity::SimilarTrack as ServiceSimilarTrack;
+use crate::services::similarity::{
+    SimilarTrack as ServiceSimilarTrack, SimilarityType as ServiceSimilarityType,
+};
 
 use super::Track;
 
@@ -40,24 +42,36 @@ impl ScoredTrack {
 
 impl From<ServiceScoredTrack> for ScoredTrack {
     fn from(st: ServiceScoredTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             track_id: st.track_id,
             title: st.title,
             artist_name: st.artist_name,
             album_title: st.album_title,
-            score: st.score,
+            score,
         }
     }
 }
 
 impl From<ServiceSimilarTrack> for ScoredTrack {
     fn from(st: ServiceSimilarTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Self {
             track_id: st.track_id,
             title: st.title,
             artist_name: st.artist_name,
             album_title: st.album_title,
-            score: st.score,
+            score,
         }
     }
 }
@@ -137,6 +151,93 @@ impl From<resonance_lastfm_client::ArtistTag> for ArtistTag {
     }
 }
 
+// ==================== Similarity Types ====================
+
+/// Similarity method to use when finding similar tracks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum SimilarityMethod {
+    /// Weighted blend: 50% semantic, 30% acoustic, 20% categorical
+    Combined,
+    /// AI embeddings similarity (pgvector cosine distance)
+    Semantic,
+    /// Audio features: BPM, energy, loudness, valence, danceability
+    Acoustic,
+    /// Genre and mood tag matching (weighted Jaccard)
+    Categorical,
+}
+
+/// The similarity algorithm that produced a match
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum SimilarityType {
+    /// Based on AI-generated description embeddings
+    Semantic,
+    /// Based on audio features (loudness, energy, BPM, etc.)
+    Acoustic,
+    /// Based on genre and mood tags
+    Categorical,
+    /// Combined similarity using multiple factors
+    Combined,
+}
+
+impl From<ServiceSimilarityType> for SimilarityType {
+    fn from(st: ServiceSimilarityType) -> Self {
+        match st {
+            ServiceSimilarityType::Semantic => Self::Semantic,
+            ServiceSimilarityType::Acoustic => Self::Acoustic,
+            ServiceSimilarityType::Categorical => Self::Categorical,
+            ServiceSimilarityType::Combined => Self::Combined,
+        }
+    }
+}
+
+/// A track with its similarity score and the method used to find it
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(complex)]
+pub struct SimilarTrack {
+    /// The track ID
+    pub track_id: Uuid,
+    /// Track title
+    pub title: String,
+    /// Artist name (if available)
+    pub artist_name: Option<String>,
+    /// Album title (if available)
+    pub album_title: Option<String>,
+    /// Similarity score (0.0 - 1.0)
+    pub score: f64,
+    /// The type of similarity used for this match
+    pub similarity_type: SimilarityType,
+}
+
+#[ComplexObject]
+impl SimilarTrack {
+    /// Full track details (requires additional query)
+    async fn track(&self, ctx: &Context<'_>) -> Result<Option<Track>> {
+        use crate::repositories::TrackRepository;
+        let repo = ctx.data::<TrackRepository>()?;
+        let track = repo.find_by_id(self.track_id).await?;
+        Ok(track.map(Track::from))
+    }
+}
+
+impl From<ServiceSimilarTrack> for SimilarTrack {
+    fn from(st: ServiceSimilarTrack) -> Self {
+        let score = if st.score.is_finite() {
+            st.score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        Self {
+            track_id: st.track_id,
+            title: st.title,
+            artist_name: st.artist_name,
+            album_title: st.album_title,
+            score,
+            similarity_type: st.similarity_type.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +289,127 @@ mod tests {
         let graphql_tag: MoodTag = service_tag.into();
         assert_eq!(graphql_tag.name, "happy");
         assert_eq!(graphql_tag.track_count, 42);
+    }
+
+    #[test]
+    fn test_similarity_type_from_service() {
+        assert_eq!(
+            SimilarityType::from(ServiceSimilarityType::Semantic),
+            SimilarityType::Semantic
+        );
+        assert_eq!(
+            SimilarityType::from(ServiceSimilarityType::Acoustic),
+            SimilarityType::Acoustic
+        );
+        assert_eq!(
+            SimilarityType::from(ServiceSimilarityType::Categorical),
+            SimilarityType::Categorical
+        );
+        assert_eq!(
+            SimilarityType::from(ServiceSimilarityType::Combined),
+            SimilarityType::Combined
+        );
+    }
+
+    #[test]
+    fn test_similar_track_from_service() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test Track".to_string(),
+            artist_name: Some("Test Artist".to_string()),
+            album_title: Some("Test Album".to_string()),
+            score: 0.85,
+            similarity_type: ServiceSimilarityType::Acoustic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert_eq!(graphql_track.title, "Test Track");
+        assert_eq!(graphql_track.artist_name, Some("Test Artist".to_string()));
+        assert_eq!(graphql_track.album_title, Some("Test Album".to_string()));
+        assert!((graphql_track.score - 0.85).abs() < f64::EPSILON);
+        assert_eq!(graphql_track.similarity_type, SimilarityType::Acoustic);
+    }
+
+    #[test]
+    fn test_similarity_method_variants() {
+        // Ensure all enum variants exist and are accessible
+        let _combined = SimilarityMethod::Combined;
+        let _semantic = SimilarityMethod::Semantic;
+        let _acoustic = SimilarityMethod::Acoustic;
+        let _categorical = SimilarityMethod::Categorical;
+    }
+
+    #[test]
+    fn test_similar_track_with_none_values() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Track Without Metadata".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: 0.0,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!(graphql_track.artist_name.is_none());
+        assert!(graphql_track.album_title.is_none());
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_nan() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: f64::NAN,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_infinity() {
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: f64::INFINITY,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_score_sanitization_clamps_to_range() {
+        // Test negative score gets clamped to 0
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: -0.5,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 0.0).abs() < f64::EPSILON);
+
+        // Test score > 1.0 gets clamped to 1.0
+        let service_track = ServiceSimilarTrack {
+            track_id: Uuid::new_v4(),
+            title: "Test".to_string(),
+            artist_name: None,
+            album_title: None,
+            score: 1.5,
+            similarity_type: ServiceSimilarityType::Semantic,
+        };
+        let graphql_track: SimilarTrack = service_track.into();
+        assert!((graphql_track.score - 1.0).abs() < f64::EPSILON);
     }
 }

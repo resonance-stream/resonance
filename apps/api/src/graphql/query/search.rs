@@ -11,7 +11,10 @@ use tracing::{debug, instrument, warn};
 use uuid::Uuid;
 
 use crate::graphql::pagination::{clamp_limit, MAX_SEARCH_LIMIT};
-use crate::graphql::types::{ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist};
+use crate::graphql::types::{
+    ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack,
+    SimilarityMethod,
+};
 use crate::services::lastfm::LastfmService;
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
@@ -106,7 +109,8 @@ impl SearchQuery {
         )]
         limit: i32,
     ) -> Result<Vec<ScoredTrack>> {
-        let uuid = Uuid::parse_str(&track_id)?;
+        let uuid = Uuid::parse_str(&track_id)
+            .map_err(|_| async_graphql::Error::new("Invalid track ID"))?;
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT) as i32;
 
         let similarity_service = ctx.data::<SimilarityService>()?;
@@ -115,6 +119,55 @@ impl SearchQuery {
             .await?;
 
         Ok(similar.into_iter().map(ScoredTrack::from).collect())
+    }
+
+    /// Find tracks similar to a given track using a specific similarity method.
+    ///
+    /// Available methods:
+    /// - `COMBINED`: Weighted blend (50% semantic, 30% acoustic, 20% categorical)
+    /// - `SEMANTIC`: AI embeddings similarity (requires tracks to have embeddings)
+    /// - `ACOUSTIC`: Audio features (BPM, energy, loudness, valence, danceability)
+    /// - `CATEGORICAL`: Genre and mood tag matching
+    #[instrument(skip(self, ctx), fields(track_id = ?track_id, method = ?method))]
+    async fn similar_tracks_by_method(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "ID of the track to find similar tracks for")] track_id: ID,
+        #[graphql(desc = "Similarity algorithm to use")] method: SimilarityMethod,
+        #[graphql(
+            default = 10,
+            desc = "Maximum number of results (default: 10, max: 50)"
+        )]
+        limit: i32,
+    ) -> Result<Vec<SimilarTrack>> {
+        let uuid = Uuid::parse_str(&track_id)
+            .map_err(|_| async_graphql::Error::new("Invalid track ID"))?;
+        let limit = clamp_limit(limit, MAX_SEARCH_LIMIT) as i32;
+
+        let similarity_service = ctx.data::<SimilarityService>()?;
+
+        let similar = match method {
+            SimilarityMethod::Combined => {
+                similarity_service
+                    .find_similar_combined(uuid, limit)
+                    .await?
+            }
+            SimilarityMethod::Semantic => {
+                similarity_service
+                    .find_similar_by_embedding(uuid, limit)
+                    .await?
+            }
+            SimilarityMethod::Acoustic => {
+                similarity_service
+                    .find_similar_by_features(uuid, limit)
+                    .await?
+            }
+            SimilarityMethod::Categorical => {
+                similarity_service.find_similar_by_tags(uuid, limit).await?
+            }
+        };
+
+        Ok(similar.into_iter().map(SimilarTrack::from).collect())
     }
 
     // ==================== Mood-Based Discovery ====================

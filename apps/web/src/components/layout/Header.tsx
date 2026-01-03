@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { SyncStatusIndicator } from '../sync/SyncStatusIndicator';
 import { useAuthStore } from '../../stores/authStore';
 
 export function Header(): JSX.Element {
@@ -36,6 +37,7 @@ export function Header(): JSX.Element {
 
       {/* User Section */}
       <div className="flex items-center gap-4">
+        <SyncStatusIndicator />
         {user && (
           <>
             <span className="text-sm text-text-secondary">

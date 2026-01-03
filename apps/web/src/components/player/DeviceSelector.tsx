@@ -3,9 +3,15 @@
  *
  * Displays connected devices and allows transferring playback between them.
  * Shows device status, active device indicator, and connection state.
+ * Allows editing the current device's nickname inline.
  */
 
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Pencil, Check, X } from 'lucide-react';
 import { useDeviceStore, useIsConnected, useIsActiveDevice, useOtherDevices } from '../../stores/deviceStore';
+import { useSync } from '../../providers/SyncProvider';
+import { Input } from '../ui/Input';
+import { Button } from '../ui/Button';
 import type { DevicePresence } from '../../sync/types';
 
 interface DeviceSelectorProps {
@@ -57,9 +63,58 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
   const isActiveDevice = useIsActiveDevice();
   const otherDevices = useOtherDevices();
   const connectionState = useDeviceStore((s) => s.connectionState);
-  const deviceId = useDeviceStore((s) => s.deviceId);
   const deviceName = useDeviceStore((s) => s.deviceName);
   const deviceType = useDeviceStore((s) => s.deviceType);
+  const setDeviceName = useDeviceStore((s) => s.setDeviceName);
+
+  // Get requestControl from sync context for taking control of playback
+  const { requestControl } = useSync();
+
+  // Editing state for device nickname
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(deviceName);
+  const [isHovering, setIsHovering] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  // Start editing
+  const handleStartEdit = useCallback(() => {
+    setEditName(deviceName);
+    setIsEditing(true);
+  }, [deviceName]);
+
+  // Save the edited name
+  const handleSave = useCallback(() => {
+    const trimmedName = editName.trim();
+    if (trimmedName && trimmedName !== deviceName) {
+      setDeviceName(trimmedName);
+    }
+    setIsEditing(false);
+  }, [editName, deviceName, setDeviceName]);
+
+  // Cancel editing
+  const handleCancel = useCallback(() => {
+    setEditName(deviceName);
+    setIsEditing(false);
+  }, [deviceName]);
+
+  // Handle keyboard events
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancel();
+    }
+  }, [handleSave, handleCancel]);
 
   // Handle transfer request
   const handleTransfer = (targetDeviceId: string) => {
@@ -113,21 +168,75 @@ export function DeviceSelector({ onTransfer, compact = false }: DeviceSelectorPr
           role="option"
           aria-selected={isActiveDevice}
           className={`device-item device-item--current ${isActiveDevice ? 'device-item--active' : ''}`}
+          onMouseEnter={() => setIsHovering(true)}
+          onMouseLeave={() => setIsHovering(false)}
         >
           <span className="device-icon" aria-hidden="true">{getDeviceIcon(deviceType)}</span>
           <div className="device-info">
-            <span className="device-name">{deviceName}</span>
+            {isEditing ? (
+              <div className="device-name-edit">
+                <Input
+                  ref={inputRef}
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onBlur={handleCancel}
+                  className="device-name-input"
+                  aria-label="Device nickname"
+                  maxLength={50}
+                />
+                <div className="device-name-actions">
+                  <Button
+                    variant="icon"
+                    size="icon"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleSave}
+                    aria-label="Save device name"
+                    title="Save"
+                    className="device-name-save"
+                  >
+                    <Check size={16} />
+                  </Button>
+                  <Button
+                    variant="icon"
+                    size="icon"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleCancel}
+                    aria-label="Cancel editing"
+                    title="Cancel"
+                    className="device-name-cancel"
+                  >
+                    <X size={16} />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <span className="device-name">
+                {deviceName}
+                {isHovering && !isEditing && (
+                  <button
+                    className="device-name-edit-btn"
+                    onClick={handleStartEdit}
+                    aria-label="Edit device name"
+                    title="Edit device name"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                )}
+              </span>
+            )}
             <span className="device-label">
               This device {isActiveDevice && '(Playing)'}
             </span>
           </div>
-          {!isActiveDevice && isConnected && (
+          {!isActiveDevice && isConnected && !isEditing && (
             <button
-              className="device-transfer-btn"
-              onClick={() => handleTransfer(deviceId)}
-              aria-label={`Play on this device: ${deviceName}`}
+              className="px-3 py-1.5 rounded-lg font-medium text-sm bg-navy text-white hover:bg-navy-hover active:bg-navy-active shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.4)] focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-glow transition-all duration-150"
+              onClick={requestControl}
+              aria-label={`Take control of playback on ${deviceName}`}
             >
-              Play here
+              Take Control
             </button>
           )}
         </div>
