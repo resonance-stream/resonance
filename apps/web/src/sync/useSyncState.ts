@@ -270,7 +270,23 @@ export function useSyncState(options: UseSyncStateOptions = {}): SyncStateValue 
     if (stateSourceRef.current === 'remote') return;
 
     broadcastPlaybackState();
-  }, [isConnected, isActiveDevice, isPlaying, volume, isMuted, shuffle, repeat, broadcastPlaybackState]);
+  }, [isConnected, isActiveDevice, currentTrack?.id, isPlaying, volume, isMuted, shuffle, repeat, broadcastPlaybackState]);
+
+  // Immediate broadcast on track changes (bypass throttle for critical state)
+  // Track changes need instant sync to ensure all devices switch together
+  const prevTrackIdRef = useRef<string | undefined>(currentTrack?.id);
+  useEffect(() => {
+    const prevTrackId = prevTrackIdRef.current;
+    prevTrackIdRef.current = currentTrack?.id;
+
+    // Skip if track hasn't changed or no connection
+    if (!isConnected || !isActiveDevice) return;
+    if (stateSourceRef.current === 'remote') return;
+    if (currentTrack?.id === prevTrackId) return;
+
+    // Bypass throttle by directly calling sendPlaybackUpdate
+    sendPlaybackUpdate(buildPlaybackState());
+  }, [isConnected, isActiveDevice, currentTrack?.id, sendPlaybackUpdate, buildPlaybackState]);
 
   // Ref for broadcast function to avoid recreating interval on every change
   const broadcastPlaybackStateRef = useRef(broadcastPlaybackState);
