@@ -246,12 +246,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         if (!trackIds?.length) break;
 
         try {
-          for (const trackId of trackIds) {
-            const track = await fetchTrackById(trackId);
-            if (track) {
-              addToQueue(track);
-            }
-          }
+          // Fetch all tracks in parallel for better performance
+          const tracks = await Promise.all(
+            trackIds.map(async (trackId) => {
+              try {
+                return await fetchTrackById(trackId);
+              } catch (err) {
+                console.warn('[Chat] Failed to fetch track:', trackId, err);
+                return null;
+              }
+            })
+          );
+
+          // Add successfully fetched tracks to queue
+          tracks.filter(Boolean).forEach((track) => addToQueue(track!));
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to add to queue:', err);
