@@ -213,6 +213,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
   // Player store for action execution
   const setTrack = usePlayerStore((s) => s.setTrack);
+  const addToQueue = usePlayerStore((s) => s.addToQueue);
 
   // Execute a chat action (play track, add to queue, etc.)
   const executeAction = useCallback(async (action: ChatAction) => {
@@ -239,8 +240,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       }
       case 'add_to_queue': {
         const trackIds = action.payload.track_ids as string[] | undefined;
-        if (trackIds?.length) {
-          console.warn('[Chat] add_to_queue action - would need track metadata fetch:', trackIds);
+        if (!trackIds?.length) break;
+
+        try {
+          for (const trackId of trackIds) {
+            const { track } = await graphqlClient.request<{ track: GqlTrack }>(
+              TRACK_BY_ID_QUERY,
+              { id: trackId }
+            );
+            if (track) {
+              const playerTrack = mapGqlTrackToPlayerTrack(track);
+              addToQueue(playerTrack);
+            }
+          }
+        } catch (err) {
+          console.error('[Chat] Failed to add to queue:', err);
         }
         break;
       }
@@ -262,7 +276,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, [setTrack]);
+  }, [setTrack, addToQueue]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
