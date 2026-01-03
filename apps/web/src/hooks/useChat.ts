@@ -30,6 +30,16 @@ import type {
 } from '../sync/types';
 import { usePlayerStore } from '../stores/playerStore';
 import { fetchTrackById } from '../sync/fetchTrackById';
+import {
+  CREATE_PLAYLIST_MUTATION,
+  ADD_TRACKS_TO_PLAYLIST_MUTATION,
+} from '../lib/graphql/playlist';
+import { libraryKeys } from '../lib/queryKeys';
+import type {
+  CreatePlaylistInput,
+  CreatePlaylistResponse,
+  AddTracksResponse,
+} from '../types/playlist';
 
 // =============================================================================
 // GraphQL Queries
@@ -251,9 +261,51 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       case 'create_playlist': {
         const name = action.payload.name as string | undefined;
         const trackIds = action.payload.track_ids as string[] | undefined;
-        navigate('/library/playlists/new', {
-          state: { name, trackIds }
-        });
+
+        if (!name) {
+          console.warn('[Chat] create_playlist action missing name');
+          break;
+        }
+
+        try {
+          // Create a manual playlist
+          const createInput: CreatePlaylistInput = {
+            name,
+            isPublic: false,
+            playlistType: 'Manual',
+          };
+
+          const createResponse = await graphqlClient.request<CreatePlaylistResponse>(
+            CREATE_PLAYLIST_MUTATION,
+            { input: createInput }
+          );
+
+          const playlistId = createResponse.createPlaylist.id;
+
+          // Add tracks to the playlist if provided
+          if (trackIds?.length) {
+            await graphqlClient.request<AddTracksResponse>(
+              ADD_TRACKS_TO_PLAYLIST_MUTATION,
+              {
+                playlistId,
+                input: { trackIds },
+              }
+            );
+          }
+
+          // Invalidate playlist queries to refresh the library
+          queryClient.invalidateQueries({ queryKey: libraryKeys.playlists.all() });
+
+          // Navigate to the new playlist
+          navigate(`/playlist/${playlistId}`);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          console.error('[Chat] Failed to create playlist:', err);
+          handleError({
+            conversation_id: useChatStore.getState().conversationId,
+            error: `Failed to create playlist: ${errorMsg}`,
+          });
+        }
         break;
       }
       case 'search_library': {
@@ -273,7 +325,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, [setTrack, addToQueue, navigate, handleError]);
+  }, [setTrack, addToQueue, navigate, handleError, queryClient]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
