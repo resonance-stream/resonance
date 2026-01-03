@@ -11,24 +11,12 @@ import { useRef, useCallback, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePlayerStore } from '../stores/playerStore';
 import { useIsActiveDevice } from '../stores/deviceStore';
-import type { PlaybackState } from './types';
+import type { PlaybackState, StateChangeSource } from './types';
 import {
   toSyncPlaybackState,
   fromSyncPlaybackState,
   adjustPositionForClockDrift,
 } from './adapters';
-
-/**
- * Indicates the source of a state change for sync loop prevention.
- *
- * Used by sync hooks to determine whether a state change should be broadcast:
- * - `'local'`: Change from user action on this device → should broadcast
- * - `'remote'`: Change from sync message → should NOT re-broadcast
- * - `null`: No change in progress → subsequent changes are local
- *
- * @see useSyncState - Documents the full loop prevention pattern
- */
-export type StateChangeSource = 'local' | 'remote' | null;
 
 /** Default throttle interval for playback updates (ms) */
 const DEFAULT_PLAYBACK_THROTTLE_MS = 250;

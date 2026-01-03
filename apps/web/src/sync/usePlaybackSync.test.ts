@@ -14,7 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { usePlaybackSync, type UsePlaybackSyncOptions, type StateChangeSource } from './usePlaybackSync';
+import { usePlaybackSync, type UsePlaybackSyncOptions } from './usePlaybackSync';
+import type { StateChangeSource } from './types';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
 import {

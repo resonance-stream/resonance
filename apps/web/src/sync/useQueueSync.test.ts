@@ -15,7 +15,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useQueueSync } from './useQueueSync';
 import { usePlayerStore } from '../stores/playerStore';
 import { useDeviceStore } from '../stores/deviceStore';
-import type { StateChangeSource } from './usePlaybackSync';
+import type { StateChangeSource } from './types';
 import {
   createQueueState,
   createLocalQueue,

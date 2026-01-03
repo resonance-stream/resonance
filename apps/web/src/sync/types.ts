@@ -267,6 +267,18 @@ export interface ChatMessageData {
 /** WebSocket connection state */
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
+/**
+ * Indicates the source of a state change for sync loop prevention.
+ *
+ * Used by sync hooks to determine whether a state change should be broadcast:
+ * - `'local'`: Change from user action on this device → should broadcast
+ * - `'remote'`: Change from sync message → should NOT re-broadcast
+ * - `null`: No change in progress → subsequent changes are local
+ *
+ * @see useSyncState - Documents the full loop prevention pattern
+ */
+export type StateChangeSource = 'local' | 'remote' | null;
+
 /** Device info for initial connection */
 export interface DeviceInfo {
   device_name: string;

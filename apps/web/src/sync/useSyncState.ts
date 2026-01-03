@@ -18,7 +18,8 @@
 import { useRef } from 'react';
 import { useIsActiveDevice } from '../stores/deviceStore';
 import { useSyncConnection, type UseSyncConnectionOptions } from './useSyncConnection';
-import { usePlaybackSync, type StateChangeSource } from './usePlaybackSync';
+import { usePlaybackSync } from './usePlaybackSync';
+import type { StateChangeSource } from './types';
 import { useQueueSync } from './useQueueSync';
 import { useTransferControl } from './useTransferControl';
 

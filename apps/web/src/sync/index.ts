@@ -36,6 +36,7 @@ export type {
   SyncedSettings,
   ConnectionState,
   DeviceInfo,
+  StateChangeSource,
 } from './types';
 
 export { ErrorCodes } from './types';

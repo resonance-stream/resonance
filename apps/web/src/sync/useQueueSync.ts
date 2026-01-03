@@ -11,13 +11,12 @@ import { useCallback, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePlayerStore } from '../stores/playerStore';
 import { useIsActiveDevice } from '../stores/deviceStore';
-import type { QueueState } from './types';
+import type { QueueState, StateChangeSource } from './types';
 import {
   toSyncQueueState,
   fromSyncQueueState,
   type LocalQueueTrack,
 } from './adapters';
-import type { StateChangeSource } from './usePlaybackSync';
 
 /**
  * Configuration options for the useQueueSync hook.
