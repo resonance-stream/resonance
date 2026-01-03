@@ -694,8 +694,12 @@ mod handler_tests {
                 Some("Other Device".to_string()),
                 Some("mobile".to_string()),
             );
-            self.connection_manager
-                .add_connection(self.user_id, device_id.to_string(), tx, device_info);
+            self.connection_manager.add_connection(
+                self.user_id,
+                device_id.to_string(),
+                tx,
+                device_info,
+            );
             rx
         }
 
@@ -755,7 +759,11 @@ mod handler_tests {
         // Verify event was published to pubsub
         let event = pubsub_rx.try_recv();
         assert!(event.is_ok());
-        if let Ok(SyncEvent::PlaybackUpdate { device_id, state: _ }) = event {
+        if let Ok(SyncEvent::PlaybackUpdate {
+            device_id,
+            state: _,
+        }) = event
+        {
             assert_eq!(device_id, "device-1");
         } else {
             panic!("Expected PlaybackUpdate event");
@@ -1304,7 +1312,10 @@ mod handler_tests {
         let event = pubsub_rx.try_recv();
         assert!(event.is_ok());
         match event.unwrap() {
-            SyncEvent::SettingsUpdate { device_id, settings } => {
+            SyncEvent::SettingsUpdate {
+                device_id,
+                settings,
+            } => {
                 assert_eq!(device_id, "device-1");
                 assert_eq!(settings.crossfade_enabled, Some(true));
                 assert_eq!(settings.crossfade_duration, Some(5.0));
@@ -1433,9 +1444,9 @@ mod handler_tests {
         }
 
         // Should have DeviceDisconnected and ActiveDeviceChanged events
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, SyncEvent::DeviceDisconnected { device_id } if device_id == "device-1")));
+        assert!(events.iter().any(
+            |e| matches!(e, SyncEvent::DeviceDisconnected { device_id } if device_id == "device-1")
+        ));
 
         assert!(events.iter().any(|e| matches!(
             e,

@@ -38,6 +38,7 @@ const DEFAULT_WEIGHT_ACOUSTIC: f64 = 0.3;
 const DEFAULT_WEIGHT_CATEGORICAL: f64 = 0.2;
 
 /// Epsilon tolerance for weight validation (floating point comparison)
+#[allow(dead_code)]
 const WEIGHT_EPSILON: f64 = 0.001;
 
 // =============================================================================
@@ -73,6 +74,7 @@ impl Default for SimilarityConfig {
     }
 }
 
+#[allow(dead_code)]
 impl SimilarityConfig {
     /// Create a new SimilarityConfig with custom weights
     ///
@@ -169,6 +171,7 @@ impl SimilarityConfig {
 }
 
 /// Errors that can occur when loading similarity configuration
+#[allow(dead_code)]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SimilarityConfigError {
     /// Weight value could not be parsed as a float
@@ -197,7 +200,7 @@ fn validate_limit(limit: i32) -> i32 {
 fn handle_query_error(error: sqlx::Error, query_name: &str) -> ApiError {
     // Check for PostgreSQL statement timeout error (error code 57014)
     if let sqlx::Error::Database(ref db_error) = error {
-        if db_error.code().map_or(false, |code| code == "57014") {
+        if db_error.code().is_some_and(|code| code == "57014") {
             warn!(
                 query = query_name,
                 timeout_seconds = QUERY_TIMEOUT_SECONDS,
@@ -275,6 +278,7 @@ impl SimilarityService {
     }
 
     /// Get the current configuration
+    #[allow(dead_code)]
     pub fn config(&self) -> &SimilarityConfig {
         &self.config
     }
@@ -402,7 +406,7 @@ impl SimilarityService {
         .fetch_optional(&self.db)
         .await?;
 
-        let use_vector_path = has_vector.map_or(false, |(has,)| has);
+        let use_vector_path = has_vector.is_some_and(|(has,)| has);
 
         if use_vector_path {
             info!(
@@ -842,9 +846,11 @@ struct SimilarTrackRow {
 // =============================================================================
 
 /// Default cache TTL in seconds (10 minutes)
+#[allow(dead_code)]
 const DEFAULT_CACHE_TTL_SECONDS: u64 = 600;
 
 /// Configuration for similarity caching
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SimilarityCacheConfig {
     /// Time-to-live for cached similarity results in seconds
@@ -862,6 +868,7 @@ impl Default for SimilarityCacheConfig {
     }
 }
 
+#[allow(dead_code)]
 impl SimilarityCacheConfig {
     /// Create a new cache config with custom TTL
     pub fn with_ttl(ttl_seconds: u64) -> Self {
@@ -894,7 +901,10 @@ impl SimilarityCacheConfig {
             .map(|v| !v.eq_ignore_ascii_case("false") && v != "0")
             .unwrap_or(true);
 
-        Self { ttl_seconds, enabled }
+        Self {
+            ttl_seconds,
+            enabled,
+        }
     }
 }
 
@@ -905,6 +915,7 @@ impl SimilarityCacheConfig {
 ///
 /// When Redis is unavailable, the service gracefully falls back to uncached
 /// database queries with a warning log.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct CachedSimilarityService {
     /// The underlying similarity service
@@ -915,6 +926,7 @@ pub struct CachedSimilarityService {
     config: Arc<SimilarityCacheConfig>,
 }
 
+#[allow(dead_code)]
 impl CachedSimilarityService {
     /// Create a new cached similarity service
     pub fn new(inner: SimilarityService, redis: redis::Client) -> Self {
@@ -1012,9 +1024,8 @@ impl CachedSimilarityService {
         };
 
         // Use SETEX for atomic set-with-expiry
-        let result: Result<(), redis::RedisError> = conn
-            .set_ex(key, &json, self.config.ttl_seconds)
-            .await;
+        let result: Result<(), redis::RedisError> =
+            conn.set_ex(key, &json, self.config.ttl_seconds).await;
 
         match result {
             Ok(()) => {
@@ -1049,7 +1060,10 @@ impl CachedSimilarityService {
         tracing::Span::current().record("cached", false);
 
         // Cache miss - query database
-        let tracks = self.inner.find_similar_by_embedding(track_id, limit).await?;
+        let tracks = self
+            .inner
+            .find_similar_by_embedding(track_id, limit)
+            .await?;
 
         // Store in cache (async, don't wait for completion)
         self.set_cached(&key, &tracks).await;
@@ -1163,22 +1177,21 @@ impl CachedSimilarityService {
         let mut deleted_count = 0;
 
         loop {
-            let (next_cursor, keys): (u64, Vec<String>) =
-                match redis::cmd("SCAN")
-                    .arg(cursor)
-                    .arg("MATCH")
-                    .arg(&pattern)
-                    .arg("COUNT")
-                    .arg(100)
-                    .query_async(&mut conn)
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(e) => {
-                        warn!(error = %e, track_id = %track_id, "Redis SCAN failed during cache invalidation");
-                        return;
-                    }
-                };
+            let (next_cursor, keys): (u64, Vec<String>) = match redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!(error = %e, track_id = %track_id, "Redis SCAN failed during cache invalidation");
+                    return;
+                }
+            };
 
             // Delete found keys
             if !keys.is_empty() {
@@ -1245,22 +1258,21 @@ impl CachedSimilarityService {
         let mut deleted_count: i64 = 0;
 
         loop {
-            let (next_cursor, keys): (u64, Vec<String>) =
-                match redis::cmd("SCAN")
-                    .arg(cursor)
-                    .arg("MATCH")
-                    .arg(pattern)
-                    .arg("COUNT")
-                    .arg(100)
-                    .query_async(&mut conn)
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(e) => {
-                        warn!(error = %e, "Redis SCAN failed during cache clear");
-                        return;
-                    }
-                };
+            let (next_cursor, keys): (u64, Vec<String>) = match redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!(error = %e, "Redis SCAN failed during cache clear");
+                    return;
+                }
+            };
 
             if !keys.is_empty() {
                 let result: Result<i64, redis::RedisError> =
@@ -1280,7 +1292,10 @@ impl CachedSimilarityService {
             }
         }
 
-        info!(deleted_count = deleted_count, "Cleared all similarity cache entries");
+        info!(
+            deleted_count = deleted_count,
+            "Cleared all similarity cache entries"
+        );
     }
 }
 
@@ -1363,7 +1378,10 @@ mod tests {
         let result = SimilarityConfig::new(0.5, 0.5, 0.5);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SimilarityConfigError::WeightsSumInvalid { .. }));
+        assert!(matches!(
+            err,
+            SimilarityConfigError::WeightsSumInvalid { .. }
+        ));
     }
 
     #[test]

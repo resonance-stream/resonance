@@ -323,7 +323,10 @@ impl TestContext {
     /// Create all tracks from a SimilarityTestFixtures collection
     ///
     /// Returns a map of fixture title to track ID for easy lookup.
-    async fn create_all_fixtures(&mut self, fixtures: &SimilarityTestFixtures) -> std::collections::HashMap<String, Uuid> {
+    async fn create_all_fixtures(
+        &mut self,
+        fixtures: &SimilarityTestFixtures,
+    ) -> std::collections::HashMap<String, Uuid> {
         let mut ids = std::collections::HashMap::new();
 
         for fixture in fixtures.all() {
@@ -335,10 +338,7 @@ impl TestContext {
     }
 
     /// Create tracks for a specific cluster (rock, electronic, classical, jazz)
-    async fn create_cluster(
-        &mut self,
-        fixtures: &[&TrackFixture],
-    ) -> Vec<Uuid> {
+    async fn create_cluster(&mut self, fixtures: &[&TrackFixture]) -> Vec<Uuid> {
         let mut ids = Vec::new();
         for fixture in fixtures {
             let track_id = self.create_track_from_fixture(fixture).await;
@@ -434,15 +434,15 @@ async fn test_find_similar_by_embedding() {
 
     // Should return tracks (may or may not include similar_id depending on embedding similarity)
     // The key assertion is that it returns results without errors
-    assert!(
-        tracks.len() <= 10,
-        "Should respect limit parameter"
-    );
+    assert!(tracks.len() <= 10, "Should respect limit parameter");
 
     // All results should have semantic similarity type
     for track in &tracks {
         assert_eq!(track.similarity_type, SimilarityType::Semantic);
-        assert!(track.score >= 0.0 && track.score <= 1.0, "Score should be between 0 and 1");
+        assert!(
+            track.score >= 0.0 && track.score <= 1.0,
+            "Score should be between 0 and 1"
+        );
     }
 
     ctx.cleanup().await;
@@ -468,7 +468,10 @@ async fn test_find_similar_by_embedding_no_embedding() {
     let service = SimilarityService::new(pool);
     let result = service.find_similar_by_embedding(track_id, 10).await;
 
-    assert!(result.is_err(), "Should return error when track has no embedding");
+    assert!(
+        result.is_err(),
+        "Should return error when track has no embedding"
+    );
 
     if let Err(ApiError::NotFound { resource_type, .. }) = result {
         assert_eq!(resource_type, "track embedding");
@@ -553,7 +556,10 @@ async fn test_find_similar_by_features() {
     // All results should have acoustic similarity type
     for track in &tracks {
         assert_eq!(track.similarity_type, SimilarityType::Acoustic);
-        assert!(track.score >= 0.0 && track.score <= 1.0, "Score should be between 0 and 1");
+        assert!(
+            track.score >= 0.0 && track.score <= 1.0,
+            "Score should be between 0 and 1"
+        );
     }
 
     ctx.cleanup().await;
@@ -584,7 +590,10 @@ async fn test_find_similar_by_features_no_features() {
     let service = SimilarityService::new(pool);
     let result = service.find_similar_by_features(track_id, 10).await;
 
-    assert!(result.is_err(), "Should return error when track has no audio features");
+    assert!(
+        result.is_err(),
+        "Should return error when track has no audio features"
+    );
 
     if let Err(ApiError::NotFound { resource_type, .. }) = result {
         assert_eq!(resource_type, "track audio features");
@@ -643,12 +652,18 @@ async fn test_find_similar_by_tags() {
     let tracks = results.unwrap();
 
     // Should return tracks with overlapping tags
-    assert!(!tracks.is_empty(), "Should find tracks with overlapping tags");
+    assert!(
+        !tracks.is_empty(),
+        "Should find tracks with overlapping tags"
+    );
 
     // All results should have categorical similarity type
     for track in &tracks {
         assert_eq!(track.similarity_type, SimilarityType::Categorical);
-        assert!(track.score >= 0.0 && track.score <= 1.0, "Score should be between 0 and 1");
+        assert!(
+            track.score >= 0.0 && track.score <= 1.0,
+            "Score should be between 0 and 1"
+        );
     }
 
     ctx.cleanup().await;
@@ -745,7 +760,10 @@ async fn test_find_similar_combined() {
     let service = SimilarityService::new(pool);
     let results = service.find_similar_combined(source_id, 10).await;
 
-    assert!(results.is_ok(), "Should find similar tracks using combined method");
+    assert!(
+        results.is_ok(),
+        "Should find similar tracks using combined method"
+    );
     let tracks = results.unwrap();
 
     // Should return tracks
@@ -912,10 +930,7 @@ async fn test_similarity_limit_clamping() {
     // Test with limit of 2
     let results = service.find_similar_by_embedding(source_id, 2).await;
     assert!(results.is_ok());
-    assert!(
-        results.unwrap().len() <= 2,
-        "Should respect small limit"
-    );
+    assert!(results.unwrap().len() <= 2, "Should respect small limit");
 
     // Test with excessive limit (should be clamped to MAX_SIMILARITY_RESULTS)
     let results = service.find_similar_by_embedding(source_id, 1000).await;
@@ -1090,7 +1105,8 @@ impl GraphQLTestContext {
         let ctx = TestContext::new(pool.clone()).await;
 
         // Create a minimal schema with only the SimilarityService for testing
-        let similarity_service = resonance_api::services::similarity::SimilarityService::new(pool.clone());
+        let similarity_service =
+            resonance_api::services::similarity::SimilarityService::new(pool.clone());
         let track_repo = resonance_api::repositories::TrackRepository::new(pool.clone());
 
         let schema = Schema::build(
@@ -1117,9 +1133,8 @@ impl GraphQLTestContext {
         query: &str,
         variables: serde_json::Value,
     ) -> async_graphql::Response {
-        let request = async_graphql::Request::new(query).variables(
-            async_graphql::Variables::from_json(variables),
-        );
+        let request = async_graphql::Request::new(query)
+            .variables(async_graphql::Variables::from_json(variables));
         self.schema.execute(request).await
     }
 
@@ -1355,7 +1370,10 @@ async fn test_graphql_similar_tracks_by_method_semantic() {
     let tracks = data["similarTracksByMethod"].as_array().unwrap();
 
     // Should return tracks
-    assert!(!tracks.is_empty(), "Should find semantically similar tracks");
+    assert!(
+        !tracks.is_empty(),
+        "Should find semantically similar tracks"
+    );
 
     // All tracks should have SEMANTIC similarity type
     for track in tracks {
@@ -1838,10 +1856,7 @@ async fn test_graphql_similar_tracks_with_variables() {
     let data = response.data.into_json().unwrap();
     let tracks = data["similarTracks"].as_array().unwrap();
 
-    assert!(
-        tracks.len() <= 5,
-        "Should respect limit variable"
-    );
+    assert!(tracks.len() <= 5, "Should respect limit variable");
 
     gql_ctx.cleanup().await;
 }
@@ -1999,7 +2014,7 @@ async fn test_graphql_similar_tracks_default_limit() {
 //
 // These tests verify the configurable weights feature for combined similarity.
 
-use resonance_api::services::similarity::{SimilarityConfig, SimilarityCacheConfig};
+use resonance_api::services::similarity::{SimilarityCacheConfig, SimilarityConfig};
 
 #[tokio::test]
 async fn test_similarity_service_with_custom_config() {
@@ -2051,7 +2066,11 @@ async fn test_similarity_service_with_custom_config() {
 
     // Find combined similar tracks - should use custom weights
     let results = service.find_similar_combined(source_id, 10).await;
-    assert!(results.is_ok(), "Combined similarity should work with custom config: {:?}", results.err());
+    assert!(
+        results.is_ok(),
+        "Combined similarity should work with custom config: {:?}",
+        results.err()
+    );
     let tracks = results.unwrap();
 
     // Should return tracks with combined similarity type
@@ -2105,7 +2124,10 @@ async fn test_similarity_service_default_config() {
 
     // Combined similarity should work with defaults
     let results = service.find_similar_combined(source_id, 10).await;
-    assert!(results.is_ok(), "Combined similarity should work with default config");
+    assert!(
+        results.is_ok(),
+        "Combined similarity should work with default config"
+    );
 
     ctx.cleanup().await;
 }
@@ -2168,7 +2190,7 @@ async fn test_similarity_config_weights_affect_combined_results() {
     let semantic_similar_id = ctx
         .add_track(
             "Semantically Similar",
-            &["jazz"],  // Different genre
+            &["jazz"],   // Different genre
             &["mellow"], // Different mood
             &["piano"],  // Different tag
             json!({
@@ -2187,8 +2209,8 @@ async fn test_similarity_config_weights_affect_combined_results() {
     let categorical_similar_id = ctx
         .add_track(
             "Categorically Similar",
-            &["rock", "indie"], // Overlapping genre
-            &["energetic"],     // Overlapping mood
+            &["rock", "indie"],   // Overlapping genre
+            &["energetic"],       // Overlapping mood
             &["guitar", "drums"], // Overlapping tags
             json!({
                 "bpm": 180.0,
@@ -2205,16 +2227,29 @@ async fn test_similarity_config_weights_affect_combined_results() {
     // Test with high semantic weight (should favor semantically similar track)
     let semantic_heavy_config = SimilarityConfig::new(0.8, 0.1, 0.1).unwrap();
     let semantic_service = SimilarityService::with_config(pool.clone(), semantic_heavy_config);
-    let semantic_results = semantic_service.find_similar_combined(source_id, 10).await.unwrap();
+    let semantic_results = semantic_service
+        .find_similar_combined(source_id, 10)
+        .await
+        .unwrap();
 
     // Test with high categorical weight (should favor categorically similar track)
     let categorical_heavy_config = SimilarityConfig::new(0.1, 0.1, 0.8).unwrap();
-    let categorical_service = SimilarityService::with_config(pool.clone(), categorical_heavy_config);
-    let categorical_results = categorical_service.find_similar_combined(source_id, 10).await.unwrap();
+    let categorical_service =
+        SimilarityService::with_config(pool.clone(), categorical_heavy_config);
+    let categorical_results = categorical_service
+        .find_similar_combined(source_id, 10)
+        .await
+        .unwrap();
 
     // Both should return results
-    assert!(!semantic_results.is_empty(), "Should have semantic-weighted results");
-    assert!(!categorical_results.is_empty(), "Should have categorical-weighted results");
+    assert!(
+        !semantic_results.is_empty(),
+        "Should have semantic-weighted results"
+    );
+    assert!(
+        !categorical_results.is_empty(),
+        "Should have categorical-weighted results"
+    );
 
     ctx.cleanup().await;
 }
@@ -2433,16 +2468,26 @@ async fn test_find_similar_by_features_vector_path() {
     let service = SimilarityService::new(pool);
     let results = service.find_similar_by_features(source_id, 10).await;
 
-    assert!(results.is_ok(), "Should find similar tracks using vector path: {:?}", results.err());
+    assert!(
+        results.is_ok(),
+        "Should find similar tracks using vector path: {:?}",
+        results.err()
+    );
     let tracks = results.unwrap();
 
     // Should return tracks
-    assert!(!tracks.is_empty(), "Should find at least one similar track via vector");
+    assert!(
+        !tracks.is_empty(),
+        "Should find at least one similar track via vector"
+    );
 
     // All results should have acoustic similarity type
     for track in &tracks {
         assert_eq!(track.similarity_type, SimilarityType::Acoustic);
-        assert!(track.score >= 0.0 && track.score <= 1.0, "Score should be between 0 and 1");
+        assert!(
+            track.score >= 0.0 && track.score <= 1.0,
+            "Score should be between 0 and 1"
+        );
     }
 
     // The similar track should be ranked higher than the different track
@@ -2450,9 +2495,9 @@ async fn test_find_similar_by_features_vector_path() {
     let similar_pos = tracks.iter().position(|t| t.track_id == similar_id);
     let different_pos = tracks.iter().position(|t| t.track_id == different_id);
 
-    if similar_pos.is_some() && different_pos.is_some() {
+    if let (Some(sim_pos), Some(diff_pos)) = (similar_pos, different_pos) {
         assert!(
-            similar_pos.unwrap() < different_pos.unwrap(),
+            sim_pos < diff_pos,
             "Similar track should rank higher than different track"
         );
     }
@@ -2506,11 +2551,18 @@ async fn test_find_similar_by_features_falls_back_to_jsonb() {
     let service = SimilarityService::new(pool);
     let results = service.find_similar_by_features(source_id, 10).await;
 
-    assert!(results.is_ok(), "Should fall back to JSONB path: {:?}", results.err());
+    assert!(
+        results.is_ok(),
+        "Should fall back to JSONB path: {:?}",
+        results.err()
+    );
     let tracks = results.unwrap();
 
     // Should return tracks via JSONB fallback
-    assert!(!tracks.is_empty(), "Should find at least one similar track via JSONB fallback");
+    assert!(
+        !tracks.is_empty(),
+        "Should find at least one similar track via JSONB fallback"
+    );
 
     // All results should have acoustic similarity type
     for track in &tracks {
@@ -2564,7 +2616,12 @@ async fn test_graphql_acoustic_similarity_uses_vector_when_available() {
             similar_features,
         )
         .await;
-    add_audio_features_vector(&gql_ctx.ctx.pool, similar_id, &[0.72, 0.85, 0.52, 0.58, 0.61]).await;
+    add_audio_features_vector(
+        &gql_ctx.ctx.pool,
+        similar_id,
+        &[0.72, 0.85, 0.52, 0.58, 0.61],
+    )
+    .await;
 
     // Query via GraphQL
     let query = format!(

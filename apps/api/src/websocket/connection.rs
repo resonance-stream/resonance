@@ -604,10 +604,7 @@ mod tests {
 
         // Set this device as active
         manager.set_active_device(user_id, &device_id);
-        assert_eq!(
-            manager.get_active_device(user_id),
-            Some(device_id.clone())
-        );
+        assert_eq!(manager.get_active_device(user_id), Some(device_id.clone()));
 
         // Remove the active device
         let removed = manager.remove_connection(user_id, &device_id);
@@ -720,7 +717,11 @@ mod tests {
         let manager = ConnectionManager::new();
         let user_id = Uuid::new_v4();
 
-        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 123 });
+        let result = manager.send_to_device(
+            user_id,
+            "device-1",
+            ServerMessage::Pong { server_time: 123 },
+        );
 
         assert_eq!(result, Err(SendError::UserNotFound));
     }
@@ -753,7 +754,11 @@ mod tests {
         // Drop the receiver to close the connection
         drop(rx);
 
-        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 123 });
+        let result = manager.send_to_device(
+            user_id,
+            "device-1",
+            ServerMessage::Pong { server_time: 123 },
+        );
 
         assert_eq!(result, Err(SendError::ConnectionClosed));
     }
@@ -766,7 +771,11 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         manager.add_connection(user_id, "device-1".to_string(), tx, DeviceInfo::default());
 
-        let result = manager.send_to_device(user_id, "device-1", ServerMessage::Pong { server_time: 456 });
+        let result = manager.send_to_device(
+            user_id,
+            "device-1",
+            ServerMessage::Pong { server_time: 456 },
+        );
 
         assert!(result.is_ok());
 
@@ -991,7 +1000,9 @@ mod tests {
             Some("mobile".to_string()),
         );
         let handle = ConnectionHandle::new(tx, device_info);
-        user_state.connections.insert("device-1".to_string(), handle);
+        user_state
+            .connections
+            .insert("device-1".to_string(), handle);
 
         let presences = user_state.get_device_presences();
         assert_eq!(presences.len(), 1);
@@ -1013,7 +1024,9 @@ mod tests {
             Some("mobile".to_string()),
         );
         let handle = ConnectionHandle::new(tx, device_info);
-        user_state.connections.insert("device-1".to_string(), handle);
+        user_state
+            .connections
+            .insert("device-1".to_string(), handle);
 
         let presences = user_state.get_device_presences();
         assert_eq!(presences.len(), 1);
@@ -1063,7 +1076,8 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         let (tx, _rx) = mpsc::unbounded_channel();
-        let device_info = DeviceInfo::new("device-1".to_string(), Some("My Device".to_string()), None);
+        let device_info =
+            DeviceInfo::new("device-1".to_string(), Some("My Device".to_string()), None);
         manager.add_connection(user_id, "device-1".to_string(), tx, device_info);
 
         // get_device_list is an alias for get_device_presences

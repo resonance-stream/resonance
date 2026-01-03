@@ -611,17 +611,29 @@ impl SimilarityTestFixtures {
 
     /// Get all rock cluster fixtures
     pub fn rock_cluster(&self) -> Vec<&TrackFixture> {
-        vec![&self.rock_energetic, &self.rock_indie, &self.rock_alternative]
+        vec![
+            &self.rock_energetic,
+            &self.rock_indie,
+            &self.rock_alternative,
+        ]
     }
 
     /// Get all electronic cluster fixtures
     pub fn electronic_cluster(&self) -> Vec<&TrackFixture> {
-        vec![&self.electronic_dance, &self.electronic_ambient, &self.electronic_house]
+        vec![
+            &self.electronic_dance,
+            &self.electronic_ambient,
+            &self.electronic_house,
+        ]
     }
 
     /// Get all classical cluster fixtures
     pub fn classical_cluster(&self) -> Vec<&TrackFixture> {
-        vec![&self.classical_symphony, &self.classical_piano, &self.classical_chamber]
+        vec![
+            &self.classical_symphony,
+            &self.classical_piano,
+            &self.classical_chamber,
+        ]
     }
 
     /// Get all jazz cluster fixtures
@@ -668,7 +680,10 @@ mod tests {
 
         // Check normalization (magnitude should be ~1.0)
         let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((magnitude - 1.0).abs() < 0.001, "Embedding should be normalized");
+        assert!(
+            (magnitude - 1.0).abs() < 0.001,
+            "Embedding should be normalized"
+        );
     }
 
     #[test]
@@ -696,7 +711,11 @@ mod tests {
         let dissimilar = generate_dissimilar_embedding(1);
 
         // Calculate cosine similarity
-        let similarity: f32 = normal.iter().zip(dissimilar.iter()).map(|(a, b)| a * b).sum();
+        let similarity: f32 = normal
+            .iter()
+            .zip(dissimilar.iter())
+            .map(|(a, b)| a * b)
+            .sum();
 
         // Should have low similarity (could be positive or negative, but low magnitude)
         assert!(
