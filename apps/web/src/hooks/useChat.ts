@@ -27,7 +27,6 @@ import type {
   ChatCompletePayload,
   ChatErrorPayload,
 } from '../sync/types';
-import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../stores/playerStore';
 import { mapGqlTrackToPlayerTrack } from '../lib/mappers';
 import type { GqlTrack } from '../types/library';
@@ -212,17 +211,29 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const clearError = useChatStore((s) => s.clearError);
   const setStatus = useChatStore((s) => s.setStatus);
 
+  // Player store for action execution
+  const setTrack = usePlayerStore((s) => s.setTrack);
+
   // Execute a chat action (play track, add to queue, etc.)
-  const executeAction = useCallback((action: ChatAction) => {
+  const executeAction = useCallback(async (action: ChatAction) => {
     console.log('[Chat] Executing action:', action);
 
     switch (action.type) {
       case 'play_track': {
         const trackId = action.payload.track_id as string | undefined;
-        if (trackId) {
-          // Would need to fetch track metadata first
-          // For now, log a warning
-          console.warn('[Chat] play_track action - would need track metadata fetch:', trackId);
+        if (!trackId) break;
+
+        try {
+          const { track } = await graphqlClient.request<{ track: GqlTrack }>(
+            TRACK_BY_ID_QUERY,
+            { id: trackId }
+          );
+          if (track) {
+            const playerTrack = mapGqlTrackToPlayerTrack(track);
+            setTrack(playerTrack);
+          }
+        } catch (err) {
+          console.error('[Chat] Failed to play track:', err);
         }
         break;
       }
@@ -251,7 +262,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       default:
         console.warn('[Chat] Unknown action type:', action);
     }
-  }, []);
+  }, [setTrack]);
 
   // Set up WebSocket connection with chat handlers
   const { isConnected, sendChatMessage } = useSyncConnection({
