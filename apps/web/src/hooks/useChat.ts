@@ -81,6 +81,21 @@ const DELETE_ALL_CONVERSATIONS_MUTATION = `
   }
 `;
 
+const TRACK_BY_ID_QUERY = `
+  query Track($id: ID!) {
+    track(id: $id) {
+      id
+      title
+      durationMs
+      artistId
+      albumId
+      streamUrl
+      artist { name }
+      album { id title coverArtUrl }
+    }
+  }
+`;
+
 // =============================================================================
 // Query Keys
 // =============================================================================
