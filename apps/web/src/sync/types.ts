@@ -105,6 +105,7 @@ export interface QueueTrack {
   id: string;
   title: string;
   artist: string;
+  album_id: string | null;
   album_title: string;
   duration_ms: number;
   cover_url: string | null;
@@ -492,6 +493,7 @@ export interface LocalQueueTrack {
   id: string;
   title: string;
   artist: string;
+  albumId?: string;
   albumTitle: string;
   duration: number; // in seconds
   coverUrl?: string;
@@ -509,6 +511,7 @@ export function toSyncQueueState(
       id: t.id,
       title: t.title,
       artist: t.artist,
+      album_id: t.albumId ?? null,
       album_title: t.albumTitle,
       duration_ms: Math.round(t.duration * 1000),
       cover_url: t.coverUrl ?? null,
@@ -529,6 +532,7 @@ export function fromSyncQueueState(sync: QueueState): {
       id: t.id,
       title: t.title,
       artist: t.artist,
+      albumId: t.album_id ?? undefined,
       albumTitle: t.album_title,
       duration: t.duration_ms / 1000,
       coverUrl: t.cover_url ?? undefined,

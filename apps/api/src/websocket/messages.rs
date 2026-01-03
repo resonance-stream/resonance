@@ -228,6 +228,7 @@ pub struct QueueTrack {
     pub id: String,
     pub title: String,
     pub artist: String,
+    pub album_id: Option<String>,
     pub album_title: String,
     pub duration_ms: u64,
     pub cover_url: Option<String>,
