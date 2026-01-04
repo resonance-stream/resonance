@@ -203,6 +203,40 @@ impl MockOllamaServer {
     pub fn chat_calls(&self) -> usize {
         self.chat_call_count.load(Ordering::SeqCst)
     }
+
+    /// Get reference to the underlying mock server for custom mock setups
+    pub fn inner(&self) -> &MockServer {
+        &self.server
+    }
+
+    /// Mount a mock for chat completion with custom response JSON
+    pub async fn mock_chat_with_json(&self, response_json: serde_json::Value) {
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "mistral",
+                "message": {
+                    "role": "assistant",
+                    "content": serde_json::to_string(&response_json).unwrap()
+                },
+                "done": true
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mount a mock for chat completion failure
+    pub async fn mock_chat_failure(&self, status_code: u16, error_message: &str) {
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(status_code).set_body_json(json!({
+                    "error": error_message
+                })),
+            )
+            .mount(&self.server)
+            .await;
+    }
 }
 
 /// Mock Lidarr server for testing Lidarr sync jobs
@@ -480,6 +514,117 @@ impl LidarrImageFixture {
     }
 }
 
+/// Mock Redis client for testing prefetch cache operations
+///
+/// This struct provides an in-memory key-value store that mimics Redis
+/// behavior for testing without requiring a real Redis server.
+pub struct MockRedisStore {
+    store: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, MockRedisEntry>>>,
+}
+
+/// Entry in the mock Redis store with expiration tracking
+struct MockRedisEntry {
+    value: String,
+    expires_at: Option<std::time::Instant>,
+}
+
+impl MockRedisStore {
+    /// Create a new mock Redis store
+    pub fn new() -> Self {
+        Self {
+            store: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Set a key with expiration (SETEX equivalent)
+    pub fn setex(&self, key: &str, seconds: i64, value: String) {
+        let expires_at = if seconds > 0 {
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(seconds as u64))
+        } else {
+            None
+        };
+
+        let mut store = self.store.write().unwrap();
+        store.insert(
+            key.to_string(),
+            MockRedisEntry { value, expires_at },
+        );
+    }
+
+    /// Get a key value (GET equivalent)
+    pub fn get(&self, key: &str) -> Option<String> {
+        let store = self.store.read().unwrap();
+        store.get(key).and_then(|entry| {
+            if let Some(expires_at) = entry.expires_at {
+                if std::time::Instant::now() > expires_at {
+                    return None;
+                }
+            }
+            Some(entry.value.clone())
+        })
+    }
+
+    /// Delete a key (DEL equivalent)
+    pub fn del(&self, key: &str) -> bool {
+        let mut store = self.store.write().unwrap();
+        store.remove(key).is_some()
+    }
+
+    /// Check if a key exists (EXISTS equivalent)
+    pub fn exists(&self, key: &str) -> bool {
+        let store = self.store.read().unwrap();
+        if let Some(entry) = store.get(key) {
+            if let Some(expires_at) = entry.expires_at {
+                return std::time::Instant::now() <= expires_at;
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Get all keys matching a pattern (KEYS equivalent, simplified)
+    pub fn keys(&self, pattern: &str) -> Vec<String> {
+        let store = self.store.read().unwrap();
+        let pattern = pattern.replace("*", "");
+        store
+            .keys()
+            .filter(|k| k.contains(&pattern))
+            .cloned()
+            .collect()
+    }
+
+    /// Clear all keys (FLUSHALL equivalent)
+    pub fn flush_all(&self) {
+        let mut store = self.store.write().unwrap();
+        store.clear();
+    }
+
+    /// Get the number of keys in the store
+    pub fn len(&self) -> usize {
+        let store = self.store.read().unwrap();
+        store.len()
+    }
+
+    /// Check if store is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for MockRedisStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for MockRedisStore {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,5 +752,67 @@ mod tests {
         assert_eq!(json["title"], "A Night at the Opera");
         assert_eq!(json["artistId"], 42);
         assert_eq!(json["statistics"]["trackFileCount"], 12);
+    }
+
+    #[test]
+    fn test_mock_redis_store_new() {
+        let store = MockRedisStore::new();
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn test_mock_redis_store_setex_and_get() {
+        let store = MockRedisStore::new();
+        store.setex("key1", 3600, "value1".to_string());
+
+        assert!(store.exists("key1"));
+        assert_eq!(store.get("key1"), Some("value1".to_string()));
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_mock_redis_store_del() {
+        let store = MockRedisStore::new();
+        store.setex("key1", 3600, "value1".to_string());
+        assert!(store.exists("key1"));
+
+        assert!(store.del("key1"));
+        assert!(!store.exists("key1"));
+        assert_eq!(store.get("key1"), None);
+    }
+
+    #[test]
+    fn test_mock_redis_store_keys() {
+        let store = MockRedisStore::new();
+        store.setex("prefetch:user1:track1", 3600, "data1".to_string());
+        store.setex("prefetch:user1:track2", 3600, "data2".to_string());
+        store.setex("other:key", 3600, "data3".to_string());
+
+        let keys = store.keys("prefetch:user1");
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[test]
+    fn test_mock_redis_store_flush_all() {
+        let store = MockRedisStore::new();
+        store.setex("key1", 3600, "value1".to_string());
+        store.setex("key2", 3600, "value2".to_string());
+        assert_eq!(store.len(), 2);
+
+        store.flush_all();
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn test_mock_redis_store_clone() {
+        let store = MockRedisStore::new();
+        store.setex("key1", 3600, "value1".to_string());
+
+        let store2 = store.clone();
+        assert_eq!(store2.get("key1"), Some("value1".to_string()));
+
+        // Changes in one should reflect in the other (shared Arc)
+        store2.setex("key2", 3600, "value2".to_string());
+        assert!(store.exists("key2"));
     }
 }
