@@ -20,7 +20,9 @@ pub use auth::AuthUser;
 pub use rate_limit::{
     extract_client_ip, login_rate_limit, register_rate_limit, AuthRateLimitState,
 };
+#[allow(unused_imports)]
 pub use security_headers::security_headers;
+pub use security_headers::{security_headers_with_config, SecurityHeadersConfig};
 
 // These are available for future use
 #[allow(unused_imports)]
