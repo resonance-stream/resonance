@@ -110,15 +110,20 @@ pub fn compute_chromagram(samples: &[f32], sample_rate: u32) -> [f32; 12] {
         .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (window_size - 1) as f32).cos()))
         .collect();
 
+    // Pre-allocate FFT buffer outside loop to avoid repeated allocation
+    let mut fft_input = vec![Complex::new(0.0f32, 0.0f32); window_size];
+
     // Process overlapping windows
     let mut offset = 0;
     while offset + window_size <= samples.len() {
-        // Extract and window the current frame
-        let mut fft_input: Vec<Complex<f32>> = samples[offset..offset + window_size]
+        // Extract and window the current frame into pre-allocated buffer
+        for (i, (&s, &w)) in samples[offset..offset + window_size]
             .iter()
             .zip(hann_window.iter())
-            .map(|(&s, &w)| Complex::new(s * w, 0.0))
-            .collect();
+            .enumerate()
+        {
+            fft_input[i] = Complex::new(s * w, 0.0);
+        }
 
         // Perform FFT
         fft.process(&mut fft_input);
@@ -560,20 +565,24 @@ mod tests {
         // A natural minor scale frequencies (A4 to A5)
         // A - B - C - D - E - F - G - A
         let frequencies = [
-            440.00,  // A4
-            493.88,  // B4
-            523.25,  // C5
-            587.33,  // D5
-            659.25,  // E5
-            698.46,  // F5
-            783.99,  // G5
-            880.00,  // A5 (octave)
+            440.00, // A4
+            493.88, // B4
+            523.25, // C5
+            587.33, // D5
+            659.25, // E5
+            698.46, // F5
+            783.99, // G5
+            880.00, // A5 (octave)
         ];
 
         // Generate scale with envelope to avoid clicks
         let mut samples = Vec::new();
         for freq in frequencies {
-            samples.extend(generate_sine_with_envelope(freq, duration_per_note, sample_rate));
+            samples.extend(generate_sine_with_envelope(
+                freq,
+                duration_per_note,
+                sample_rate,
+            ));
         }
 
         let result = analyze(&samples, sample_rate);
@@ -608,9 +617,9 @@ mod tests {
 
         // G major triad: G4 - B4 - D5
         let chord_frequencies = [
-            392.00,  // G4
-            493.88,  // B4
-            587.33,  // D5
+            392.00, // G4
+            493.88, // B4
+            587.33, // D5
         ];
 
         let samples = generate_chord(&chord_frequencies, duration, sample_rate);
@@ -671,8 +680,14 @@ mod tests {
         // Verify relative major/minor relationship in Camelot system
         // Relative keys share the same number but different letter (A/B)
         // C major (8B) <-> A minor (8A)
-        let c_major_num: String = CAMELOT_MAJOR[0].chars().filter(|c| c.is_numeric()).collect();
-        let a_minor_num: String = CAMELOT_MINOR[9].chars().filter(|c| c.is_numeric()).collect();
+        let c_major_num: String = CAMELOT_MAJOR[0]
+            .chars()
+            .filter(|c| c.is_numeric())
+            .collect();
+        let a_minor_num: String = CAMELOT_MINOR[9]
+            .chars()
+            .filter(|c| c.is_numeric())
+            .collect();
         assert_eq!(
             c_major_num, a_minor_num,
             "Relative major/minor should have same Camelot number"
@@ -756,13 +771,13 @@ mod tests {
 
         // C major scale frequencies (C4 to B4 as specified in requirements)
         let frequencies = [
-            261.63,  // C4
-            293.66,  // D4
-            329.63,  // E4
-            349.23,  // F4
-            392.00,  // G4
-            440.00,  // A4
-            493.88,  // B4
+            261.63, // C4
+            293.66, // D4
+            329.63, // E4
+            349.23, // F4
+            392.00, // G4
+            440.00, // A4
+            493.88, // B4
         ];
 
         // Generate 0.5 seconds of each note as specified
@@ -797,16 +812,20 @@ mod tests {
 
         // A minor arpeggio: A - C - E - A (octave)
         let frequencies = [
-            440.00,  // A4
-            523.25,  // C5
-            659.25,  // E5
-            880.00,  // A5
+            440.00, // A4
+            523.25, // C5
+            659.25, // E5
+            880.00, // A5
         ];
 
         // Generate arpeggio
         let mut samples = Vec::new();
         for freq in frequencies {
-            samples.extend(generate_sine_with_envelope(freq, duration_per_note, sample_rate));
+            samples.extend(generate_sine_with_envelope(
+                freq,
+                duration_per_note,
+                sample_rate,
+            ));
         }
 
         let result = analyze(&samples, sample_rate);

@@ -114,7 +114,8 @@ impl SpectralAnalyzer {
     /// The spectral centroid is the weighted mean of frequencies,
     /// where the weights are the magnitudes. Returns frequency in Hz.
     pub fn spectral_centroid(&self, spectrum: &[f32]) -> f32 {
-        let bin_width = self.sample_rate as f32 / (2.0 * spectrum.len() as f32);
+        // Bin width = sample_rate / frame_size (frequency resolution)
+        let bin_width = self.sample_rate as f32 / self.frame_size as f32;
 
         let mut weighted_sum = 0.0f32;
         let mut magnitude_sum = 0.0f32;
@@ -177,7 +178,8 @@ impl SpectralAnalyzer {
             return 0.0;
         }
 
-        let bin_width = self.sample_rate as f32 / (2.0 * spectrum.len() as f32);
+        // Bin width = sample_rate / frame_size (frequency resolution)
+        let bin_width = self.sample_rate as f32 / self.frame_size as f32;
 
         // Calculate total energy (sum of squared magnitudes)
         let total_energy: f32 = spectrum.iter().map(|&m| m * m).sum();
@@ -412,13 +414,14 @@ fn mean(values: &[f32]) -> f32 {
     values.iter().sum::<f32>() / values.len() as f32
 }
 
-/// Calculate standard deviation given pre-computed mean
+/// Calculate sample standard deviation given pre-computed mean
+/// Uses Bessel's correction (n-1) for unbiased estimation
 fn std_dev(values: &[f32], mean: f32) -> f32 {
     if values.len() < 2 {
         return 0.0;
     }
     let variance: f32 =
-        values.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / values.len() as f32;
+        values.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / (values.len() - 1) as f32;
     variance.sqrt()
 }
 
@@ -527,16 +530,15 @@ pub fn compute_speechiness(features: &SpectralFeatures) -> f32 {
     // Normalize: ZCR std of 0.15 or higher indicates significant speech-like variance
     let zcr_variance_score = (features.zcr_std / 0.15).min(1.0);
 
-    // Moderate vocal band energy can indicate speech
-    // Very high energy might be singing, very low is instrumental
-    // We want moderate values, so use a different approach:
-    // Low vocal energy = no speech (inverse relationship in this context)
-    // The formula creates a bias toward detecting speech when ZCR variance is high
-    let vocal_factor = 1.0 - features.vocal_band_energy.min(1.0);
+    // Moderate vocal band energy indicates speech. We want a factor that peaks
+    // around a moderate energy level (e.g., 0.5) and is low for 0.0 or 1.0.
+    // A triangular function `1.0 - 2.0 * |x - 0.5|` achieves this for x in [0,1].
+    let vocal_energy = features.vocal_band_energy.clamp(0.0, 1.0);
+    let vocal_factor = (1.0 - 2.0 * (vocal_energy - 0.5).abs()).max(0.0);
 
     // Weight ZCR variance more heavily as it's the primary discriminator
     // The vocal_factor adds context but speech detection mainly relies on modulation
-    let speechiness = 0.7 * zcr_variance_score + 0.3 * vocal_factor.abs();
+    let speechiness = 0.7 * zcr_variance_score + 0.3 * vocal_factor;
 
     speechiness.clamp(0.0, 1.0)
 }
@@ -945,8 +947,7 @@ mod tests {
 
         // Complex tone with harmonics - somewhat tonal
         let harmonics = vec![(2, 0.5), (3, 0.33), (4, 0.25), (5, 0.2)];
-        let complex =
-            generate_harmonics(440.0, &harmonics, sample_rate, DEFAULT_FRAME_SIZE);
+        let complex = generate_harmonics(440.0, &harmonics, sample_rate, DEFAULT_FRAME_SIZE);
         let complex_spectrum = analyzer.compute_spectrum(&complex);
         let complex_flatness = analyzer.spectral_flatness(&complex_spectrum);
 
@@ -1577,11 +1578,11 @@ mod tests {
     fn test_compute_valence_range() {
         // Test that output is always in [0.0, 1.0] range
         let test_cases = [
-            (0.0, 0.0),       // Minimum values
-            (1000.0, 0.0),    // Edge case: exactly at low boundary
-            (8000.0, 0.0),    // Edge case: exactly at high boundary
-            (10000.0, 1.0),   // Beyond max centroid
-            (5000.0, 0.5),    // Mid range
+            (0.0, 0.0),     // Minimum values
+            (1000.0, 0.0),  // Edge case: exactly at low boundary
+            (8000.0, 0.0),  // Edge case: exactly at high boundary
+            (10000.0, 1.0), // Beyond max centroid
+            (5000.0, 0.5),  // Mid range
         ];
 
         for (centroid, flatness) in test_cases {
@@ -1644,9 +1645,9 @@ mod tests {
     fn test_compute_acousticness_range() {
         // Test edge cases for range clamping
         let test_cases = [
-            (0.0, 0.0, 0.0),     // All minimum = max acousticness
-            (0.5, 1.0, 1.0),     // All maximum = min acousticness
-            (0.15, 0.5, 0.25),   // Mixed values
+            (0.0, 0.0, 0.0),   // All minimum = max acousticness
+            (0.5, 1.0, 1.0),   // All maximum = min acousticness
+            (0.15, 0.5, 0.25), // Mixed values
         ];
 
         for (zcr, hf, flux) in test_cases {
@@ -1860,8 +1861,8 @@ mod tests {
         );
 
         let very_dark = SpectralFeatures {
-            centroid_mean: 50.0,  // Way below 1kHz floor
-            flatness_mean: 1.0,   // Pure noise (maximally flat)
+            centroid_mean: 50.0, // Way below 1kHz floor
+            flatness_mean: 1.0,  // Pure noise (maximally flat)
             ..Default::default()
         };
         let valence_dark = compute_valence(&very_dark, 44100);

@@ -29,10 +29,10 @@ const MAX_FILE_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 /// Maximum samples to process (~17 minutes at 96kHz stereo)
 const MAX_SAMPLES: u64 = 100_000_000;
 
-/// Samples to buffer for advanced analysis (first 45 seconds at 44.1kHz)
+/// Duration in seconds for advanced analysis buffer
 /// This provides enough audio data for BPM, key, and spectral analysis
-/// while keeping memory usage reasonable (~7.5MB for mono f32)
-const ANALYSIS_BUFFER_SAMPLES: usize = 45 * 44100;
+/// while keeping memory usage reasonable (~7.5MB for mono f32 at 44.1kHz)
+const ANALYSIS_DURATION_SECS: usize = 45;
 
 /// Feature extraction job payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,11 +284,7 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
 
     // Get sample rate and channel count for analysis
     let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(2);
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
 
     // Create sample buffer based on codec params
     let spec = symphonia::core::audio::SignalSpec::new(
@@ -302,9 +298,8 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
     let mut sample_buf = SampleBuffer::<f32>::new(max_frames, spec);
 
     // Buffer for advanced analysis (mono samples from first 45 seconds)
-    // Scale buffer size based on actual sample rate
-    let scaled_buffer_size = (ANALYSIS_BUFFER_SAMPLES as u64 * sample_rate as u64 / 44100) as usize;
-    let mut analysis_buffer: Vec<f32> = Vec::with_capacity(scaled_buffer_size);
+    let analysis_buffer_size = ANALYSIS_DURATION_SECS * sample_rate as usize;
+    let mut analysis_buffer: Vec<f32> = Vec::with_capacity(analysis_buffer_size);
 
     // Decode packets and analyze samples
     loop {
@@ -369,7 +364,7 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
                     }
 
                     // Add mono sample to analysis buffer (first N seconds only)
-                    if analysis_buffer.len() < scaled_buffer_size {
+                    if analysis_buffer.len() < analysis_buffer_size {
                         analysis_buffer.push(mono_sum / channels as f32);
                     }
 
