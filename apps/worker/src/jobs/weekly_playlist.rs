@@ -76,10 +76,14 @@ struct TrackIdRecord {
     id: Uuid,
 }
 
-/// Playlist record
+/// Playlist upsert result with created flag
+///
+/// Used by `find_or_create_discover_playlist` to detect whether a playlist
+/// was newly created (xmax=0) or already existed (xmax>0).
 #[derive(Debug, sqlx::FromRow)]
-struct PlaylistRecord {
+struct PlaylistUpsertResult {
     id: Uuid,
+    created: bool,
 }
 
 /// Execute the weekly playlist generation job
@@ -276,44 +280,23 @@ async fn find_similar_tracks_for_seeds(
 
 /// Find or create the Discover Weekly playlist for a user
 ///
-/// NOTE: This uses a SELECT-then-INSERT pattern which has a theoretical TOCTOU race
-/// condition if two concurrent requests process the same user. In practice, this job
-/// runs on a schedule (weekly) and processes users sequentially, so this is not a
-/// concern. For true concurrent safety, add a partial unique index:
-/// `CREATE UNIQUE INDEX idx_playlists_user_discover ON playlists(user_id, name) WHERE playlist_type = 'discover'`
-/// and use INSERT ... ON CONFLICT.
+/// Uses an atomic upsert pattern with INSERT ON CONFLICT to prevent TOCTOU race
+/// conditions. The partial unique index `idx_playlists_user_discover_weekly` ensures
+/// only one discover playlist per user/name combination exists.
+///
+/// The `(xmax = 0) AS created` pattern detects whether the row was inserted (xmax=0)
+/// or updated (xmax>0), allowing accurate logging without additional queries.
 async fn find_or_create_discover_playlist(state: &AppState, user_id: Uuid) -> WorkerResult<Uuid> {
-    // Try to find existing discover playlist
-    let existing: Option<PlaylistRecord> = sqlx::query_as(
-        r#"
-        SELECT id
-        FROM playlists
-        WHERE user_id = $1
-          AND playlist_type = 'discover'
-          AND name = $2
-        LIMIT 1
-        "#,
-    )
-    .bind(user_id)
-    .bind(DISCOVER_WEEKLY_NAME)
-    .fetch_optional(&state.db)
-    .await?;
-
-    if let Some(playlist) = existing {
-        tracing::debug!(
-            user_id = %user_id,
-            playlist_id = %playlist.id,
-            "Found existing Discover Weekly playlist"
-        );
-        return Ok(playlist.id);
-    }
-
-    // Create new discover playlist
-    let new_playlist: PlaylistRecord = sqlx::query_as(
+    // Atomic upsert: insert or update if exists
+    // The partial unique index on (user_id, name) WHERE playlist_type = 'discover'
+    // ensures this is race-condition free
+    let result: PlaylistUpsertResult = sqlx::query_as(
         r#"
         INSERT INTO playlists (user_id, name, description, playlist_type, is_public)
         VALUES ($1, $2, $3, 'discover', false)
-        RETURNING id
+        ON CONFLICT (user_id, name) WHERE playlist_type = 'discover'
+        DO UPDATE SET updated_at = NOW()
+        RETURNING id, (xmax = 0) AS created
         "#,
     )
     .bind(user_id)
@@ -322,13 +305,21 @@ async fn find_or_create_discover_playlist(state: &AppState, user_id: Uuid) -> Wo
     .fetch_one(&state.db)
     .await?;
 
-    tracing::info!(
-        user_id = %user_id,
-        playlist_id = %new_playlist.id,
-        "Created new Discover Weekly playlist"
-    );
+    if result.created {
+        tracing::info!(
+            user_id = %user_id,
+            playlist_id = %result.id,
+            "Created new Discover Weekly playlist"
+        );
+    } else {
+        tracing::debug!(
+            user_id = %user_id,
+            playlist_id = %result.id,
+            "Found existing Discover Weekly playlist"
+        );
+    }
 
-    Ok(new_playlist.id)
+    Ok(result.id)
 }
 
 /// Replace all tracks in a playlist with new tracks
