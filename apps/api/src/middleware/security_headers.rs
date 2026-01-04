@@ -142,6 +142,7 @@ impl SecurityHeadersConfig {
 ///   - `media-src 'self' blob:` - Audio/video from same origin and blob URLs
 ///   - `connect-src 'self' ws: wss:` - XHR/fetch/WebSocket to same origin + WebSocket protocols
 ///   - `font-src 'self'` - Fonts from same origin only
+///   - `object-src 'none'` - Disallow plugins (Flash, Java applets, etc.)
 ///   - `frame-ancestors 'none'` - Disallow embedding in frames (like X-Frame-Options)
 ///
 /// - **Permissions-Policy** - Disables potentially dangerous browser features:
@@ -236,6 +237,7 @@ async fn apply_security_headers(
     // - Allow blob: and data: for dynamically generated content (album art, audio buffers)
     // - Allow ws: and wss: for WebSocket connections (real-time sync)
     // - Disallow embedding in frames
+    // - Disallow plugins (object-src 'none')
     headers.insert(
         CONTENT_SECURITY_POLICY.clone(),
         HeaderValue::from_static(
@@ -246,6 +248,7 @@ async fn apply_security_headers(
              media-src 'self' blob:; \
              connect-src 'self' ws: wss:; \
              font-src 'self'; \
+             object-src 'none'; \
              frame-ancestors 'none'",
         ),
     );
@@ -353,6 +356,7 @@ mod tests {
         assert!(csp.contains("media-src 'self' blob:"));
         assert!(csp.contains("connect-src 'self' ws: wss:"));
         assert!(csp.contains("font-src 'self'"));
+        assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("frame-ancestors 'none'"));
     }
 
