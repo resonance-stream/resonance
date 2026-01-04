@@ -202,7 +202,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         break;
       }
       case 'create_playlist': {
-        const { name, track_ids: trackIds } = action.payload;
+        const { name, description, track_ids: trackIds } = action.payload;
 
         if (!name) {
           console.warn('[Chat] create_playlist action missing name');
@@ -210,9 +210,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }
 
         try {
-          // Create a manual playlist
+          // Create a manual playlist with optional description from AI
           const createInput: CreatePlaylistInput = {
             name,
+            description,
             isPublic: false,
             playlistType: 'Manual',
           };
@@ -250,13 +251,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }
         break;
       }
-      case 'search_library': {
-        const { query } = action.payload;
+      case 'show_search': {
+        const { query, result_type } = action.payload;
         if (!query) {
-          console.warn('[Chat] search_library action missing query');
+          console.warn('[Chat] show_search action missing query');
           break;
         }
-        navigate(`/search?q=${encodeURIComponent(query)}`);
+        // Include result_type as a filter parameter if provided
+        const searchParams = new URLSearchParams({ q: query });
+        if (result_type) {
+          searchParams.set('type', result_type);
+        }
+        navigate(`/search?${searchParams.toString()}`);
         break;
       }
       case 'get_recommendations': {
@@ -267,21 +273,36 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }
 
         try {
-          // Fetch similar tracks using the combined similarity algorithm
-          const response = await graphqlClient.request<SimilarTracksResponse>(
-            SIMILAR_TRACKS_QUERY,
-            { trackId, limit: 15 }
-          );
+          // Fetch seed track and similar tracks in parallel for better performance
+          const [seedTrack, similarResponse] = await Promise.all([
+            fetchTrackById(trackId),
+            graphqlClient.request<SimilarTracksResponse>(
+              SIMILAR_TRACKS_QUERY,
+              { trackId, limit: 15 }
+            ),
+          ]);
 
-          const similarTracks = response.similarTracks ?? [];
-          if (similarTracks.length === 0) {
-            console.log('[Chat] No similar tracks found for', trackId);
+          const similarTracks = similarResponse.similarTracks ?? [];
+
+          // Build queue with seed track first, then similar tracks
+          const queueTracks: Track[] = [];
+
+          if (seedTrack) {
+            queueTracks.push(seedTrack);
+          }
+
+          if (similarTracks.length > 0) {
+            const recommendedTracks = similarTracks.map(mapScoredTrackToPlayerTrack);
+            queueTracks.push(...recommendedTracks);
+          }
+
+          if (queueTracks.length === 0) {
+            console.log('[Chat] No tracks available for recommendations:', trackId);
             break;
           }
 
-          // Convert to player tracks and set as queue, starting playback
-          const playerTracks = similarTracks.map(mapScoredTrackToPlayerTrack);
-          setQueue(playerTracks, 0);
+          // Set queue starting at the seed track (or first recommendation if seed failed)
+          setQueue(queueTracks, 0);
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to get recommendations:', err);

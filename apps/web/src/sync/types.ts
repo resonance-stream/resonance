@@ -225,15 +225,17 @@ export interface CreatePlaylistAction {
   type: 'create_playlist'
   payload: {
     name: string
+    description?: string
     track_ids?: string[]
   }
 }
 
-/** Navigate to search with query */
-export interface SearchLibraryAction {
-  type: 'search_library'
+/** Navigate to search with query and show results */
+export interface ShowSearchAction {
+  type: 'show_search'
   payload: {
     query: string
+    result_type: string
   }
 }
 
@@ -250,7 +252,7 @@ export type ChatAction =
   | PlayTrackAction
   | AddToQueueAction
   | CreatePlaylistAction
-  | SearchLibraryAction
+  | ShowSearchAction
   | GetRecommendationsAction
 
 /**
