@@ -29,6 +29,8 @@ ignore = [
     # GTK3 bindings are unmaintained - from tauri for Linux desktop support
     # These are transitive dependencies of Tauri and not actual vulnerabilities
     # Tauri team is aware and working on GTK4 migration
+    "RUSTSEC-2024-0411",  # gdkwayland-sys
+    "RUSTSEC-2024-0412",  # gdk (non-sys)
     "RUSTSEC-2024-0413",  # atk
     "RUSTSEC-2024-0414",  # atk-sys
     "RUSTSEC-2024-0415",  # gdk
@@ -50,6 +52,10 @@ ignore = [
     # fxhash is unmaintained - from tauri via wry/kuchikiki/selectors
     # Used for CSS selector matching in webview rendering
     "RUSTSEC-2025-0057",  # fxhash
+
+    # proc-macro-error is unmaintained - from tauri via glib-macros/gtk3-macros
+    # Used for procedural macro error handling
+    "RUSTSEC-2024-0370",  # proc-macro-error
 
     # unic-* crates are unmaintained - from tauri via urlpattern
     # Used for URL pattern matching in Tauri's routing
