@@ -117,6 +117,30 @@ export type IntegrationQueryKey = ReturnType<
   typeof integrationKeys.settings
 >
 
+/**
+ * Query key factory for chat queries
+ *
+ * Provides cache keys for AI chat functionality:
+ * - Conversation list
+ * - Individual conversation with messages
+ */
+export const chatKeys = {
+  /** Root key for all chat queries */
+  all: ['chat'] as const,
+
+  /** All conversations list */
+  conversations: () => [...chatKeys.all, 'conversations'] as const,
+
+  /** Single conversation detail */
+  conversation: (id: string) => [...chatKeys.all, 'conversation', id] as const,
+} as const
+
+/** Type for any chat query key */
+export type ChatQueryKey = ReturnType<
+  | typeof chatKeys.conversations
+  | typeof chatKeys.conversation
+>
+
 /** Type for any library query key */
 export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.artists.all
