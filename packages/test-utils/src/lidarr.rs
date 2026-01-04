@@ -101,10 +101,31 @@ impl MockLidarrServer {
             .await;
     }
 
-    /// Mount a mock for authentication failure
-    pub async fn mock_auth_failure(&self) {
+    /// Mount a mock for authentication failure with a specific bad API key
+    ///
+    /// This mock only matches requests that use the specified invalid API key,
+    /// preventing interference with other mocks that use the valid API key.
+    ///
+    /// # Arguments
+    ///
+    /// * `bad_api_key` - The specific invalid API key to match against
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let server = MockLidarrServer::start().await;
+    /// server.mock_auth_failure("wrong-api-key").await;
+    ///
+    /// // This request will get 401 Unauthorized
+    /// client.get("/api/v1/artist").header("X-Api-Key", "wrong-api-key").send().await;
+    ///
+    /// // This request would NOT match the auth failure mock
+    /// client.get("/api/v1/artist").header("X-Api-Key", server.api_key()).send().await;
+    /// ```
+    pub async fn mock_auth_failure(&self, bad_api_key: &str) {
         Mock::given(method("GET"))
             .and(path_regex("/api/v1/(artist|album)"))
+            .and(header("X-Api-Key", bad_api_key))
             .respond_with(ResponseTemplate::new(401).set_body_json(json!({
                 "error": "Unauthorized"
             })))
@@ -339,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_lidarr_auth_failure() {
         let server = MockLidarrServer::start().await;
-        server.mock_auth_failure().await;
+        server.mock_auth_failure("wrong-key").await;
 
         let client = reqwest::Client::new();
         let response = client
@@ -350,6 +371,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status().as_u16(), 401);
+    }
+
+    #[tokio::test]
+    async fn test_mock_lidarr_auth_failure_does_not_interfere_with_valid_key() {
+        let server = MockLidarrServer::start().await;
+        let artists = vec![LidarrArtistFixture::monitored(1, "Queen")];
+
+        // Set up both auth failure for bad key AND success for valid key
+        server.mock_auth_failure("wrong-key").await;
+        server.mock_artists_success(artists).await;
+
+        let client = reqwest::Client::new();
+
+        // Request with valid key should succeed
+        let valid_response = client
+            .get(format!("{}/api/v1/artist", server.url()))
+            .header("X-Api-Key", server.api_key())
+            .send()
+            .await
+            .unwrap();
+        assert!(valid_response.status().is_success());
+
+        // Request with invalid key should get 401
+        let invalid_response = client
+            .get(format!("{}/api/v1/artist", server.url()))
+            .header("X-Api-Key", "wrong-key")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_response.status().as_u16(), 401);
     }
 
     #[test]

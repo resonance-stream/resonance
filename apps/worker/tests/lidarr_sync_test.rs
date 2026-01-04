@@ -242,7 +242,7 @@ async fn test_fetch_albums_success() {
 #[tokio::test]
 async fn test_api_error_unauthorized() {
     let server = MockLidarrServer::start().await;
-    server.mock_auth_failure().await;
+    server.mock_auth_failure("wrong-api-key").await;
 
     let client = reqwest::Client::new();
     let response = client
