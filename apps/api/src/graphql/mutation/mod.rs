@@ -7,12 +7,14 @@ mod auth;
 mod chat;
 mod integrations;
 mod playlist;
+mod preferences;
 
 pub use admin::AdminMutation;
 pub use auth::AuthMutation;
 pub use chat::ChatMutation;
 pub use integrations::IntegrationsMutation;
 pub use playlist::PlaylistMutation;
+pub use preferences::PreferencesMutation;
 
 use async_graphql::MergedObject;
 
@@ -24,4 +26,5 @@ pub struct Mutation(
     IntegrationsMutation,
     ChatMutation,
     AdminMutation,
+    PreferencesMutation,
 );

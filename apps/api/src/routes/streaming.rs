@@ -469,22 +469,30 @@ fn format_http_date(time: SystemTime) -> String {
 }
 
 /// Check if the client's cached version is still valid
+///
+/// Per RFC 7232 Section 6:
+/// - If-None-Match takes precedence over If-Modified-Since
+/// - If If-None-Match is present (even if malformed), If-Modified-Since is ignored
 fn is_cache_valid(headers: &HeaderMap, etag: &str, modified: SystemTime) -> bool {
     // Check If-None-Match (takes precedence over If-Modified-Since per RFC 7232)
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
-        if let Ok(value) = if_none_match.to_str() {
-            // Handle both single value and comma-separated list
-            return value.split(',').any(|v| {
-                let v = v.trim();
-                // RFC 7232: Weak comparison - strip "W/" prefix if present
-                let v_trimmed = v.strip_prefix("W/").unwrap_or(v);
-                let etag_trimmed = etag.strip_prefix("W/").unwrap_or(etag);
-                v_trimmed == etag_trimmed || v == "*"
-            });
-        }
+        // RFC 7232: If If-None-Match is present, it takes precedence and
+        // If-Modified-Since must be ignored. A malformed If-None-Match header
+        // means the condition cannot be evaluated, so return false (cache invalid).
+        let Ok(value) = if_none_match.to_str() else {
+            return false;
+        };
+        // Handle both single value and comma-separated list
+        return value.split(',').any(|v| {
+            let v = v.trim();
+            // RFC 7232: Weak comparison - strip "W/" prefix if present
+            let v_trimmed = v.strip_prefix("W/").unwrap_or(v);
+            let etag_trimmed = etag.strip_prefix("W/").unwrap_or(etag);
+            v_trimmed == etag_trimmed || v == "*"
+        });
     }
 
-    // Check If-Modified-Since
+    // Check If-Modified-Since (only if If-None-Match is not present)
     if let Some(if_modified_since) = headers.get(header::IF_MODIFIED_SINCE) {
         if let Ok(value) = if_modified_since.to_str() {
             // Parse HTTP date (supports RFC 1123, RFC 850, and asctime formats)
@@ -786,6 +794,47 @@ mod tests {
         let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
 
         assert!(!is_cache_valid(&headers, "\"12345-1000\"", modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_if_none_match_precedence_over_if_modified_since() {
+        // RFC 7232: If-None-Match takes precedence over If-Modified-Since
+        // When If-None-Match doesn't match, If-Modified-Since should be ignored
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+
+        // If-None-Match: non-matching ETag
+        headers.insert(header::IF_NONE_MATCH, "\"wrong-etag\"".parse().unwrap());
+        // If-Modified-Since: file hasn't been modified (would return true if checked)
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            "Thu, 01 Jan 1970 00:17:00 GMT".parse().unwrap(), // After modified time
+        );
+
+        // Should return false because If-None-Match doesn't match,
+        // even though If-Modified-Since would indicate cache is valid
+        assert!(!is_cache_valid(&headers, "\"12345-1000\"", modified));
+    }
+
+    #[test]
+    fn test_is_cache_valid_if_none_match_match_ignores_if_modified_since() {
+        // RFC 7232: When If-None-Match matches, the response should be 304
+        // regardless of If-Modified-Since value (even if it indicates file changed)
+        let mut headers = HeaderMap::new();
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2000);
+        let etag = "\"12345-2000\"";
+
+        // If-None-Match: matching ETag
+        headers.insert(header::IF_NONE_MATCH, etag.parse().unwrap());
+        // If-Modified-Since: with a date BEFORE the file was modified (would fail if checked)
+        headers.insert(
+            header::IF_MODIFIED_SINCE,
+            "Thu, 01 Jan 1970 00:00:01 GMT".parse().unwrap(), // Before modified time
+        );
+
+        // Should return true because If-None-Match matches,
+        // ignoring If-Modified-Since entirely
+        assert!(is_cache_valid(&headers, etag, modified));
     }
 
     #[test]

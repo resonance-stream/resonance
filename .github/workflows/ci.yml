@@ -29,7 +29,10 @@ jobs:
           cache-enabled: 'false'
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        # Exclude desktop package on Linux (requires glib-sys which isn't available in CI)
+        run: |
+          cargo fmt -p resonance-api -p resonance-worker -p resonance-shared-config \
+            -p resonance-ollama-client -p resonance-lastfm-client -p resonance-test-utils -- --check
 
   rust-clippy:
     name: Rust Clippy
@@ -44,7 +47,8 @@ jobs:
           cache-key: clippy
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        # Exclude desktop package on Linux (requires glib-sys which isn't available in CI)
+        run: cargo clippy --workspace --exclude resonance-desktop --all-targets --all-features -- -D warnings
 
   rust-test:
     name: Rust Tests
@@ -96,7 +100,8 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test-secret-key-for-ci-minimum-32-characters
           MEILISEARCH_KEY: test-key
-        run: cargo test --all-features
+        # Exclude desktop package on Linux (requires glib-sys which isn't available in CI)
+        run: cargo test --workspace --exclude resonance-desktop --all-features
 
   # TypeScript checks
   typescript-lint:
@@ -168,7 +173,8 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Build Rust workspace
-        run: cargo build --release
+        # Exclude desktop package on Linux (requires glib-sys which isn't available in CI)
+        run: cargo build --workspace --exclude resonance-desktop --release
 
       # Build shared-types first as other packages depend on it
       - name: Build shared-types

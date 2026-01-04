@@ -163,3 +163,26 @@ export type {
   InvalidateSessionsResult,
   UpdateUserRoleInput,
 } from './admin.js';
+
+// Preferences types - flat GraphQL preferences structure
+export type {
+  Theme,
+  AudioQuality,
+  GraphQLUserPreferences,
+  UpdatePreferencesInput,
+  UserWithPreferences,
+  UpdatePreferencesResponse,
+  ResetPreferencesResponse,
+  GetPreferencesResponse,
+  UserPreferencesQueryResponse,
+} from './preferences.js';
+
+export {
+  DEFAULT_GRAPHQL_PREFERENCES,
+  VALID_THEMES,
+  VALID_QUALITIES,
+  MAX_CROSSFADE_MS,
+  isValidTheme,
+  isValidQuality,
+  isValidCrossfade,
+} from './preferences.js';

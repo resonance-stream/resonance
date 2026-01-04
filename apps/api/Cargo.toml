@@ -87,6 +87,10 @@ wiremock = { workspace = true }
 fake = { workspace = true }
 rstest = { workspace = true }
 once_cell = { workspace = true }
+tempfile = "3"
+
+# Shared test mocks
+resonance-test-utils = { workspace = true }
 
 # HTTP testing
 axum-test = "14"
