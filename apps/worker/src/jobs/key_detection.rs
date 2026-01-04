@@ -5,6 +5,14 @@
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::f32::consts::PI;
 
+// MIDI pitch calculation constants
+/// A4 (concert pitch) MIDI note number
+const MIDI_A4: f32 = 69.0;
+/// Semitones per octave for pitch class calculation
+const SEMITONES_PER_OCTAVE: f32 = 12.0;
+/// A4 reference frequency in Hz (concert pitch)
+const A4_FREQUENCY: f32 = 440.0;
+
 /// Krumhansl-Kessler major key profile weights
 /// Correlations of pitch classes with major key perception
 const MAJOR_PROFILE: [f32; 12] = [
@@ -128,8 +136,8 @@ pub fn compute_chromagram(samples: &[f32], sample_rate: u32) -> [f32; 12] {
             }
 
             // Convert frequency to MIDI pitch number
-            // MIDI pitch = 69 + 12 * log2(freq / 440)
-            let midi_pitch = 69.0 + 12.0 * (freq / 440.0).log2();
+            // MIDI pitch = A4_midi + semitones_per_octave * log2(freq / A4_freq)
+            let midi_pitch = MIDI_A4 + SEMITONES_PER_OCTAVE * (freq / A4_FREQUENCY).log2();
 
             // Get pitch class (0-11)
             let pitch_class = ((midi_pitch.round() as i32 % 12) + 12) % 12;

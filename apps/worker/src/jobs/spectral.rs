@@ -503,7 +503,7 @@ pub fn compute_instrumentalness(features: &SpectralFeatures) -> f32 {
     //
     // We invert and normalize: high vocal energy = low instrumentalness
     // Cap at 1.0 since vocal_band_energy can exceed 1.0 for loud signals
-    let instrumentalness = 1.0 - features.vocal_band_energy.min(1.0);
+    let instrumentalness = 1.0 - features.vocal_band_energy.clamp(0.0, 1.0);
 
     instrumentalness.clamp(0.0, 1.0)
 }
