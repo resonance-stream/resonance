@@ -235,7 +235,7 @@ export interface ShowSearchAction {
   type: 'show_search'
   payload: {
     query: string
-    result_type: string
+    result_type?: string
   }
 }
 

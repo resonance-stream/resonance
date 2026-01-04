@@ -225,22 +225,31 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
           const playlistId = createResponse.createPlaylist.id;
 
-          // Add tracks to the playlist if provided
-          if (trackIds?.length) {
-            await graphqlClient.request<AddTracksResponse>(
-              ADD_TRACKS_TO_PLAYLIST_MUTATION,
-              {
-                playlistId,
-                input: { trackIds },
-              }
-            );
-          }
-
           // Invalidate playlist queries to refresh the library
           queryClient.invalidateQueries({ queryKey: libraryKeys.playlists.all() });
 
-          // Navigate to the new playlist
+          // Navigate to the new playlist immediately
           navigate(`/playlist/${playlistId}`);
+
+          // Add tracks to the playlist if provided (best-effort)
+          if (trackIds?.length) {
+            try {
+              await graphqlClient.request<AddTracksResponse>(
+                ADD_TRACKS_TO_PLAYLIST_MUTATION,
+                {
+                  playlistId,
+                  input: { trackIds },
+                }
+              );
+            } catch (err) {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              console.error('[Chat] Failed to add tracks to playlist:', err);
+              handleError({
+                conversation_id: useChatStore.getState().conversationId,
+                error: `Playlist created, but failed to add tracks: ${errorMsg}`,
+              });
+            }
+          }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           console.error('[Chat] Failed to create playlist:', err);
