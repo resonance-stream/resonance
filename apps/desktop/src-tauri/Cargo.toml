@@ -1,0 +1,25 @@
+[package]
+name = "resonance-desktop"
+version = "0.1.0"
+description = "Resonance Desktop - Self-hosted music streaming"
+authors = ["Resonance Contributors"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/resonance-stream/resonance"
+rust-version = "1.70"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
