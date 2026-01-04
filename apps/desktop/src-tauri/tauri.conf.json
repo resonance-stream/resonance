@@ -54,17 +54,38 @@
       }
     },
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": null,
+      "exceptionDomain": "",
+      "signingIdentity": null
     },
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
-      "timestampUrl": ""
-    }
+      "timestampUrl": "http://timestamp.digicert.com",
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["resonance"]
+      }
+    },
+    "updater": {
+      "pubkey": "UPDATER_PUBKEY_PLACEHOLDER",
+      "endpoints": [
+        "https://github.com/resonance-stream/resonance/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
