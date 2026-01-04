@@ -23,6 +23,8 @@ pub mod library_scan;
 pub mod lidarr_sync;
 pub mod mood_detection;
 pub mod prefetch;
+pub mod rhythm_analysis;
+pub mod spectral;
 pub mod weekly_playlist;
 
 /// Job types that can be processed by the worker

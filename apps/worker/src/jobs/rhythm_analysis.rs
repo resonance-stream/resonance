@@ -1,0 +1,617 @@
+//! Rhythm analysis job
+//!
+//! BPM and danceability detection using onset detection via spectral flux
+//! and tempo estimation via autocorrelation.
+
+#![allow(dead_code)] // Functions will be used when integrated with feature extraction
+
+use realfft::{RealFftPlanner, RealToComplex};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// Frame size for STFT analysis (2048 samples)
+const DEFAULT_FRAME_SIZE: usize = 2048;
+
+/// Hop size for STFT analysis (512 samples, 75% overlap)
+const DEFAULT_HOP_SIZE: usize = 512;
+
+/// Minimum BPM to search for
+const MIN_BPM: f32 = 60.0;
+
+/// Maximum BPM to search for
+const MAX_BPM: f32 = 200.0;
+
+/// Extracted rhythm features
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RhythmFeatures {
+    /// Beats per minute (60-200 range)
+    pub bpm: f32,
+
+    /// Danceability score (0.0-1.0)
+    pub danceability: f32,
+
+    /// Beat strength (0.0-1.0) - how prominent the beats are
+    pub beat_strength: f32,
+
+    /// Tempo regularity (0.0-1.0) - how consistent the tempo is
+    pub tempo_regularity: f32,
+}
+
+/// Rhythm analyzer using spectral flux and autocorrelation
+pub struct RhythmAnalyzer {
+    /// Sample rate of the audio
+    sample_rate: u32,
+
+    /// Frame size for STFT
+    frame_size: usize,
+
+    /// Hop size between frames
+    hop_size: usize,
+
+    /// FFT planner and transformer
+    fft: Arc<dyn RealToComplex<f32>>,
+
+    /// Hann window for STFT
+    window: Vec<f32>,
+}
+
+impl RhythmAnalyzer {
+    /// Create a new rhythm analyzer with default parameters
+    pub fn new(sample_rate: u32) -> Self {
+        Self::with_params(sample_rate, DEFAULT_FRAME_SIZE, DEFAULT_HOP_SIZE)
+    }
+
+    /// Create a new rhythm analyzer with custom parameters
+    pub fn with_params(sample_rate: u32, frame_size: usize, hop_size: usize) -> Self {
+        let mut planner = RealFftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(frame_size);
+
+        // Create Hann window
+        let window: Vec<f32> = (0..frame_size)
+            .map(|i| {
+                let t = i as f32 / (frame_size - 1) as f32;
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * t).cos())
+            })
+            .collect();
+
+        Self {
+            sample_rate,
+            frame_size,
+            hop_size,
+            fft,
+            window,
+        }
+    }
+
+    /// Compute onset strength signal using spectral flux
+    ///
+    /// Spectral flux measures the change in spectral content between frames,
+    /// which correlates with note onsets and beat locations.
+    pub fn compute_onset_strength(&self, samples: &[f32]) -> Vec<f32> {
+        if samples.len() < self.frame_size {
+            return vec![];
+        }
+
+        let num_frames = (samples.len() - self.frame_size) / self.hop_size + 1;
+        let mut onset_signal = Vec::with_capacity(num_frames);
+
+        // Buffers for FFT
+        let mut frame_buffer = vec![0.0f32; self.frame_size];
+        let mut spectrum = self.fft.make_output_vec();
+        let mut prev_magnitude = vec![0.0f32; spectrum.len()];
+
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * self.hop_size;
+            let end = start + self.frame_size;
+
+            if end > samples.len() {
+                break;
+            }
+
+            // Apply window and copy to buffer
+            for (i, &sample) in samples[start..end].iter().enumerate() {
+                frame_buffer[i] = sample * self.window[i];
+            }
+
+            // Perform FFT
+            if self.fft.process(&mut frame_buffer, &mut spectrum).is_err() {
+                continue;
+            }
+
+            // Compute magnitude spectrum
+            let current_magnitude: Vec<f32> = spectrum
+                .iter()
+                .map(|c| (c.re * c.re + c.im * c.im).sqrt())
+                .collect();
+
+            // Compute spectral flux (sum of positive differences)
+            let flux: f32 = current_magnitude
+                .iter()
+                .zip(prev_magnitude.iter())
+                .map(|(&curr, &prev)| (curr - prev).max(0.0))
+                .sum();
+
+            onset_signal.push(flux);
+            prev_magnitude = current_magnitude;
+        }
+
+        // Apply simple moving average lowpass filter
+        self.lowpass_filter(&onset_signal, 5)
+    }
+
+    /// Apply a simple moving average lowpass filter
+    fn lowpass_filter(&self, signal: &[f32], window_size: usize) -> Vec<f32> {
+        if signal.len() < window_size {
+            return signal.to_vec();
+        }
+
+        let half_window = window_size / 2;
+        let mut filtered = Vec::with_capacity(signal.len());
+
+        for i in 0..signal.len() {
+            let start = i.saturating_sub(half_window);
+            let end = (i + half_window + 1).min(signal.len());
+            let sum: f32 = signal[start..end].iter().sum();
+            let count = (end - start) as f32;
+            filtered.push(sum / count);
+        }
+
+        filtered
+    }
+
+    /// Estimate tempo from onset signal using autocorrelation
+    ///
+    /// Returns (bpm, confidence) where confidence is how strong the periodicity is
+    pub fn estimate_tempo(&self, onset_signal: &[f32]) -> (f32, f32) {
+        if onset_signal.is_empty() {
+            return (120.0, 0.0); // Default tempo with zero confidence
+        }
+
+        // Calculate autocorrelation
+        let autocorr = self.autocorrelate(onset_signal);
+
+        // Convert BPM range to lag samples
+        // onset_signal has one value per hop_size samples
+        let onset_rate = self.sample_rate as f32 / self.hop_size as f32;
+
+        // lag = (60 / bpm) * onset_rate
+        // For 60 BPM: lag = 1.0 * onset_rate
+        // For 200 BPM: lag = 0.3 * onset_rate
+        let max_lag = (60.0 / MIN_BPM * onset_rate) as usize;
+        let min_lag = (60.0 / MAX_BPM * onset_rate) as usize;
+
+        // Find peak in autocorrelation within BPM range
+        let search_start = min_lag.max(1); // Skip zero lag
+        let search_end = max_lag.min(autocorr.len());
+
+        if search_start >= search_end {
+            return (120.0, 0.0);
+        }
+
+        let mut best_lag = search_start;
+        let mut best_value = autocorr[search_start];
+
+        for (lag, &value) in autocorr
+            .iter()
+            .enumerate()
+            .take(search_end)
+            .skip(search_start)
+        {
+            if value > best_value {
+                best_value = value;
+                best_lag = lag;
+            }
+        }
+
+        // Convert lag back to BPM
+        let bpm = 60.0 * onset_rate / best_lag as f32;
+
+        // Calculate confidence as ratio of peak to average
+        let avg: f32 = autocorr[search_start..search_end].iter().sum::<f32>()
+            / (search_end - search_start) as f32;
+
+        let confidence = if avg > f32::EPSILON {
+            ((best_value / avg) - 1.0).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        (bpm.clamp(MIN_BPM, MAX_BPM), confidence)
+    }
+
+    /// Compute autocorrelation of signal
+    fn autocorrelate(&self, signal: &[f32]) -> Vec<f32> {
+        let n = signal.len();
+        let mut result = Vec::with_capacity(n);
+
+        // Normalize signal
+        let mean: f32 = signal.iter().sum::<f32>() / n as f32;
+        let normalized: Vec<f32> = signal.iter().map(|&x| x - mean).collect();
+
+        // Variance for normalization
+        let variance: f32 = normalized.iter().map(|&x| x * x).sum::<f32>();
+
+        if variance < f32::EPSILON {
+            return vec![0.0; n];
+        }
+
+        // Compute autocorrelation for each lag
+        for lag in 0..n {
+            let mut sum = 0.0f32;
+            for i in 0..(n - lag) {
+                sum += normalized[i] * normalized[i + lag];
+            }
+            result.push(sum / variance);
+        }
+
+        result
+    }
+
+    /// Calculate tempo regularity from onset signal
+    ///
+    /// Measures how consistent the inter-beat intervals are
+    fn calculate_tempo_regularity(&self, onset_signal: &[f32], bpm: f32) -> f32 {
+        if onset_signal.is_empty() {
+            return 0.0;
+        }
+
+        // Expected beat interval in onset samples
+        let onset_rate = self.sample_rate as f32 / self.hop_size as f32;
+        let expected_interval = 60.0 * onset_rate / bpm;
+
+        // Find peaks (potential beats) using simple thresholding
+        let threshold = calculate_adaptive_threshold(onset_signal);
+        let peaks = find_peaks(onset_signal, threshold);
+
+        if peaks.len() < 2 {
+            return 0.0;
+        }
+
+        // Calculate intervals between peaks
+        let intervals: Vec<f32> = peaks.windows(2).map(|w| (w[1] - w[0]) as f32).collect();
+
+        if intervals.is_empty() {
+            return 0.0;
+        }
+
+        // Calculate how well intervals match expected interval
+        let deviations: Vec<f32> = intervals
+            .iter()
+            .map(|&interval| {
+                // Find closest multiple/submultiple of expected interval
+                let ratio = interval / expected_interval;
+                let closest_integer = ratio.round();
+                if closest_integer < 1.0 {
+                    return 1.0; // Max deviation for very short intervals
+                }
+                (ratio - closest_integer).abs() / closest_integer
+            })
+            .collect();
+
+        let avg_deviation = deviations.iter().sum::<f32>() / deviations.len() as f32;
+
+        // Convert deviation to regularity score (lower deviation = higher regularity)
+        (1.0 - avg_deviation.min(1.0)).max(0.0)
+    }
+
+    /// Calculate beat strength from onset signal
+    fn calculate_beat_strength(&self, onset_signal: &[f32]) -> f32 {
+        if onset_signal.is_empty() {
+            return 0.0;
+        }
+
+        // Calculate contrast between peaks and valleys
+        let max_val = onset_signal.iter().cloned().fold(0.0f32, f32::max);
+        let min_val = onset_signal.iter().cloned().fold(f32::MAX, f32::min);
+        let mean: f32 = onset_signal.iter().sum::<f32>() / onset_signal.len() as f32;
+
+        if max_val < f32::EPSILON {
+            return 0.0;
+        }
+
+        // Strength is based on peak-to-mean ratio (how prominent beats are)
+        let contrast = if mean > f32::EPSILON {
+            (max_val - min_val) / mean
+        } else {
+            0.0
+        };
+
+        // Normalize to 0-1 range (typical values 0-10)
+        (contrast / 10.0).clamp(0.0, 1.0)
+    }
+}
+
+/// Calculate danceability from rhythm features
+///
+/// Combines tempo preference (ideal around 120 BPM), regularity, and beat strength
+pub fn calculate_danceability(bpm: f32, regularity: f32, strength: f32) -> f32 {
+    // Tempo preference: ideal around 120 BPM, penalty for deviation
+    let tempo_deviation = (bpm - 120.0).abs();
+    let tempo_preference = 1.0 - (tempo_deviation / 80.0).min(1.0) * 0.3;
+
+    // Weighted combination
+    let danceability = 0.4 * regularity + 0.4 * strength + 0.2 * tempo_preference;
+
+    danceability.clamp(0.0, 1.0)
+}
+
+/// Calculate adaptive threshold for peak detection
+fn calculate_adaptive_threshold(signal: &[f32]) -> f32 {
+    if signal.is_empty() {
+        return 0.0;
+    }
+
+    let mean: f32 = signal.iter().sum::<f32>() / signal.len() as f32;
+    let variance: f32 =
+        signal.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / signal.len() as f32;
+    let std_dev = variance.sqrt();
+
+    mean + 0.5 * std_dev
+}
+
+/// Find peaks in signal above threshold
+fn find_peaks(signal: &[f32], threshold: f32) -> Vec<usize> {
+    let mut peaks = Vec::new();
+
+    for i in 1..signal.len().saturating_sub(1) {
+        if signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] > signal[i + 1] {
+            peaks.push(i);
+        }
+    }
+
+    peaks
+}
+
+/// Main entry point: analyze audio samples for rhythm features
+pub fn analyze(samples: &[f32], sample_rate: u32) -> RhythmFeatures {
+    let analyzer = RhythmAnalyzer::new(sample_rate);
+
+    // Compute onset strength signal
+    let onset_signal = analyzer.compute_onset_strength(samples);
+
+    if onset_signal.is_empty() {
+        return RhythmFeatures {
+            bpm: 120.0,
+            danceability: 0.5,
+            beat_strength: 0.0,
+            tempo_regularity: 0.0,
+        };
+    }
+
+    // Estimate tempo
+    let (bpm, _confidence) = analyzer.estimate_tempo(&onset_signal);
+
+    // Calculate additional features
+    let beat_strength = analyzer.calculate_beat_strength(&onset_signal);
+    let tempo_regularity = analyzer.calculate_tempo_regularity(&onset_signal, bpm);
+
+    // Calculate danceability
+    let danceability = calculate_danceability(bpm, tempo_regularity, beat_strength);
+
+    RhythmFeatures {
+        bpm,
+        danceability,
+        beat_strength,
+        tempo_regularity,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Generate a click track at specified BPM for testing
+    fn generate_click_track(bpm: f32, sample_rate: u32, duration_secs: f32) -> Vec<f32> {
+        let num_samples = (sample_rate as f32 * duration_secs) as usize;
+        let samples_per_beat = (sample_rate as f32 * 60.0 / bpm) as usize;
+        let click_duration = (sample_rate as f32 * 0.01) as usize; // 10ms click
+
+        let mut samples = vec![0.0f32; num_samples];
+
+        let mut beat_position = 0;
+        while beat_position < num_samples {
+            // Generate click (short impulse)
+            for i in 0..click_duration.min(num_samples - beat_position) {
+                // Exponential decay envelope
+                let envelope = (-5.0 * i as f32 / click_duration as f32).exp();
+                // Mix of frequencies for a click sound
+                let t = i as f32 / sample_rate as f32;
+                samples[beat_position + i] =
+                    envelope * (2.0 * std::f32::consts::PI * 1000.0 * t).sin() * 0.8;
+            }
+            beat_position += samples_per_beat;
+        }
+
+        samples
+    }
+
+    #[test]
+    fn test_rhythm_analyzer_creation() {
+        let analyzer = RhythmAnalyzer::new(44100);
+        assert_eq!(analyzer.sample_rate, 44100);
+        assert_eq!(analyzer.frame_size, DEFAULT_FRAME_SIZE);
+        assert_eq!(analyzer.hop_size, DEFAULT_HOP_SIZE);
+    }
+
+    #[test]
+    fn test_onset_strength_empty() {
+        let analyzer = RhythmAnalyzer::new(44100);
+        let onset = analyzer.compute_onset_strength(&[]);
+        assert!(onset.is_empty());
+    }
+
+    #[test]
+    fn test_onset_strength_short_signal() {
+        let analyzer = RhythmAnalyzer::new(44100);
+        let short_signal = vec![0.0f32; 1000]; // Less than frame_size
+        let onset = analyzer.compute_onset_strength(&short_signal);
+        assert!(onset.is_empty());
+    }
+
+    #[test]
+    fn test_bpm_detection_60() {
+        let click_track = generate_click_track(60.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        // Allow 10% tolerance
+        assert!(
+            (features.bpm - 60.0).abs() < 6.0,
+            "Expected ~60 BPM, got {}",
+            features.bpm
+        );
+    }
+
+    #[test]
+    fn test_bpm_detection_120() {
+        let click_track = generate_click_track(120.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        // Allow 10% tolerance
+        assert!(
+            (features.bpm - 120.0).abs() < 12.0,
+            "Expected ~120 BPM, got {}",
+            features.bpm
+        );
+    }
+
+    #[test]
+    fn test_bpm_detection_180() {
+        let click_track = generate_click_track(180.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        // Allow 10% tolerance
+        assert!(
+            (features.bpm - 180.0).abs() < 18.0,
+            "Expected ~180 BPM, got {}",
+            features.bpm
+        );
+    }
+
+    #[test]
+    fn test_danceability_range() {
+        let click_track = generate_click_track(120.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        assert!(
+            features.danceability >= 0.0 && features.danceability <= 1.0,
+            "Danceability {} out of range",
+            features.danceability
+        );
+    }
+
+    #[test]
+    fn test_beat_strength_range() {
+        let click_track = generate_click_track(120.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        assert!(
+            features.beat_strength >= 0.0 && features.beat_strength <= 1.0,
+            "Beat strength {} out of range",
+            features.beat_strength
+        );
+    }
+
+    #[test]
+    fn test_tempo_regularity_range() {
+        let click_track = generate_click_track(120.0, 44100, 10.0);
+        let features = analyze(&click_track, 44100);
+
+        assert!(
+            features.tempo_regularity >= 0.0 && features.tempo_regularity <= 1.0,
+            "Tempo regularity {} out of range",
+            features.tempo_regularity
+        );
+    }
+
+    #[test]
+    fn test_calculate_danceability() {
+        // Perfect conditions: 120 BPM, high regularity, high strength
+        let dance = calculate_danceability(120.0, 1.0, 1.0);
+        assert!(dance > 0.9, "Expected high danceability, got {}", dance);
+
+        // Low tempo, low regularity/strength
+        let low_dance = calculate_danceability(60.0, 0.0, 0.0);
+        assert!(
+            low_dance < 0.2,
+            "Expected low danceability, got {}",
+            low_dance
+        );
+
+        // Mid-range tempo deviation
+        let mid_dance = calculate_danceability(90.0, 0.5, 0.5);
+        assert!(
+            mid_dance > 0.3 && mid_dance < 0.7,
+            "Expected mid danceability, got {}",
+            mid_dance
+        );
+    }
+
+    #[test]
+    fn test_lowpass_filter() {
+        let analyzer = RhythmAnalyzer::new(44100);
+        let signal = vec![0.0, 1.0, 0.0, 1.0, 0.0];
+        let filtered = analyzer.lowpass_filter(&signal, 3);
+
+        // Filtered values should be smoothed
+        assert_eq!(filtered.len(), signal.len());
+
+        // Middle values should be averaged
+        assert!((filtered[2] - 0.333).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_autocorrelate_constant() {
+        let analyzer = RhythmAnalyzer::new(44100);
+        let signal = vec![1.0; 100];
+        let autocorr = analyzer.autocorrelate(&signal);
+
+        // Constant signal should have zero variance after mean subtraction
+        assert!(autocorr.iter().all(|&x| x.abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn test_find_peaks() {
+        let signal = vec![0.0, 0.5, 1.0, 0.5, 0.0, 0.5, 0.8, 0.5, 0.0];
+        let peaks = find_peaks(&signal, 0.6);
+
+        assert_eq!(peaks.len(), 2);
+        assert_eq!(peaks[0], 2); // Index of 1.0
+        assert_eq!(peaks[1], 6); // Index of 0.8
+    }
+
+    #[test]
+    fn test_adaptive_threshold() {
+        let signal = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let threshold = calculate_adaptive_threshold(&signal);
+
+        // Mean is 3.0, should be above that
+        assert!(threshold > 3.0);
+    }
+
+    #[test]
+    fn test_silence_handling() {
+        let silence = vec![0.0f32; 100000];
+        let features = analyze(&silence, 44100);
+
+        // Should return default values without panicking
+        assert_eq!(features.bpm, 120.0);
+        assert!(features.beat_strength == 0.0 || features.beat_strength.is_finite());
+    }
+
+    #[test]
+    fn test_rhythm_features_default() {
+        let features = RhythmFeatures::default();
+        assert_eq!(features.bpm, 0.0);
+        assert_eq!(features.danceability, 0.0);
+        assert_eq!(features.beat_strength, 0.0);
+        assert_eq!(features.tempo_regularity, 0.0);
+    }
+
+    #[test]
+    fn test_custom_analyzer_params() {
+        let analyzer = RhythmAnalyzer::with_params(48000, 4096, 1024);
+        assert_eq!(analyzer.sample_rate, 48000);
+        assert_eq!(analyzer.frame_size, 4096);
+        assert_eq!(analyzer.hop_size, 1024);
+    }
+}
