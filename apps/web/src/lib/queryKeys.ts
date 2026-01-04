@@ -118,6 +118,25 @@ export type IntegrationQueryKey = ReturnType<
 >
 
 /**
+ * Query key factory for user preferences queries
+ *
+ * Provides cache keys for user preference management:
+ * - User preferences (synced with server)
+ */
+export const preferencesKeys = {
+  /** Root key for all preferences queries */
+  all: ['preferences'] as const,
+
+  /** Current user's preferences */
+  user: () => [...preferencesKeys.all, 'user'] as const,
+} as const
+
+/** Type for any preferences query key */
+export type PreferencesQueryKey = ReturnType<
+  typeof preferencesKeys.user
+>
+
+/**
  * Query key factory for chat queries
  *
  * Provides cache keys for AI chat functionality:

@@ -1088,10 +1088,7 @@ async fn test_transcode_rejects_range_requests() {
 
     let body: Value = parse_body(response).await;
     assert_eq!(body["code"], "INVALID_RANGE");
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("not supported"));
+    assert!(body["message"].as_str().unwrap().contains("not supported"));
 }
 
 // ========== Path Traversal Security Tests ==========
@@ -1190,8 +1187,7 @@ async fn test_absolute_path_outside_library_blocked() {
     // Should be forbidden OR not found (depending on whether it's inside library)
     // The key is it should NOT return the file content
     assert!(
-        response.status() == StatusCode::FORBIDDEN
-            || response.status() == StatusCode::NOT_FOUND
+        response.status() == StatusCode::FORBIDDEN || response.status() == StatusCode::NOT_FOUND
     );
 
     // Cleanup
