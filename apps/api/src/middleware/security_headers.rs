@@ -459,19 +459,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hsts_enabled_in_production() {
+    async fn test_hsts_enabled_for_https_requests() {
         let config = SecurityHeadersConfig::production();
         let app = create_test_app_with_config(config);
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
-        // HSTS should be present in production mode
+        // HSTS should be present for HTTPS requests in production mode
         let hsts = response
             .headers()
             .get("strict-transport-security")
-            .expect("HSTS header should be present")
+            .expect("HSTS header should be present for HTTPS requests")
             .to_str()
             .unwrap();
 
@@ -482,15 +488,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hsts_not_present_in_development() {
-        let config = SecurityHeadersConfig::development();
+    async fn test_hsts_not_present_for_http_requests_in_production() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "http")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should NOT be present for HTTP requests (per RFC 6797)
+        assert!(
+            !response.headers().contains_key("strict-transport-security"),
+            "HSTS header should not be present for HTTP requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hsts_not_present_without_proto_header() {
+        let config = SecurityHeadersConfig::production();
         let app = create_test_app_with_config(config);
         let response = app
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
-        // HSTS should NOT be present in development mode
+        // HSTS should NOT be present when x-forwarded-proto is not set
+        // (and request scheme is not HTTPS)
+        assert!(
+            !response.headers().contains_key("strict-transport-security"),
+            "HSTS header should not be present without HTTPS indication"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hsts_not_present_in_development() {
+        let config = SecurityHeadersConfig::development();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should NOT be present in development mode even for HTTPS
         assert!(!response.headers().contains_key("strict-transport-security"));
     }
 
@@ -499,14 +550,20 @@ mod tests {
         let config = SecurityHeadersConfig::production().with_preload();
         let app = create_test_app_with_config(config);
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         let hsts = response
             .headers()
             .get("strict-transport-security")
-            .expect("HSTS header should be present")
+            .expect("HSTS header should be present for HTTPS requests")
             .to_str()
             .unwrap();
 
@@ -521,20 +578,48 @@ mod tests {
         let config = SecurityHeadersConfig::production().with_max_age(86400); // 1 day
         let app = create_test_app_with_config(config);
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         let hsts = response
             .headers()
             .get("strict-transport-security")
-            .expect("HSTS header should be present")
+            .expect("HSTS header should be present for HTTPS requests")
             .to_str()
             .unwrap();
 
         // Verify custom max-age
         assert!(hsts.contains("max-age=86400"));
         assert!(hsts.contains("includeSubDomains"));
+    }
+
+    #[tokio::test]
+    async fn test_x_forwarded_proto_https_case_insensitive() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "HTTPS")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should be present even with uppercase HTTPS
+        assert!(
+            response.headers().contains_key("strict-transport-security"),
+            "HSTS should be present for HTTPS (case-insensitive)"
+        );
     }
 
     #[test]
