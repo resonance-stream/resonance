@@ -9,3 +9,15 @@
 
 export * from './test-utils'
 export { mockTracks, mockAlbums, mockArtists, mockPlaylists, mockUser } from './mocks/handlers'
+export {
+  MockWebSocket,
+  resetMockWebSocket,
+  installMockWebSocket,
+  createConnectedMessage,
+  createChatTokenMessage,
+  createChatCompleteMessage,
+  createChatErrorMessage,
+  createPongMessage,
+  createDeviceListMessage,
+  createPlaybackSyncMessage,
+} from './mocks/websocket'

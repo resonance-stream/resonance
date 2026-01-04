@@ -30,4 +30,4 @@ pub use search::{
     SimilarityMethod, SimilarityType,
 };
 pub use track::{AudioFeatures, Track};
-pub use user::{AuthPayload, RefreshPayload, User, UserRole};
+pub use user::{AuthPayload, RefreshPayload, User, UserPreferencesType, UserRole};
