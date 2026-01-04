@@ -181,7 +181,8 @@ pub fn estimate_key(chromagram: &[f32; 12]) -> KeyResult {
 
     // Try all 12 rotations for major keys
     for rotation in 0..12 {
-        let correlation = pearson_correlation(chromagram, &rotate_profile(&MAJOR_PROFILE, rotation));
+        let correlation =
+            pearson_correlation(chromagram, &rotate_profile(&MAJOR_PROFILE, rotation));
         if correlation > best_correlation {
             best_correlation = correlation;
             best_pitch_class = rotation;
@@ -191,7 +192,8 @@ pub fn estimate_key(chromagram: &[f32; 12]) -> KeyResult {
 
     // Try all 12 rotations for minor keys
     for rotation in 0..12 {
-        let correlation = pearson_correlation(chromagram, &rotate_profile(&MINOR_PROFILE, rotation));
+        let correlation =
+            pearson_correlation(chromagram, &rotate_profile(&MINOR_PROFILE, rotation));
         if correlation > best_correlation {
             best_correlation = correlation;
             best_pitch_class = rotation;
@@ -286,6 +288,76 @@ mod tests {
     use super::*;
     use std::f32::consts::PI;
 
+    /// Generate a pure sine wave at a given frequency
+    ///
+    /// # Arguments
+    /// * `freq` - Frequency in Hz
+    /// * `duration` - Duration in seconds
+    /// * `sample_rate` - Sample rate in Hz
+    ///
+    /// # Returns
+    /// Vector of audio samples
+    fn generate_sine(freq: f32, duration: f32, sample_rate: u32) -> Vec<f32> {
+        let samples = (duration * sample_rate as f32) as usize;
+        (0..samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (2.0 * PI * freq * t).sin()
+            })
+            .collect()
+    }
+
+    /// Generate a sine wave with attack/release envelope
+    fn generate_sine_with_envelope(freq: f32, duration: f32, sample_rate: u32) -> Vec<f32> {
+        let samples = (duration * sample_rate as f32) as usize;
+        let attack_samples = samples / 10;
+        let release_samples = samples / 10;
+
+        (0..samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                let envelope = if i < attack_samples {
+                    i as f32 / attack_samples as f32
+                } else if i > samples - release_samples {
+                    (samples - i) as f32 / release_samples as f32
+                } else {
+                    1.0
+                };
+                envelope * (2.0 * PI * freq * t).sin()
+            })
+            .collect()
+    }
+
+    /// Generate multiple sine waves mixed together (for chords)
+    fn generate_chord(frequencies: &[f32], duration: f32, sample_rate: u32) -> Vec<f32> {
+        let samples = (duration * sample_rate as f32) as usize;
+        let amplitude = 1.0 / frequencies.len() as f32; // Normalize amplitude
+
+        (0..samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                frequencies
+                    .iter()
+                    .map(|&freq| amplitude * (2.0 * PI * freq * t).sin())
+                    .sum()
+            })
+            .collect()
+    }
+
+    /// Generate white noise using a simple LCG (linear congruential generator)
+    fn generate_white_noise(duration: f32, sample_rate: u32, seed: u32) -> Vec<f32> {
+        let samples = (duration * sample_rate as f32) as usize;
+        let mut state = seed;
+        (0..samples)
+            .map(|_| {
+                // Simple LCG for deterministic "random" noise
+                state = state.wrapping_mul(1103515245).wrapping_add(12345);
+                // Convert to float in range [-1.0, 1.0]
+                ((state >> 16) as f32 / 32768.0) - 1.0
+            })
+            .collect()
+    }
+
     /// Generate a synthetic C major scale as audio samples
     fn generate_c_major_scale(sample_rate: u32, duration_per_note: f32) -> Vec<f32> {
         // C major scale frequencies (C4 to C5)
@@ -368,8 +440,12 @@ mod tests {
     #[test]
     fn test_pearson_correlation() {
         // Test perfect positive correlation
-        let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let y = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let x = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
+        let y = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let corr = pearson_correlation(&x, &y);
         assert!(
             (corr - 1.0).abs() < 0.001,
@@ -378,7 +454,9 @@ mod tests {
         );
 
         // Test perfect negative correlation
-        let y_neg = [12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+        let y_neg = [
+            12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0,
+        ];
         let corr_neg = pearson_correlation(&x, &y_neg);
         assert!(
             (corr_neg + 1.0).abs() < 0.001,
@@ -389,7 +467,9 @@ mod tests {
 
     #[test]
     fn test_rotate_profile() {
-        let profile = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let profile = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
 
         // Rotate by 0 should give same array
         let rotated_0 = rotate_profile(&profile, 0);
@@ -456,6 +536,386 @@ mod tests {
             max_index, a_index,
             "A440 should show strongest energy in pitch class A (9), got {}",
             max_index
+        );
+    }
+
+    // ============================================================
+    // NEW TESTS: Synthetic audio in known keys
+    // ============================================================
+
+    /// Test A natural minor scale detection
+    ///
+    /// Generates an A natural minor scale and verifies the key detector
+    /// correctly identifies it as A minor.
+    #[test]
+    fn test_a_minor_scale() {
+        let sample_rate = 44100u32;
+        let duration_per_note = 0.5f32;
+
+        // A natural minor scale frequencies (A4 to A5)
+        // A - B - C - D - E - F - G - A
+        let frequencies = [
+            440.00,  // A4
+            493.88,  // B4
+            523.25,  // C5
+            587.33,  // D5
+            659.25,  // E5
+            698.46,  // F5
+            783.99,  // G5
+            880.00,  // A5 (octave)
+        ];
+
+        // Generate scale with envelope to avoid clicks
+        let mut samples = Vec::new();
+        for freq in frequencies {
+            samples.extend(generate_sine_with_envelope(freq, duration_per_note, sample_rate));
+        }
+
+        let result = analyze(&samples, sample_rate);
+
+        // Should detect A minor
+        assert_eq!(result.key, "A", "Expected key A, got {}", result.key);
+        assert_eq!(
+            result.mode, "minor",
+            "Expected mode minor, got {}",
+            result.mode
+        );
+        assert_eq!(
+            result.camelot, "8A",
+            "Expected Camelot 8A for A minor, got {}",
+            result.camelot
+        );
+        assert!(
+            result.confidence > 0.5,
+            "Expected confidence > 0.5, got {}",
+            result.confidence
+        );
+    }
+
+    /// Test G major chord detection
+    ///
+    /// Generates a G major triad (G-B-D) played simultaneously
+    /// and verifies detection of G major or closely related key.
+    #[test]
+    fn test_g_major_chord() {
+        let sample_rate = 44100u32;
+        let duration = 3.0f32; // Longer duration for better frequency resolution
+
+        // G major triad: G4 - B4 - D5
+        let chord_frequencies = [
+            392.00,  // G4
+            493.88,  // B4
+            587.33,  // D5
+        ];
+
+        let samples = generate_chord(&chord_frequencies, duration, sample_rate);
+        let result = analyze(&samples, sample_rate);
+
+        // G major triad should detect as G major
+        // Note: Chord detection may sometimes detect related keys due to limited
+        // harmonic content, so we check for G major or its relative minor (E minor)
+        let is_g_major = result.key == "G" && result.mode == "major";
+        let is_e_minor = result.key == "E" && result.mode == "minor"; // Relative minor
+
+        assert!(
+            is_g_major || is_e_minor,
+            "Expected G major or E minor (relative), got {} {}",
+            result.key,
+            result.mode
+        );
+
+        // If it's G major, verify Camelot notation
+        if is_g_major {
+            assert_eq!(
+                result.camelot, "9B",
+                "Expected Camelot 9B for G major, got {}",
+                result.camelot
+            );
+        }
+
+        assert!(
+            result.confidence > 0.4,
+            "Expected reasonable confidence for chord, got {}",
+            result.confidence
+        );
+    }
+
+    /// Comprehensive Camelot wheel notation test
+    ///
+    /// Verifies the Camelot wheel mapping is correct for all major
+    /// and minor keys.
+    #[test]
+    fn test_camelot_notation_comprehensive() {
+        // Test specific mappings mentioned in requirements
+        assert_eq!(CAMELOT_MAJOR[0], "8B", "C major should be 8B");
+        assert_eq!(CAMELOT_MINOR[9], "8A", "A minor should be 8A");
+        assert_eq!(CAMELOT_MAJOR[7], "9B", "G major should be 9B");
+
+        // Test that C major detected audio returns correct Camelot
+        let sample_rate = 44100u32;
+        let samples = generate_c_major_scale(sample_rate, 0.5);
+        let result = analyze(&samples, sample_rate);
+
+        if result.key == "C" && result.mode == "major" {
+            assert_eq!(
+                result.camelot, "8B",
+                "C major detection should return Camelot 8B"
+            );
+        }
+
+        // Verify relative major/minor relationship in Camelot system
+        // Relative keys share the same number but different letter (A/B)
+        // C major (8B) <-> A minor (8A)
+        let c_major_num: String = CAMELOT_MAJOR[0].chars().filter(|c| c.is_numeric()).collect();
+        let a_minor_num: String = CAMELOT_MINOR[9].chars().filter(|c| c.is_numeric()).collect();
+        assert_eq!(
+            c_major_num, a_minor_num,
+            "Relative major/minor should have same Camelot number"
+        );
+
+        // Verify all major keys end with 'B' and minor with 'A'
+        for camelot in &CAMELOT_MAJOR {
+            assert!(
+                camelot.ends_with('B'),
+                "Major key Camelot notation should end with B: {}",
+                camelot
+            );
+        }
+        for camelot in &CAMELOT_MINOR {
+            assert!(
+                camelot.ends_with('A'),
+                "Minor key Camelot notation should end with A: {}",
+                camelot
+            );
+        }
+    }
+
+    /// Test confidence levels: tonal content vs noise
+    ///
+    /// Verifies that tonal content (pure sine wave) produces higher
+    /// confidence than white noise.
+    ///
+    /// Note: The Krumhansl-Schmuckler algorithm maps Pearson correlation (-1 to 1)
+    /// to confidence (0 to 1) via the formula: (correlation + 1) / 2.
+    /// White noise has roughly uniform spectral energy, which can still produce
+    /// moderate correlations with key profiles. The key insight is that tonal
+    /// content should have HIGHER confidence than noise due to stronger pitch
+    /// class organization.
+    #[test]
+    fn test_confidence_tonal_vs_noise() {
+        let sample_rate = 44100u32;
+        let duration = 2.0f32;
+
+        // Generate pure tonal content (A440)
+        let tonal_samples = generate_sine(440.0, duration, sample_rate);
+        let tonal_result = analyze(&tonal_samples, sample_rate);
+
+        // Generate white noise (deterministic for reproducibility)
+        let noise_samples = generate_white_noise(duration, sample_rate, 42);
+        let noise_result = analyze(&noise_samples, sample_rate);
+
+        // Primary assertion: Tonal content should have higher confidence than noise
+        // This is the most important test - tonal content organizes energy
+        // into specific pitch classes, leading to better correlation with key profiles
+        assert!(
+            tonal_result.confidence > noise_result.confidence,
+            "Tonal content (confidence={:.3}) should have higher confidence than noise (confidence={:.3})",
+            tonal_result.confidence,
+            noise_result.confidence
+        );
+
+        // Tonal content should have reasonably high confidence (good pitch class organization)
+        assert!(
+            tonal_result.confidence > 0.6,
+            "Tonal content should have confidence > 0.6, got {:.3}",
+            tonal_result.confidence
+        );
+
+        // The confidence difference should be meaningful (at least 0.05)
+        // This ensures tonal content is distinctly more confident than noise
+        let confidence_difference = tonal_result.confidence - noise_result.confidence;
+        assert!(
+            confidence_difference > 0.05,
+            "Confidence difference ({:.3}) should be > 0.05 to indicate meaningful tonal detection",
+            confidence_difference
+        );
+    }
+
+    /// Test detection of a C major scale (from original test, extended)
+    ///
+    /// Verifies the full C major scale is detected correctly with
+    /// proper Camelot notation.
+    #[test]
+    fn test_c_major_scale() {
+        let sample_rate = 44100u32;
+
+        // C major scale frequencies (C4 to B4 as specified in requirements)
+        let frequencies = [
+            261.63,  // C4
+            293.66,  // D4
+            329.63,  // E4
+            349.23,  // F4
+            392.00,  // G4
+            440.00,  // A4
+            493.88,  // B4
+        ];
+
+        // Generate 0.5 seconds of each note as specified
+        let mut samples = Vec::new();
+        for freq in frequencies {
+            samples.extend(generate_sine_with_envelope(freq, 0.5, sample_rate));
+        }
+
+        let result = analyze(&samples, sample_rate);
+
+        assert_eq!(result.key, "C", "Expected key C, got {}", result.key);
+        assert_eq!(
+            result.mode, "major",
+            "Expected mode major, got {}",
+            result.mode
+        );
+        assert_eq!(
+            result.camelot, "8B",
+            "C major should return Camelot 8B, got {}",
+            result.camelot
+        );
+    }
+
+    /// Test detection of A minor arpeggio
+    ///
+    /// Generates an A minor arpeggio (A-C-E) to test minor key detection
+    /// with chord-like content.
+    #[test]
+    fn test_a_minor_arpeggio() {
+        let sample_rate = 44100u32;
+        let duration_per_note = 0.5f32;
+
+        // A minor arpeggio: A - C - E - A (octave)
+        let frequencies = [
+            440.00,  // A4
+            523.25,  // C5
+            659.25,  // E5
+            880.00,  // A5
+        ];
+
+        // Generate arpeggio
+        let mut samples = Vec::new();
+        for freq in frequencies {
+            samples.extend(generate_sine_with_envelope(freq, duration_per_note, sample_rate));
+        }
+
+        let result = analyze(&samples, sample_rate);
+
+        // Should detect A minor or C major (relative keys)
+        let is_a_minor = result.key == "A" && result.mode == "minor";
+        let is_c_major = result.key == "C" && result.mode == "major";
+
+        assert!(
+            is_a_minor || is_c_major,
+            "Expected A minor or C major (relative), got {} {}",
+            result.key,
+            result.mode
+        );
+
+        // Verify confidence is reasonable
+        assert!(
+            result.confidence > 0.4,
+            "Expected confidence > 0.4, got {}",
+            result.confidence
+        );
+    }
+
+    /// Test chromagram for single frequency
+    ///
+    /// Verifies the chromagram correctly identifies the pitch class
+    /// of isolated frequencies.
+    #[test]
+    fn test_chromagram_single_frequencies() {
+        let sample_rate = 44100u32;
+        let duration = 1.0f32;
+
+        // Test each pitch class with its corresponding frequency
+        let test_cases = [
+            (261.63, 0, "C"),   // C4
+            (277.18, 1, "C#"),  // C#4
+            (293.66, 2, "D"),   // D4
+            (311.13, 3, "D#"),  // D#4
+            (329.63, 4, "E"),   // E4
+            (349.23, 5, "F"),   // F4
+            (369.99, 6, "F#"),  // F#4
+            (392.00, 7, "G"),   // G4
+            (415.30, 8, "G#"),  // G#4
+            (440.00, 9, "A"),   // A4
+            (466.16, 10, "A#"), // A#4
+            (493.88, 11, "B"),  // B4
+        ];
+
+        for (freq, expected_class, name) in test_cases {
+            let samples = generate_sine(freq, duration, sample_rate);
+            let chromagram = compute_chromagram(&samples, sample_rate);
+
+            // Find the pitch class with maximum energy
+            let max_class = chromagram
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(i, _)| i)
+                .unwrap();
+
+            assert_eq!(
+                max_class, expected_class,
+                "Frequency {} Hz ({}) should map to pitch class {}, got {}",
+                freq, name, expected_class, max_class
+            );
+        }
+    }
+
+    /// Test that short audio still produces reasonable results
+    #[test]
+    fn test_short_audio_handling() {
+        let sample_rate = 44100u32;
+
+        // Very short audio (0.1 seconds)
+        let short_samples = generate_sine(440.0, 0.1, sample_rate);
+        let result = analyze(&short_samples, sample_rate);
+
+        // Should still produce a result (even if confidence is lower)
+        assert!(!result.key.is_empty(), "Should produce a key result");
+        assert!(
+            result.mode == "major" || result.mode == "minor",
+            "Mode should be major or minor"
+        );
+    }
+
+    /// Test with multi-octave content
+    #[test]
+    fn test_multi_octave_detection() {
+        let sample_rate = 44100u32;
+        let duration = 2.0f32;
+
+        // C notes across multiple octaves (should all contribute to C pitch class)
+        let c_frequencies = [
+            130.81,  // C3
+            261.63,  // C4
+            523.25,  // C5
+            1046.50, // C6
+        ];
+
+        let samples = generate_chord(&c_frequencies, duration, sample_rate);
+        let chromagram = compute_chromagram(&samples, sample_rate);
+
+        // C (pitch class 0) should have the highest energy
+        let max_class = chromagram
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        assert_eq!(
+            max_class, 0,
+            "Multi-octave C notes should produce peak at pitch class 0 (C), got {}",
+            max_class
         );
     }
 }

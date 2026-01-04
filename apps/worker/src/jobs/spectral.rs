@@ -422,6 +422,125 @@ fn std_dev(values: &[f32], mean: f32) -> f32 {
     variance.sqrt()
 }
 
+// ============================================================================
+// High-Level Feature Computation Functions
+// ============================================================================
+
+/// Compute valence (musical positiveness) from spectral features
+///
+/// Valence is derived from brightness (spectral centroid) and tonality (inverse flatness).
+/// High centroid and high tonality correlate with positive, happy-sounding music.
+///
+/// Returns a value in the range [0.0, 1.0]:
+/// - High valence (>0.6): Bright, major-key, happy-sounding
+/// - Low valence (<0.4): Dark, minor-key, sad-sounding
+///
+/// # Arguments
+/// * `features` - Aggregated spectral features from audio analysis
+/// * `_sample_rate` - Sample rate in Hz (unused, kept for API consistency)
+pub fn compute_valence(features: &SpectralFeatures, _sample_rate: u32) -> f32 {
+    // Brightness component: normalize centroid to 0-1 range
+    // Typical vocal music has centroid between 1000-8000 Hz
+    // Below 1000 Hz = very dark (bass-heavy), above 8000 Hz = very bright
+    let centroid_normalized = (features.centroid_mean - 1000.0) / (8000.0 - 1000.0);
+    let brightness = centroid_normalized.clamp(0.0, 1.0);
+
+    // Tonality component: inverse of flatness
+    // Low flatness = tonal (pure tones, harmonics) = positive
+    // High flatness = noisy = less positive
+    let tonality = 1.0 - features.flatness_mean.clamp(0.0, 1.0);
+
+    // Weight brightness more heavily (60/40 split)
+    let valence = 0.6 * brightness + 0.4 * tonality;
+
+    valence.clamp(0.0, 1.0)
+}
+
+/// Compute acousticness (confidence that the track is acoustic) from spectral features
+///
+/// Acoustic music typically has:
+/// - Low zero crossing rate (smooth waveforms vs. synthesized sounds)
+/// - Low high-frequency energy (no electronic artifacts)
+/// - Stable spectral content (low spectral flux)
+///
+/// Returns a value in the range [0.0, 1.0]:
+/// - High acousticness (>0.7): Likely acoustic instruments, no electronic processing
+/// - Low acousticness (<0.3): Likely electronic, synthesized, or heavily processed
+pub fn compute_acousticness(features: &SpectralFeatures) -> f32 {
+    // Low ZCR indicates acoustic sounds (smooth waveforms)
+    // Electronic/synthesized sounds often have higher ZCR
+    // Normalize: ZCR of 0.3 or higher is considered maximum "electronic"
+    let zcr_score = 1.0 - (features.zcr_mean / 0.3).min(1.0);
+
+    // Low high-frequency energy indicates acoustic (no synth harmonics/artifacts)
+    let hf_score = 1.0 - features.hf_energy_ratio.clamp(0.0, 1.0);
+
+    // Stable spectrum indicates acoustic (electronic often has rapid spectral changes)
+    // Normalize: spectral flux of 0.5 or higher is considered maximum instability
+    let stability = 1.0 - (features.spectral_flux_mean / 0.5).min(1.0);
+
+    // Combine with roughly equal weights (35/35/30 split)
+    let acousticness = 0.35 * zcr_score + 0.35 * hf_score + 0.30 * stability;
+
+    acousticness.clamp(0.0, 1.0)
+}
+
+/// Compute instrumentalness (likelihood that the track contains no vocals)
+///
+/// Detects the presence of vocals by measuring energy in the vocal frequency band
+/// (300-3000 Hz where human voice is most prominent).
+///
+/// Returns a value in the range [0.0, 1.0]:
+/// - High instrumentalness (>0.7): Likely no vocals present
+/// - Low instrumentalness (<0.3): Likely contains significant vocals
+///
+/// Note: This is a simplified heuristic. True vocal detection would require
+/// more sophisticated techniques like harmonic-percussive separation or ML models.
+pub fn compute_instrumentalness(features: &SpectralFeatures) -> f32 {
+    // High energy in vocal band suggests vocals are present
+    // Low energy in vocal band suggests instrumental
+    // The vocal_band_energy is already computed as mean energy in 300-3000 Hz
+    //
+    // We invert and normalize: high vocal energy = low instrumentalness
+    // Cap at 1.0 since vocal_band_energy can exceed 1.0 for loud signals
+    let instrumentalness = 1.0 - features.vocal_band_energy.min(1.0);
+
+    instrumentalness.clamp(0.0, 1.0)
+}
+
+/// Compute speechiness (presence of spoken words in the track)
+///
+/// Speech is characterized by:
+/// - High variance in zero crossing rate (speech modulation patterns)
+/// - Energy concentrated in vocal band but with rapid temporal changes
+///
+/// Returns a value in the range [0.0, 1.0]:
+/// - High speechiness (>0.66): Likely spoken word, podcast, rap
+/// - Medium speechiness (0.33-0.66): May contain both music and speech
+/// - Low speechiness (<0.33): Likely music with little to no speech
+///
+/// Note: Differentiates from singing by using ZCR variance (speech has more
+/// irregular modulation than sustained sung notes).
+pub fn compute_speechiness(features: &SpectralFeatures) -> f32 {
+    // High ZCR variance indicates speech-like modulation patterns
+    // Singing tends to have more stable ZCR within phrases
+    // Normalize: ZCR std of 0.15 or higher indicates significant speech-like variance
+    let zcr_variance_score = (features.zcr_std / 0.15).min(1.0);
+
+    // Moderate vocal band energy can indicate speech
+    // Very high energy might be singing, very low is instrumental
+    // We want moderate values, so use a different approach:
+    // Low vocal energy = no speech (inverse relationship in this context)
+    // The formula creates a bias toward detecting speech when ZCR variance is high
+    let vocal_factor = 1.0 - features.vocal_band_energy.min(1.0);
+
+    // Weight ZCR variance more heavily as it's the primary discriminator
+    // The vocal_factor adds context but speech detection mainly relies on modulation
+    let speechiness = 0.7 * zcr_variance_score + 0.3 * vocal_factor.abs();
+
+    speechiness.clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::PI;
@@ -713,6 +832,323 @@ mod tests {
             (bin as i32 - 46).abs() <= 1,
             "1000 Hz should be ~bin 46, got {}",
             bin
+        );
+    }
+
+    // ========================================================================
+    // Tests for High-Level Feature Computation Functions
+    // ========================================================================
+
+    #[test]
+    fn test_compute_valence_high_centroid() {
+        // High spectral centroid (bright sound) should yield high valence
+        let features = SpectralFeatures {
+            centroid_mean: 6000.0, // High centroid = bright
+            flatness_mean: 0.1,    // Low flatness = tonal
+            ..Default::default()
+        };
+
+        let valence = compute_valence(&features, 44100);
+
+        assert!(
+            valence > 0.5,
+            "High centroid should produce high valence, got {}",
+            valence
+        );
+        assert!(
+            valence <= 1.0,
+            "Valence should be clamped to 1.0, got {}",
+            valence
+        );
+    }
+
+    #[test]
+    fn test_compute_valence_low_centroid() {
+        // Low spectral centroid (dark sound) should yield low valence
+        let features = SpectralFeatures {
+            centroid_mean: 500.0, // Low centroid = dark
+            flatness_mean: 0.5,   // Moderate flatness
+            ..Default::default()
+        };
+
+        let valence = compute_valence(&features, 44100);
+
+        assert!(
+            valence < 0.5,
+            "Low centroid should produce low valence, got {}",
+            valence
+        );
+        assert!(
+            valence >= 0.0,
+            "Valence should be clamped to 0.0, got {}",
+            valence
+        );
+    }
+
+    #[test]
+    fn test_compute_valence_range() {
+        // Test that output is always in [0.0, 1.0] range
+        let test_cases = [
+            (0.0, 0.0),       // Minimum values
+            (1000.0, 0.0),    // Edge case: exactly at low boundary
+            (8000.0, 0.0),    // Edge case: exactly at high boundary
+            (10000.0, 1.0),   // Beyond max centroid
+            (5000.0, 0.5),    // Mid range
+        ];
+
+        for (centroid, flatness) in test_cases {
+            let features = SpectralFeatures {
+                centroid_mean: centroid,
+                flatness_mean: flatness,
+                ..Default::default()
+            };
+            let valence = compute_valence(&features, 44100);
+
+            assert!(
+                (0.0..=1.0).contains(&valence),
+                "Valence must be in [0.0, 1.0], got {} for centroid={}, flatness={}",
+                valence,
+                centroid,
+                flatness
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_acousticness_low_zcr_low_hf() {
+        // Low ZCR and low HF energy should indicate acoustic content
+        let features = SpectralFeatures {
+            zcr_mean: 0.02,           // Very low ZCR = acoustic
+            hf_energy_ratio: 0.05,    // Low HF = acoustic
+            spectral_flux_mean: 0.05, // Low flux = stable/acoustic
+            ..Default::default()
+        };
+
+        let acousticness = compute_acousticness(&features);
+
+        assert!(
+            acousticness > 0.7,
+            "Low ZCR + low HF should produce high acousticness, got {}",
+            acousticness
+        );
+    }
+
+    #[test]
+    fn test_compute_acousticness_high_zcr_high_hf() {
+        // High ZCR and high HF energy should indicate electronic content
+        let features = SpectralFeatures {
+            zcr_mean: 0.4,           // High ZCR = electronic
+            hf_energy_ratio: 0.8,    // High HF = electronic
+            spectral_flux_mean: 0.6, // High flux = unstable/electronic
+            ..Default::default()
+        };
+
+        let acousticness = compute_acousticness(&features);
+
+        assert!(
+            acousticness < 0.3,
+            "High ZCR + high HF should produce low acousticness, got {}",
+            acousticness
+        );
+    }
+
+    #[test]
+    fn test_compute_acousticness_range() {
+        // Test edge cases for range clamping
+        let test_cases = [
+            (0.0, 0.0, 0.0),     // All minimum = max acousticness
+            (0.5, 1.0, 1.0),     // All maximum = min acousticness
+            (0.15, 0.5, 0.25),   // Mixed values
+        ];
+
+        for (zcr, hf, flux) in test_cases {
+            let features = SpectralFeatures {
+                zcr_mean: zcr,
+                hf_energy_ratio: hf,
+                spectral_flux_mean: flux,
+                ..Default::default()
+            };
+            let acousticness = compute_acousticness(&features);
+
+            assert!(
+                (0.0..=1.0).contains(&acousticness),
+                "Acousticness must be in [0.0, 1.0], got {} for zcr={}, hf={}, flux={}",
+                acousticness,
+                zcr,
+                hf,
+                flux
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_instrumentalness_low_vocal_energy() {
+        // Low vocal band energy should indicate instrumental content
+        let features = SpectralFeatures {
+            vocal_band_energy: 0.1, // Low energy in vocal band
+            ..Default::default()
+        };
+
+        let instrumentalness = compute_instrumentalness(&features);
+
+        assert!(
+            instrumentalness > 0.8,
+            "Low vocal energy should produce high instrumentalness, got {}",
+            instrumentalness
+        );
+    }
+
+    #[test]
+    fn test_compute_instrumentalness_high_vocal_energy() {
+        // High vocal band energy should indicate vocals present
+        let features = SpectralFeatures {
+            vocal_band_energy: 0.9, // High energy in vocal band
+            ..Default::default()
+        };
+
+        let instrumentalness = compute_instrumentalness(&features);
+
+        assert!(
+            instrumentalness < 0.2,
+            "High vocal energy should produce low instrumentalness, got {}",
+            instrumentalness
+        );
+    }
+
+    #[test]
+    fn test_compute_instrumentalness_range() {
+        // Test edge cases including values > 1.0 (which can occur with loud signals)
+        let test_cases = [0.0, 0.5, 1.0, 1.5, 2.0];
+
+        for vocal_energy in test_cases {
+            let features = SpectralFeatures {
+                vocal_band_energy: vocal_energy,
+                ..Default::default()
+            };
+            let instrumentalness = compute_instrumentalness(&features);
+
+            assert!(
+                (0.0..=1.0).contains(&instrumentalness),
+                "Instrumentalness must be in [0.0, 1.0], got {} for vocal_energy={}",
+                instrumentalness,
+                vocal_energy
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_speechiness_high_zcr_variance() {
+        // High ZCR variance should indicate speech-like modulation
+        let features = SpectralFeatures {
+            zcr_std: 0.2,           // High variance in ZCR
+            vocal_band_energy: 0.3, // Some vocal energy
+            ..Default::default()
+        };
+
+        let speechiness = compute_speechiness(&features);
+
+        assert!(
+            speechiness > 0.5,
+            "High ZCR variance should produce higher speechiness, got {}",
+            speechiness
+        );
+    }
+
+    #[test]
+    fn test_compute_speechiness_low_zcr_variance() {
+        // Low ZCR variance should indicate sustained tones (singing, not speech)
+        let features = SpectralFeatures {
+            zcr_std: 0.01,          // Very low variance
+            vocal_band_energy: 0.8, // High vocal energy (singing)
+            ..Default::default()
+        };
+
+        let speechiness = compute_speechiness(&features);
+
+        assert!(
+            speechiness < 0.3,
+            "Low ZCR variance should produce low speechiness, got {}",
+            speechiness
+        );
+    }
+
+    #[test]
+    fn test_compute_speechiness_range() {
+        // Test edge cases
+        let test_cases = [
+            (0.0, 0.0),
+            (0.15, 0.5),
+            (0.3, 1.0),
+            (0.0, 1.5), // vocal_band_energy > 1.0
+        ];
+
+        for (zcr_std, vocal) in test_cases {
+            let features = SpectralFeatures {
+                zcr_std,
+                vocal_band_energy: vocal,
+                ..Default::default()
+            };
+            let speechiness = compute_speechiness(&features);
+
+            assert!(
+                (0.0..=1.0).contains(&speechiness),
+                "Speechiness must be in [0.0, 1.0], got {} for zcr_std={}, vocal={}",
+                speechiness,
+                zcr_std,
+                vocal
+            );
+        }
+    }
+
+    #[test]
+    fn test_feature_functions_with_real_audio() {
+        // Integration test: generate audio signals and compute features
+        let sample_rate = 44100u32;
+
+        // High-frequency sine wave should have high valence (bright)
+        let bright_samples = generate_sine(6000.0, sample_rate, sample_rate as usize);
+        let bright_features = analyze_spectral_features(&bright_samples, sample_rate);
+        let bright_valence = compute_valence(&bright_features, sample_rate);
+
+        // Low-frequency sine wave should have lower valence (dark)
+        let dark_samples = generate_sine(200.0, sample_rate, sample_rate as usize);
+        let dark_features = analyze_spectral_features(&dark_samples, sample_rate);
+        let dark_valence = compute_valence(&dark_features, sample_rate);
+
+        assert!(
+            bright_valence > dark_valence,
+            "Bright audio ({}) should have higher valence than dark audio ({})",
+            bright_valence,
+            dark_valence
+        );
+
+        // Low-frequency sine wave (less ZCR) should be more acoustic than noise
+        // Note: High-frequency sines have many zero crossings and thus may appear less acoustic
+        let low_sine_acousticness = compute_acousticness(&dark_features);
+        let noise = generate_noise(sample_rate as usize, 99999);
+        let noise_features = analyze_spectral_features(&noise, sample_rate);
+        let noise_acousticness = compute_acousticness(&noise_features);
+
+        assert!(
+            low_sine_acousticness > noise_acousticness,
+            "Low-frequency sine ({}) should be more acoustic than noise ({})",
+            low_sine_acousticness,
+            noise_acousticness
+        );
+
+        // Low vocal band energy should produce high instrumentalness
+        // A high-frequency sine (above 3kHz) has less vocal band energy
+        let high_freq_instrumentalness = compute_instrumentalness(&bright_features);
+        // A mid-frequency sine in the vocal band
+        let mid_samples = generate_sine(1000.0, sample_rate, sample_rate as usize);
+        let mid_features = analyze_spectral_features(&mid_samples, sample_rate);
+        let mid_freq_instrumentalness = compute_instrumentalness(&mid_features);
+
+        assert!(
+            high_freq_instrumentalness > mid_freq_instrumentalness,
+            "High-freq sine ({}) should have higher instrumentalness than mid-freq ({})",
+            high_freq_instrumentalness,
+            mid_freq_instrumentalness
         );
     }
 }
