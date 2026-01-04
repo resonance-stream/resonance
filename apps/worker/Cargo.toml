@@ -39,6 +39,11 @@ url = { workspace = true }
 symphonia = { workspace = true }
 lofty = { workspace = true }
 
+# FFT / DSP (pure-Rust, no C dependencies)
+rustfft = { workspace = true }
+realfft = { workspace = true }
+apodize = { workspace = true }
+
 # File system
 walkdir = { workspace = true }
 sha2 = { workspace = true }
