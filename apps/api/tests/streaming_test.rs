@@ -415,24 +415,35 @@ fn generate_etag(file_size: u64, modified: std::time::SystemTime) -> String {
     format!("\"{}-{}\"", file_size, mtime_secs)
 }
 
+/// Check if the client's cached version is still valid
+///
+/// Per RFC 7232 Section 6:
+/// - If-None-Match takes precedence over If-Modified-Since
+/// - If If-None-Match is present (even if malformed), If-Modified-Since is ignored
 fn is_cache_valid(
     headers: &axum::http::HeaderMap,
     etag: &str,
     modified: std::time::SystemTime,
 ) -> bool {
-    // Check If-None-Match
+    // Check If-None-Match (takes precedence over If-Modified-Since per RFC 7232)
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
-        if let Ok(value) = if_none_match.to_str() {
-            return value.split(',').any(|v| {
-                let v = v.trim();
-                let v_trimmed = v.strip_prefix("W/").unwrap_or(v);
-                let etag_trimmed = etag.strip_prefix("W/").unwrap_or(etag);
-                v_trimmed == etag_trimmed || v == "*"
-            });
-        }
+        // RFC 7232: If If-None-Match is present, it takes precedence and
+        // If-Modified-Since must be ignored. A malformed If-None-Match header
+        // means the condition cannot be evaluated, so return false (cache invalid).
+        let Ok(value) = if_none_match.to_str() else {
+            return false;
+        };
+        // Handle both single value and comma-separated list
+        return value.split(',').any(|v| {
+            let v = v.trim();
+            // RFC 7232: Weak comparison - strip "W/" prefix if present
+            let v_trimmed = v.strip_prefix("W/").unwrap_or(v);
+            let etag_trimmed = etag.strip_prefix("W/").unwrap_or(etag);
+            v_trimmed == etag_trimmed || v == "*"
+        });
     }
 
-    // Check If-Modified-Since
+    // Check If-Modified-Since (only if If-None-Match is not present)
     if let Some(if_modified_since) = headers.get(header::IF_MODIFIED_SINCE) {
         if let Ok(value) = if_modified_since.to_str() {
             if let Ok(if_modified_since_time) = httpdate::parse_http_date(value) {
