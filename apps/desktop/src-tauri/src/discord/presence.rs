@@ -102,10 +102,11 @@ impl RichPresence {
         elapsed_secs: Option<u64>,
         duration_secs: Option<u64>,
     ) -> (Option<i64>, Option<i64>) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // Return (None, None) if system time is before UNIX epoch
+        let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(_) => return (None, None),
+        };
 
         match (elapsed_secs, duration_secs) {
             (Some(elapsed), Some(duration)) => {
