@@ -5,7 +5,9 @@
 //! - System tray with dynamic playback controls
 //! - Global media key shortcuts
 //! - Minimize-to-tray functionality
+//! - Discord Rich Presence integration
 
+mod discord;
 mod media_keys;
 mod tray;
 
@@ -20,7 +22,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![tray::update_playback_state])
+        .manage(discord::init_discord_state())
+        .invoke_handler(tauri::generate_handler![
+            tray::update_playback_state,
+            discord::set_presence,
+            discord::clear_presence,
+            discord::disconnect_discord
+        ])
         .setup(|app| {
             // Create system tray
             if let Err(e) = tray::create_tray(app.handle()) {
