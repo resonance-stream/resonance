@@ -449,7 +449,7 @@ async fn test_update_preferences_invalid_theme() {
     assert!(!response.errors.is_empty(), "Should error on invalid theme");
     let error_msg = response.errors[0].message.to_lowercase();
     assert!(
-        error_msg.contains("invalid") || error_msg.contains("theme"),
+        error_msg.contains("invalid") && error_msg.contains("theme"),
         "Error should mention invalid theme: {}",
         response.errors[0].message
     );
@@ -478,7 +478,7 @@ async fn test_update_preferences_invalid_quality() {
     );
     let error_msg = response.errors[0].message.to_lowercase();
     assert!(
-        error_msg.contains("invalid") || error_msg.contains("quality"),
+        error_msg.contains("invalid") && error_msg.contains("quality"),
         "Error should mention invalid quality: {}",
         response.errors[0].message
     );
@@ -507,7 +507,7 @@ async fn test_update_preferences_crossfade_exceeds_max() {
     );
     let error_msg = response.errors[0].message.to_lowercase();
     assert!(
-        error_msg.contains("12000") || error_msg.contains("exceed"),
+        error_msg.contains("12000") && error_msg.contains("exceed"),
         "Error should mention max crossfade: {}",
         response.errors[0].message
     );
@@ -533,7 +533,7 @@ async fn test_update_preferences_empty_input() {
     assert!(!response.errors.is_empty(), "Should error on empty input");
     let error_msg = response.errors[0].message.to_lowercase();
     assert!(
-        error_msg.contains("field") || error_msg.contains("provided"),
+        error_msg.contains("field") && error_msg.contains("provided"),
         "Error should mention no fields provided: {}",
         response.errors[0].message
     );
