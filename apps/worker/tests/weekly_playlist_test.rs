@@ -332,7 +332,7 @@ fn test_toctou_fix_upsert_pattern_is_atomic() {
     let playlist_name = "Discover Weekly".to_string();
 
     // Simulate atomic upsert (what the SQL does)
-    let atomic_upsert = |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
+    let atomic_upsert = |storage: &Arc<Mutex<HashMap<(Uuid, String), Uuid>>>,
                          user_id: Uuid,
                          name: String|
      -> (Uuid, bool) {
@@ -379,7 +379,7 @@ fn test_concurrent_playlist_creation_returns_same_id() {
     let results: Arc<Mutex<Vec<(Uuid, bool)>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Simulate the atomic upsert
-    let atomic_upsert = |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
+    let atomic_upsert = |storage: &Arc<Mutex<HashMap<(Uuid, String), Uuid>>>,
                          user_id: Uuid,
                          name: String|
      -> (Uuid, bool) {
