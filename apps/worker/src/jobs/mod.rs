@@ -27,6 +27,22 @@ pub mod rhythm_analysis;
 pub mod spectral;
 pub mod weekly_playlist;
 
+// Re-export audio analysis types and functions for external use.
+// These will be consumed when feature_extraction.rs integrates the new modules.
+#[allow(unused_imports)]
+pub use spectral::{
+    analyze_spectral_features, zero_crossing_rate, SpectralAnalyzer, SpectralFeatures,
+    DEFAULT_FRAME_SIZE, DEFAULT_HOP_SIZE,
+};
+
+#[allow(unused_imports)]
+pub use rhythm_analysis::{
+    analyze as analyze_rhythm, calculate_danceability, RhythmAnalyzer, RhythmFeatures,
+};
+
+#[allow(unused_imports)]
+pub use key_detection::{analyze as analyze_key, compute_chromagram, estimate_key, KeyResult};
+
 /// Job types that can be processed by the worker
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
