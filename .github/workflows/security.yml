@@ -143,7 +143,8 @@ jobs:
           queries: security-extended
 
       - name: Build Rust code
-        run: cargo build --release
+        # Exclude desktop package on Linux (requires glib-sys which isn't available in CI)
+        run: cargo build --workspace --exclude resonance-desktop --release
         env:
           SQLX_OFFLINE: true
 
