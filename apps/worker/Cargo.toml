@@ -63,3 +63,6 @@ fake = { workspace = true }
 rstest = { workspace = true }
 once_cell = { workspace = true }
 tempfile = { workspace = true }
+
+# Shared test mocks
+resonance-test-utils = { workspace = true }

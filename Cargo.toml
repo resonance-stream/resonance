@@ -7,6 +7,7 @@ members = [
     "packages/shared-config",
     "packages/ollama-client",
     "packages/lastfm-client",
+    "packages/test-utils",
 ]
 
 [workspace.package]
@@ -80,6 +81,7 @@ httpdate = "1"
 resonance-shared-config = { path = "packages/shared-config" }
 resonance-ollama-client = { path = "packages/ollama-client" }
 resonance-lastfm-client = { path = "packages/lastfm-client" }
+resonance-test-utils = { path = "packages/test-utils" }
 
 # Testing
 tokio-test = "0.4"
