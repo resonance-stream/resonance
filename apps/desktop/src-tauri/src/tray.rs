@@ -20,8 +20,15 @@ pub struct PlaybackState {
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<TrayIcon<R>, tauri::Error> {
     let menu = build_tray_menu(app, &PlaybackState::default())?;
 
+    let icon = app.default_window_icon().ok_or_else(|| {
+        tauri::Error::InvalidIcon(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "default window icon not configured in tauri.conf.json",
+        ))
+    })?;
+
     TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon.clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("Resonance")
