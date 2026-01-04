@@ -177,7 +177,7 @@ async fn stream_track(
         .ok_or_else(|| ApiError::not_found("track", track_id.to_string()))?;
 
     // 3. Validate and resolve file path
-    let file_path = validate_file_path(&track.file_path, &state.music_library_path)?;
+    let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
     // 4. Validate transcoding parameters
     if transcode_query.bitrate.is_some() && transcode_query.format.is_none() {
@@ -340,7 +340,7 @@ async fn head_track(
         .ok_or_else(|| ApiError::not_found("track", track_id.to_string()))?;
 
     // 3. Validate and resolve file path
-    let file_path = validate_file_path(&track.file_path, &state.music_library_path)?;
+    let file_path = validate_file_path(&track.file_path, &state.music_library_path).await?;
 
     // 4. Get file metadata
     let metadata = tokio::fs::metadata(&file_path).await.map_err(|e| {
@@ -387,7 +387,10 @@ async fn head_track(
 
 // ========== Helper Functions ==========
 
-fn validate_file_path(file_path: &str, music_library_path: &std::path::Path) -> ApiResult<PathBuf> {
+async fn validate_file_path(
+    file_path: &str,
+    music_library_path: &std::path::Path,
+) -> ApiResult<PathBuf> {
     let input_path = std::path::Path::new(file_path);
 
     // Reject any parent-dir components in relative paths
@@ -406,12 +409,13 @@ fn validate_file_path(file_path: &str, music_library_path: &std::path::Path) -> 
     };
 
     // Canonicalize to resolve symlinks and check boundaries
-    let canonical = full_path
-        .canonicalize()
+    // Use tokio::fs::canonicalize to avoid blocking the async runtime
+    let canonical = tokio::fs::canonicalize(&full_path)
+        .await
         .map_err(|_| ApiError::AudioFileNotFound(file_path.to_string()))?;
 
-    let canonical_library = music_library_path
-        .canonicalize()
+    let canonical_library = tokio::fs::canonicalize(music_library_path)
+        .await
         .map_err(|e| ApiError::AudioProcessing(format!("Invalid music library path: {}", e)))?;
 
     if !canonical.starts_with(&canonical_library) {
