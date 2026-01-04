@@ -108,12 +108,13 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Handle window close to minimize to tray instead
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // Always prevent the window from closing first to ensure robustness
+                // Even if minimize_to_tray fails, we don't want the app to close unexpectedly
+                api.prevent_close();
+
                 // Hide window to tray instead of closing
                 if let Err(e) = tray::minimize_to_tray(window) {
                     tracing::error!("Failed to minimize to tray: {}", e);
-                } else {
-                    // Prevent the window from closing
-                    api.prevent_close();
                 }
             }
         })
