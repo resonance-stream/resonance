@@ -110,7 +110,10 @@ impl RichPresence {
 
         match (elapsed_secs, duration_secs) {
             (Some(elapsed), Some(duration)) => {
-                let start = now - elapsed as i64;
+                // Clamp elapsed to duration to prevent invalid time ranges
+                // (e.g., elapsed > duration due to timing drift or buffering delays)
+                let clamped_elapsed = elapsed.min(duration);
+                let start = now - clamped_elapsed as i64;
                 let end = start + duration as i64;
                 (Some(start), Some(end))
             }
@@ -275,5 +278,33 @@ mod tests {
         let (start, end) = RichPresence::calculate_timestamps(None, None);
         assert!(start.is_none());
         assert!(end.is_none());
+    }
+
+    #[test]
+    fn test_calculate_timestamps_elapsed_exceeds_duration() {
+        // When elapsed > duration (e.g., due to timing drift), elapsed should be clamped
+        let (start, end) = RichPresence::calculate_timestamps(Some(150), Some(120));
+        assert!(start.is_some());
+        assert!(end.is_some());
+
+        let start_ts = start.unwrap();
+        let end_ts = end.unwrap();
+
+        // Duration should still be 120 seconds
+        assert_eq!(end_ts - start_ts, 120);
+
+        // The difference between now and start should be clamped to duration (120),
+        // not the original elapsed (150)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // Allow 1 second tolerance for test execution time
+        let actual_elapsed = now - start_ts;
+        assert!(
+            actual_elapsed <= 121,
+            "elapsed should be clamped to duration (120), got {}",
+            actual_elapsed
+        );
     }
 }
