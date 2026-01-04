@@ -273,7 +273,21 @@ async fn stream_track(
         Some(range) => {
             let (start, end) = parse_range_header(range, file_size)?;
             let content_length = end - start + 1;
-            let range_content = file_content[start as usize..=end as usize].to_vec();
+
+            // Safely convert u64 range bounds to usize with checked conversions
+            let start_usize = usize::try_from(start).map_err(|_| {
+                ApiError::InvalidRange("Range start exceeds platform limits".to_string())
+            })?;
+            let end_usize = usize::try_from(end).map_err(|_| {
+                ApiError::InvalidRange("Range end exceeds platform limits".to_string())
+            })?;
+
+            // Bounds check against actual file content length
+            if end_usize >= file_content.len() {
+                return Err(ApiError::RangeNotSatisfiable { file_size });
+            }
+
+            let range_content = file_content[start_usize..=end_usize].to_vec();
 
             Ok(Response::builder()
                 .status(StatusCode::PARTIAL_CONTENT)
