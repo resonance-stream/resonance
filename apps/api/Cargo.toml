@@ -87,6 +87,7 @@ wiremock = { workspace = true }
 fake = { workspace = true }
 rstest = { workspace = true }
 once_cell = { workspace = true }
+tempfile = "3"
 
 # HTTP testing
 axum-test = "14"
