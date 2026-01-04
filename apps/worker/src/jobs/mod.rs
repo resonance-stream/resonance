@@ -18,6 +18,7 @@ use crate::AppState;
 
 pub mod embedding_generation;
 pub mod feature_extraction;
+pub mod key_detection;
 pub mod library_scan;
 pub mod lidarr_sync;
 pub mod mood_detection;
