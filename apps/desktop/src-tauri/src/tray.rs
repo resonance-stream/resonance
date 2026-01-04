@@ -45,7 +45,8 @@ fn build_tray_menu<R: Runtime>(
     let play_pause_label = if state.is_playing { "Pause" } else { "Play" };
 
     // Create menu items
-    let now_playing_item = MenuItem::with_id(app, "now-playing", &now_playing, false, None::<&str>)?;
+    let now_playing_item =
+        MenuItem::with_id(app, "now-playing", &now_playing, false, None::<&str>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
     let play_pause = MenuItem::with_id(app, "play-pause", play_pause_label, true, None::<&str>)?;
     let previous = MenuItem::with_id(app, "previous", "Previous Track", true, None::<&str>)?;

@@ -54,7 +54,10 @@ fn test_deserialize_lidarr_artist_complete() {
     assert_eq!(json["id"], 42);
     assert_eq!(json["artistName"], "Queen");
     assert_eq!(json["sortName"], "Queen");
-    assert_eq!(json["overview"], "British rock band formed in London in 1970");
+    assert_eq!(
+        json["overview"],
+        "British rock band formed in London in 1970"
+    );
     assert_eq!(json["monitored"], true);
     assert_eq!(json["path"], "/music/queen");
     assert_eq!(json["foreignArtistId"], mbid);

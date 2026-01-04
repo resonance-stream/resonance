@@ -78,7 +78,10 @@ pub fn run() {
             // Register deep link handler
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
-                deep_link::handle_deep_link(&handle, event.urls().iter().map(|u| u.to_string()).collect());
+                deep_link::handle_deep_link(
+                    &handle,
+                    event.urls().iter().map(|u| u.to_string()).collect(),
+                );
             });
 
             // Check for updates on startup (non-blocking)

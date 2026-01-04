@@ -88,11 +88,9 @@ impl MockOllamaServer {
     pub async fn mock_embeddings_failure(&self, status_code: u16, error_message: &str) {
         Mock::given(method("POST"))
             .and(path("/api/embeddings"))
-            .respond_with(
-                ResponseTemplate::new(status_code).set_body_json(json!({
-                    "error": error_message
-                })),
-            )
+            .respond_with(ResponseTemplate::new(status_code).set_body_json(json!({
+                "error": error_message
+            })))
             .mount(&self.server)
             .await;
     }
@@ -125,11 +123,9 @@ impl MockOllamaServer {
     pub async fn mock_generate_failure(&self, status_code: u16, error_message: &str) {
         Mock::given(method("POST"))
             .and(path("/api/generate"))
-            .respond_with(
-                ResponseTemplate::new(status_code).set_body_json(json!({
-                    "error": error_message
-                })),
-            )
+            .respond_with(ResponseTemplate::new(status_code).set_body_json(json!({
+                "error": error_message
+            })))
             .mount(&self.server)
             .await;
     }
@@ -249,11 +245,9 @@ impl MockOllamaServer {
     pub async fn mock_chat_failure(&self, status_code: u16, error_message: &str) {
         Mock::given(method("POST"))
             .and(path("/api/chat"))
-            .respond_with(
-                ResponseTemplate::new(status_code).set_body_json(json!({
-                    "error": error_message
-                })),
-            )
+            .respond_with(ResponseTemplate::new(status_code).set_body_json(json!({
+                "error": error_message
+            })))
             .mount(&self.server)
             .await;
     }

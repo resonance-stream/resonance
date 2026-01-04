@@ -24,16 +24,13 @@
 //! }
 //! ```
 
-mod ollama;
 mod lidarr;
+mod ollama;
 mod redis;
 
-pub use ollama::MockOllamaServer;
 pub use lidarr::{
+    LidarrAlbumFixture, LidarrAlbumStatisticsFixture, LidarrArtistFixture, LidarrImageFixture,
     MockLidarrServer,
-    LidarrArtistFixture,
-    LidarrAlbumFixture,
-    LidarrAlbumStatisticsFixture,
-    LidarrImageFixture,
 };
+pub use ollama::MockOllamaServer;
 pub use redis::MockRedisStore;

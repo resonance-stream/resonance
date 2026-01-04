@@ -248,11 +248,7 @@ fn test_audio_stats_rms_calculation() {
     }
 
     let rms = stats.rms();
-    assert!(
-        (rms - 0.5).abs() < 0.001,
-        "RMS should be 0.5, got {}",
-        rms
-    );
+    assert!((rms - 0.5).abs() < 0.001, "RMS should be 0.5, got {}", rms);
 }
 
 #[test]
@@ -470,7 +466,11 @@ fn test_energy_capped_at_one() {
 
     let energy = stats.energy();
     // RMS = 0.8, energy = min(0.8 * 3, 1.0) = 1.0
-    assert_eq!(energy, 1.0, "Energy should be capped at 1.0, got {}", energy);
+    assert_eq!(
+        energy, 1.0,
+        "Energy should be capped at 1.0, got {}",
+        energy
+    );
 }
 
 #[test]
@@ -486,7 +486,10 @@ fn test_dynamic_range_calculation() {
     let rms = stats.rms();
     let peak = stats.peak;
 
-    assert!(peak > rms, "Peak should be greater than RMS for dynamic audio");
+    assert!(
+        peak > rms,
+        "Peak should be greater than RMS for dynamic audio"
+    );
 
     // Dynamic range = 20 * log10(peak / rms)
     if rms > f32::EPSILON && peak > f32::EPSILON {

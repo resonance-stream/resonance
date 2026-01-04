@@ -14,11 +14,6 @@
 //! crate to enable reuse across both worker and API test suites.
 
 pub use resonance_test_utils::{
-    LidarrAlbumFixture,
-    LidarrAlbumStatisticsFixture,
-    LidarrArtistFixture,
-    LidarrImageFixture,
-    MockLidarrServer,
-    MockOllamaServer,
-    MockRedisStore,
+    LidarrAlbumFixture, LidarrAlbumStatisticsFixture, LidarrArtistFixture, LidarrImageFixture,
+    MockLidarrServer, MockOllamaServer, MockRedisStore,
 };

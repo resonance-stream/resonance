@@ -29,7 +29,9 @@ pub struct UpdateProgress {
 /// Checks for available updates
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle<Wry>) -> Result<UpdateStatus, String> {
-    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {}", e))?;
     let current_version = app.package_info().version.to_string();
 
     match updater.check().await {
@@ -67,7 +69,9 @@ pub async fn check_for_updates(app: AppHandle<Wry>) -> Result<UpdateStatus, Stri
 /// Downloads and installs the available update
 #[tauri::command]
 pub async fn install_update(app: AppHandle<Wry>) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {}", e))?;
 
     let update = updater
         .check()
@@ -81,7 +85,8 @@ pub async fn install_update(app: AppHandle<Wry>) -> Result<(), String> {
     let bytes = update
         .download(
             |chunk_length, content_length| {
-                let percentage = content_length.map(|total| (chunk_length as f32 / total as f32) * 100.0);
+                let percentage =
+                    content_length.map(|total| (chunk_length as f32 / total as f32) * 100.0);
                 tracing::debug!(
                     "Download progress: {} / {:?} bytes ({:?}%)",
                     chunk_length,

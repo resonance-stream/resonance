@@ -27,7 +27,9 @@ pub fn register_media_keys<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
 
 /// Registers a single media key shortcut
 fn register_media_key<R: Runtime>(app: &AppHandle<R>, key: &str) -> Result<(), String> {
-    let shortcut: Shortcut = key.parse().map_err(|e| format!("Failed to parse {}: {}", key, e))?;
+    let shortcut: Shortcut = key
+        .parse()
+        .map_err(|e| format!("Failed to parse {}: {}", key, e))?;
 
     let app_handle = app.clone();
     let key_owned = key.to_string();

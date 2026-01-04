@@ -23,7 +23,10 @@ fn test_prompt_includes_all_audio_features() {
     // Verify all audio features are included
     assert!(prompt.contains("BPM: 128"), "Missing BPM in prompt");
     assert!(prompt.contains("Energy: 0.80"), "Missing energy in prompt");
-    assert!(prompt.contains("Valence: 0.65"), "Missing valence in prompt");
+    assert!(
+        prompt.contains("Valence: 0.65"),
+        "Missing valence in prompt"
+    );
     assert!(
         prompt.contains("Danceability: 0.75"),
         "Missing danceability in prompt"
@@ -150,7 +153,8 @@ fn test_parse_response_with_defaults() {
 
 #[test]
 fn test_parse_response_rejects_empty_moods() {
-    let response = r#"{"moods": [], "energy": "medium", "valence": "neutral", "description": "Empty"}"#;
+    let response =
+        r#"{"moods": [], "energy": "medium", "valence": "neutral", "description": "Empty"}"#;
 
     let result = parse_mood_response_for_test(response);
 
@@ -268,7 +272,10 @@ async fn test_tag_generation_from_analysis() {
         description: "Upbeat track".to_string(),
     };
     let tags = generate_tags_for_test(&high_positive);
-    assert!(tags.contains(&"fast".to_string()), "Should include 'fast' tag");
+    assert!(
+        tags.contains(&"fast".to_string()),
+        "Should include 'fast' tag"
+    );
     assert!(
         tags.contains(&"bright".to_string()),
         "Should include 'bright' tag"
@@ -282,8 +289,14 @@ async fn test_tag_generation_from_analysis() {
         description: "Sad ballad".to_string(),
     };
     let tags = generate_tags_for_test(&low_negative);
-    assert!(tags.contains(&"slow".to_string()), "Should include 'slow' tag");
-    assert!(tags.contains(&"dark".to_string()), "Should include 'dark' tag");
+    assert!(
+        tags.contains(&"slow".to_string()),
+        "Should include 'slow' tag"
+    );
+    assert!(
+        tags.contains(&"dark".to_string()),
+        "Should include 'dark' tag"
+    );
 
     // Medium energy + neutral valence should generate no additional tags
     let medium_neutral = MoodAnalysis {
@@ -311,7 +324,10 @@ async fn test_ollama_connection_error_handling() {
         .send()
         .await;
 
-    assert!(result.is_err(), "Should fail to connect to non-existent server");
+    assert!(
+        result.is_err(),
+        "Should fail to connect to non-existent server"
+    );
 }
 
 #[tokio::test]
@@ -333,7 +349,10 @@ async fn test_ollama_server_error_response() {
 
     assert_eq!(response.status().as_u16(), 500);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("Internal server error"));
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("Internal server error"));
 }
 
 // ============================================================================
@@ -451,7 +470,9 @@ fn build_prompt_for_test(track: &TestTrackData, features: &TestAudioFeatures) ->
 }
 
 /// Mirrors the JSON parsing logic from mood_detection.rs for testing
-fn parse_mood_response_for_test(response: &str) -> Result<resonance_ollama_client::MoodAnalysis, String> {
+fn parse_mood_response_for_test(
+    response: &str,
+) -> Result<resonance_ollama_client::MoodAnalysis, String> {
     // Extract JSON from response
     let json_str = extract_json_for_test(response);
 

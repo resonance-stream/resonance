@@ -224,7 +224,10 @@ impl TestEmbedding {
     fn new(track_id: Uuid) -> Self {
         // Generate a random 768-dimensional embedding (nomic-embed-text dimension)
         let embedding: Vec<f32> = (0..768).map(|i| (i as f32 * 0.001) % 1.0).collect();
-        Self { track_id, embedding }
+        Self {
+            track_id,
+            embedding,
+        }
     }
 
     fn with_similar_to(track_id: Uuid, base: &TestEmbedding, variance: f32) -> Self {
@@ -234,7 +237,10 @@ impl TestEmbedding {
             .iter()
             .map(|&v| v + (variance * (0.5 - fake::Faker.fake::<f32>())))
             .collect();
-        Self { track_id, embedding }
+        Self {
+            track_id,
+            embedding,
+        }
     }
 }
 
@@ -280,10 +286,7 @@ fn test_seed_track_ids_are_excluded_from_results() {
 
     // Simulate the exclusion check
     let is_excluded = seed_ids.contains(&candidate_id);
-    assert!(
-        !is_excluded,
-        "Candidate track should not be in seed tracks"
-    );
+    assert!(!is_excluded, "Candidate track should not be in seed tracks");
 
     // A seed track should be excluded
     let seed_track = seed_ids[0];
@@ -323,31 +326,29 @@ fn test_toctou_fix_upsert_pattern_is_atomic() {
     use std::sync::Mutex;
 
     // Simulated playlist storage with atomic upsert
-    let playlists: Arc<Mutex<HashMap<(Uuid, String), Uuid>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let playlists: Arc<Mutex<HashMap<(Uuid, String), Uuid>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let user_id = Uuid::new_v4();
     let playlist_name = "Discover Weekly".to_string();
 
     // Simulate atomic upsert (what the SQL does)
-    let atomic_upsert =
-        |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
-         user_id: Uuid,
-         name: String|
-         -> (Uuid, bool) {
-            let mut guard = storage.lock().unwrap();
-            let key = (user_id, name);
+    let atomic_upsert = |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
+                         user_id: Uuid,
+                         name: String|
+     -> (Uuid, bool) {
+        let mut guard = storage.lock().unwrap();
+        let key = (user_id, name);
 
-            if let Some(&existing_id) = guard.get(&key) {
-                // Conflict - playlist exists, just return it
-                (existing_id, false)
-            } else {
-                // No conflict - insert new playlist
-                let new_id = Uuid::new_v4();
-                guard.insert(key, new_id);
-                (new_id, true)
-            }
-        };
+        if let Some(&existing_id) = guard.get(&key) {
+            // Conflict - playlist exists, just return it
+            (existing_id, false)
+        } else {
+            // No conflict - insert new playlist
+            let new_id = Uuid::new_v4();
+            guard.insert(key, new_id);
+            (new_id, true)
+        }
+    };
 
     // First call creates the playlist
     let (id1, created1) = atomic_upsert(&playlists, user_id, playlist_name.clone());
@@ -371,30 +372,28 @@ fn test_concurrent_playlist_creation_returns_same_id() {
     use std::sync::Mutex;
     use std::thread;
 
-    let playlists: Arc<Mutex<HashMap<(Uuid, String), Uuid>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let playlists: Arc<Mutex<HashMap<(Uuid, String), Uuid>>> = Arc::new(Mutex::new(HashMap::new()));
     let user_id = Uuid::new_v4();
     let playlist_name = "Discover Weekly".to_string();
 
     let results: Arc<Mutex<Vec<(Uuid, bool)>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Simulate the atomic upsert
-    let atomic_upsert =
-        |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
-         user_id: Uuid,
-         name: String|
-         -> (Uuid, bool) {
-            let mut guard = storage.lock().unwrap();
-            let key = (user_id, name);
+    let atomic_upsert = |storage: &Mutex<HashMap<(Uuid, String), Uuid>>,
+                         user_id: Uuid,
+                         name: String|
+     -> (Uuid, bool) {
+        let mut guard = storage.lock().unwrap();
+        let key = (user_id, name);
 
-            if let Some(&existing_id) = guard.get(&key) {
-                (existing_id, false)
-            } else {
-                let new_id = Uuid::new_v4();
-                guard.insert(key, new_id);
-                (new_id, true)
-            }
-        };
+        if let Some(&existing_id) = guard.get(&key) {
+            (existing_id, false)
+        } else {
+            let new_id = Uuid::new_v4();
+            guard.insert(key, new_id);
+            (new_id, true)
+        }
+    };
 
     // Spawn multiple threads to simulate concurrent requests
     let handles: Vec<_> = (0..10)
@@ -508,7 +507,10 @@ fn test_empty_track_list_handled_gracefully() {
 
     // The replace_playlist_tracks function skips INSERT when empty
     let should_skip_insert = track_ids.is_empty();
-    assert!(should_skip_insert, "Should skip INSERT for empty track list");
+    assert!(
+        should_skip_insert,
+        "Should skip INSERT for empty track list"
+    );
 }
 
 // =============================================================================

@@ -123,7 +123,8 @@ fn calculate_acoustic_similarity(source: &AudioFeatures, target: &AudioFeatures)
     let danceability_diff = (target.danceability - source.danceability).powi(2);
     let bpm_diff = ((target.bpm - source.bpm) / BPM_NORMALIZATION_FACTOR).powi(2);
 
-    let distance = (energy_diff + loudness_diff + valence_diff + danceability_diff + bpm_diff).sqrt() / 2.0;
+    let distance =
+        (energy_diff + loudness_diff + valence_diff + danceability_diff + bpm_diff).sqrt() / 2.0;
     (1.0 - distance).clamp(0.0, 1.0)
 }
 
@@ -378,7 +379,10 @@ fn test_categorical_similarity_partial_overlap() {
 
     // Should be between 0 and 1 with partial overlap
     assert!(score > 0.0, "Partial overlap should give positive score");
-    assert!(score < 1.0, "Partial overlap should give score less than 1.0");
+    assert!(
+        score < 1.0,
+        "Partial overlap should give score less than 1.0"
+    );
 }
 
 // =============================================================================
@@ -526,7 +530,8 @@ impl MockQueueState {
 
     fn add_item(&mut self, track_id: Uuid) {
         let position = self.items.len() as i32;
-        self.items.push(QueueItem::new(self.user_id, track_id, position));
+        self.items
+            .push(QueueItem::new(self.user_id, track_id, position));
     }
 
     /// Fetch upcoming unprefetched tracks (simulates fetch_queue_tracks)

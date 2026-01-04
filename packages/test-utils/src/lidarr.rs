@@ -58,7 +58,8 @@ impl MockLidarrServer {
 
     /// Mount a mock for successful artist list
     pub async fn mock_artists_success(&self, artists: Vec<LidarrArtistFixture>) {
-        let artists_json: Vec<serde_json::Value> = artists.into_iter().map(|a| a.to_json()).collect();
+        let artists_json: Vec<serde_json::Value> =
+            artists.into_iter().map(|a| a.to_json()).collect();
 
         Mock::given(method("GET"))
             .and(path("/api/v1/artist"))

@@ -61,10 +61,7 @@ impl MockRedisStore {
         };
 
         let mut store = self.store.write().unwrap();
-        store.insert(
-            key.to_string(),
-            MockRedisEntry { value, expires_at },
-        );
+        store.insert(key.to_string(), MockRedisEntry { value, expires_at });
     }
 
     /// Get a key value (GET equivalent)

@@ -125,7 +125,10 @@ fn test_hash_computation_different_content() {
     let hash1 = compute_file_hash(&file1);
     let hash2 = compute_file_hash(&file2);
 
-    assert_ne!(hash1, hash2, "Different content should produce different hashes");
+    assert_ne!(
+        hash1, hash2,
+        "Different content should produce different hashes"
+    );
 }
 
 #[test]
@@ -164,11 +167,11 @@ fn test_is_audio_file_supported_formats() {
         "song.aiff",
         "song.aif",
         "song.alac",
-        "song.m4b",    // Audiobook
-        "song.webm",   // WebM audio
-        "song.FLAC",   // Uppercase
-        "song.MP3",    // Uppercase
-        "song.Opus",   // Mixed case
+        "song.m4b",  // Audiobook
+        "song.webm", // WebM audio
+        "song.FLAC", // Uppercase
+        "song.MP3",  // Uppercase
+        "song.Opus", // Mixed case
     ];
 
     for file in supported_files {
@@ -223,8 +226,8 @@ fn test_extension_to_audio_format_mapping() {
         ("aif", "wav"),
         ("alac", "alac"),
         ("webm", "opus"),
-        ("wma", "other"),  // Unsupported in enum
-        ("mpc", "other"),  // Unsupported in enum
+        ("wma", "other"), // Unsupported in enum
+        ("mpc", "other"), // Unsupported in enum
         ("unknown", "other"),
     ];
 
@@ -273,7 +276,12 @@ fn test_path_traversal_parent_directory_blocked() {
     );
 
     // Also test with a path that would use ..
-    let traversal_path = library_path.join("artist").join("..").join("..").join("etc").join("passwd");
+    let traversal_path = library_path
+        .join("artist")
+        .join("..")
+        .join("..")
+        .join("etc")
+        .join("passwd");
     // Note: This path doesn't exist, so canonicalize will fail, which is the correct behavior
     assert!(
         !is_path_within_library(library_path, &traversal_path),
@@ -361,7 +369,10 @@ fn test_full_scan_discovers_files() {
     }
 
     assert_eq!(audio_count, 5, "Should discover 5 audio files");
-    assert_eq!(non_audio_count, 2, "Should have 2 non-audio files (ignored)");
+    assert_eq!(
+        non_audio_count, 2,
+        "Should have 2 non-audio files (ignored)"
+    );
 }
 
 #[test]
@@ -391,7 +402,11 @@ fn test_full_scan_handles_nested_directories() {
 
     // Create a deeply nested structure
     let deep_path = "Level1/Level2/Level3/Level4/Level5/Level6";
-    create_test_file(library_path, &format!("{}/deep_track.flac", deep_path), b"audio");
+    create_test_file(
+        library_path,
+        &format!("{}/deep_track.flac", deep_path),
+        b"audio",
+    );
 
     // Also create files at various levels
     create_test_file(library_path, "Level1/track.mp3", b"audio");
@@ -411,7 +426,10 @@ fn test_full_scan_handles_nested_directories() {
     }
 
     assert_eq!(audio_count, 4, "Should discover all 4 audio files");
-    assert!(max_depth >= 6, "Should reach the deepest level (depth >= 6)");
+    assert!(
+        max_depth >= 6,
+        "Should reach the deepest level (depth >= 6)"
+    );
 }
 
 // =============================================================================
@@ -600,7 +618,10 @@ fn test_feature_extraction_not_triggered_for_unchanged_tracks() {
 
     // If hashes match and track exists, feature extraction should be skipped
     let should_skip = hash1 == hash2;
-    assert!(should_skip, "Unchanged file should be skipped for feature extraction");
+    assert!(
+        should_skip,
+        "Unchanged file should be skipped for feature extraction"
+    );
 }
 
 // =============================================================================
@@ -644,7 +665,10 @@ fn test_walkdir_does_not_follow_symlinks() {
         }
     }
 
-    assert!(found_regular, "Should find regular file without following symlinks");
+    assert!(
+        found_regular,
+        "Should find regular file without following symlinks"
+    );
 }
 
 #[test]

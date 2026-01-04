@@ -123,9 +123,7 @@ impl RichPresence {
 
     /// Converts RichPresence to a discord_rich_presence Activity
     pub fn to_activity(&self) -> Activity<'_> {
-        let mut activity = Activity::new()
-            .details(&self.details)
-            .state(&self.state);
+        let mut activity = Activity::new().details(&self.details).state(&self.state);
 
         // Add assets (images)
         let mut assets = Assets::new();

@@ -87,7 +87,7 @@ export async function getPlatformInfo(): Promise<TauriPlatformInfo | null> {
     const { invoke } = await import('@tauri-apps/api/core');
     const tauriVer = await getTauriVersion();
 
-    let osName = 'unknown';
+    let osName: string;
     let osVersion = 'unknown';
     let osArch = 'unknown';
 
