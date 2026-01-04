@@ -215,6 +215,10 @@ pub async fn security_headers_with_config(
 /// terminates TLS and forwards requests to the backend over HTTP. The proxy sets
 /// the `x-forwarded-proto` header to indicate the original protocol.
 ///
+/// The `X-Forwarded-Proto` header can contain comma-separated values when a request
+/// passes through multiple proxies (e.g., "https, http"). Per RFC 7239, the leftmost
+/// value represents the original client's protocol, so we take the first value.
+///
 /// This function checks:
 /// 1. The `x-forwarded-proto` header (set by reverse proxies)
 /// 2. Falls back to checking if the request scheme is HTTPS
@@ -222,7 +226,10 @@ fn is_https_request(request: &Request<Body>) -> bool {
     // Check x-forwarded-proto header first (common in reverse proxy setups)
     if let Some(proto) = request.headers().get("x-forwarded-proto") {
         if let Ok(proto_str) = proto.to_str() {
-            return proto_str.eq_ignore_ascii_case("https");
+            // Handle comma-separated values (e.g., "https, http" from multiple proxies)
+            // Take the first value which represents the original client's protocol
+            let first_proto = proto_str.split(',').next().unwrap_or("").trim();
+            return first_proto.eq_ignore_ascii_case("https");
         }
     }
 
@@ -619,6 +626,94 @@ mod tests {
         assert!(
             response.headers().contains_key("strict-transport-security"),
             "HSTS should be present for HTTPS (case-insensitive)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_x_forwarded_proto_comma_separated_https_first() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https, http")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should be present when HTTPS is the first value
+        assert!(
+            response.headers().contains_key("strict-transport-security"),
+            "HSTS should be present when first proto is HTTPS in comma-separated list"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_x_forwarded_proto_comma_separated_http_first() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "http, https")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should NOT be present when HTTP is the first value
+        assert!(
+            !response.headers().contains_key("strict-transport-security"),
+            "HSTS should NOT be present when first proto is HTTP"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_x_forwarded_proto_with_whitespace() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "  https  ")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should be present even with whitespace around the value
+        assert!(
+            response.headers().contains_key("strict-transport-security"),
+            "HSTS should be present when HTTPS has surrounding whitespace"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_x_forwarded_proto_multiple_proxies() {
+        let config = SecurityHeadersConfig::production();
+        let app = create_test_app_with_config(config);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-forwarded-proto", "https,http,http")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // HSTS should be present when HTTPS is the first value (no spaces)
+        assert!(
+            response.headers().contains_key("strict-transport-security"),
+            "HSTS should be present when first proto is HTTPS (multiple proxies, no spaces)"
         );
     }
 
