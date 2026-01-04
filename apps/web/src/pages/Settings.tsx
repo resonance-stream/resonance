@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Switch } from '../components/ui/Switch'
@@ -11,9 +11,11 @@ import {
 } from '../components/settings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAuthStore } from '../stores/authStore'
+import { useUserPreferences, useUpdatePreferences } from '../hooks/usePreferences'
 
 // Note: Crossfade settings are synced to AudioEngine in AudioProvider.tsx
-// This component only updates the store; AudioProvider handles the sync.
+// This component updates both local store (for immediate UI) and server (for persistence).
+// The useUpdatePreferences hook handles server sync with optimistic updates.
 
 /**
  * Calculate relative time string from a date
@@ -68,6 +70,54 @@ export default function Settings() {
 
   const user = useAuthStore((s) => s.user)
 
+  // Server preferences sync
+  const { data: serverPreferences } = useUserPreferences()
+  const updatePreferences = useUpdatePreferences()
+
+  // Track whether initial sync has been performed to prevent re-syncing
+  // on every render. This allows us to properly specify dependencies
+  // without causing infinite loops.
+  const hasInitialSyncRef = useRef(false)
+
+  // Sync server preferences to local store on initial load only
+  useEffect(() => {
+    // Skip if no server preferences or already synced
+    if (!serverPreferences || hasInitialSyncRef.current) {
+      return
+    }
+
+    // Mark as synced before applying to prevent re-entry
+    hasInitialSyncRef.current = true
+
+    // Apply server preferences to local store
+    const crossfadeEnabled = serverPreferences.crossfadeDurationMs > 0
+    const crossfadeDuration = Math.round(serverPreferences.crossfadeDurationMs / 1000)
+
+    setCrossfadeEnabled(crossfadeEnabled)
+    if (crossfadeEnabled) {
+      setCrossfadeDuration(crossfadeDuration)
+    }
+    setGaplessEnabled(serverPreferences.gaplessPlayback)
+    setNormalizeVolume(serverPreferences.normalizeVolume)
+
+    // Map server quality to local quality
+    const qualityMap: Record<string, 'auto' | 'low' | 'normal' | 'high' | 'lossless'> = {
+      low: 'low',
+      medium: 'normal',
+      high: 'high',
+      lossless: 'lossless',
+    }
+    const localQuality = qualityMap[serverPreferences.quality] ?? 'high'
+    setAudioQuality(localQuality)
+  }, [
+    serverPreferences,
+    setCrossfadeEnabled,
+    setCrossfadeDuration,
+    setGaplessEnabled,
+    setNormalizeVolume,
+    setAudioQuality,
+  ])
+
   // Modal state
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
@@ -77,9 +127,45 @@ export default function Settings() {
     return `${seconds}s`
   }
 
-  const handleCrossfadeDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setCrossfadeDuration(Number(e.target.value))
-  }
+  // Handlers that update both local store and server
+  const handleCrossfadeEnabledChange = useCallback((enabled: boolean) => {
+    setCrossfadeEnabled(enabled)
+    // When disabling, set crossfade to 0ms; when enabling, use current duration
+    const durationMs = enabled ? playback.crossfadeDuration * 1000 : 0
+    updatePreferences.mutate({ crossfadeDurationMs: durationMs })
+  }, [setCrossfadeEnabled, playback.crossfadeDuration, updatePreferences])
+
+  const handleCrossfadeDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const duration = Number(e.target.value)
+    setCrossfadeDuration(duration)
+    // Convert seconds to milliseconds for server
+    updatePreferences.mutate({ crossfadeDurationMs: duration * 1000 })
+  }, [setCrossfadeDuration, updatePreferences])
+
+  const handleGaplessChange = useCallback((enabled: boolean) => {
+    setGaplessEnabled(enabled)
+    updatePreferences.mutate({ gaplessPlayback: enabled })
+  }, [setGaplessEnabled, updatePreferences])
+
+  const handleNormalizeVolumeChange = useCallback((enabled: boolean) => {
+    setNormalizeVolume(enabled)
+    updatePreferences.mutate({ normalizeVolume: enabled })
+  }, [setNormalizeVolume, updatePreferences])
+
+  const handleAudioQualityChange = useCallback((quality: 'auto' | 'low' | 'normal' | 'high' | 'lossless') => {
+    setAudioQuality(quality)
+    // Map local quality to server quality
+    // Local uses: auto, low, normal, high, lossless
+    // Server uses: low, medium, high, lossless (no auto)
+    const serverQualityMap: Record<string, string> = {
+      auto: 'high', // Default to high for auto
+      low: 'low',
+      normal: 'medium',
+      high: 'high',
+      lossless: 'lossless',
+    }
+    updatePreferences.mutate({ quality: serverQualityMap[quality] })
+  }, [setAudioQuality, updatePreferences])
 
   return (
     <div className="flex flex-1 flex-col p-6 animate-fade-in">
@@ -110,7 +196,7 @@ export default function Settings() {
                   key={quality}
                   variant={audioQuality.quality === quality ? 'secondary' : 'ghost'}
                   size="sm"
-                  onClick={() => setAudioQuality(quality)}
+                  onClick={() => handleAudioQualityChange(quality)}
                   className="capitalize"
                   aria-pressed={audioQuality.quality === quality}
                 >
@@ -140,7 +226,7 @@ export default function Settings() {
                 <Switch
                   id="crossfade-toggle"
                   checked={playback.crossfadeEnabled}
-                  onCheckedChange={setCrossfadeEnabled}
+                  onCheckedChange={handleCrossfadeEnabledChange}
                   aria-label="Enable crossfade"
                 />
               </div>
@@ -168,7 +254,7 @@ export default function Settings() {
               <Switch
                 id="gapless-toggle"
                 checked={playback.gaplessEnabled}
-                onCheckedChange={setGaplessEnabled}
+                onCheckedChange={handleGaplessChange}
                 aria-label="Enable gapless playback"
               />
             </div>
@@ -182,7 +268,7 @@ export default function Settings() {
               <Switch
                 id="normalize-volume-toggle"
                 checked={playback.normalizeVolume}
-                onCheckedChange={setNormalizeVolume}
+                onCheckedChange={handleNormalizeVolumeChange}
                 aria-label="Enable volume normalization"
               />
             </div>
