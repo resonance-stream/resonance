@@ -5,17 +5,22 @@
 //! - `MaybeAuthUser`: Optional authentication, returns None if not authenticated
 //! - `AdminUser`: Requires admin role, returns 403 if not admin
 //!
-//! And rate limiting middleware:
+//! Rate limiting middleware:
 //! - `login_rate_limit`: Limits login attempts (5 per minute per IP)
 //! - `register_rate_limit`: Limits registration attempts (3 per hour per IP)
+//!
+//! Security headers middleware:
+//! - `security_headers`: Adds security headers (X-Frame-Options, CSP, etc.)
 
 pub mod auth;
 pub mod rate_limit;
+pub mod security_headers;
 
 pub use auth::AuthUser;
 pub use rate_limit::{
     extract_client_ip, login_rate_limit, register_rate_limit, AuthRateLimitState,
 };
+pub use security_headers::security_headers;
 
 // These are available for future use
 #[allow(unused_imports)]

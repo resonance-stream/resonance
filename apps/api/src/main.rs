@@ -23,7 +23,7 @@ mod websocket;
 pub use error::{ApiError, ApiResult, ErrorResponse};
 
 use graphql::{GraphQLRateLimiter, ResonanceSchema, SchemaBuilder};
-use middleware::{extract_client_ip, AuthRateLimitState};
+use middleware::{extract_client_ip, security_headers, AuthRateLimitState};
 use models::user::RequestMetadata;
 use repositories::{SessionRepository, TrackRepository, UserRepository};
 use routes::{
@@ -458,6 +458,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(search_service))
         .layer(Extension(similarity_service))
         .layer(Extension(ollama_client))
+        .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer);
 
