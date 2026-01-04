@@ -309,13 +309,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     onChatComplete: useCallback((payload: ChatCompletePayload) => {
       completeResponse(payload);
       // Execute any actions sequentially with proper error handling
+      // Each action is wrapped in try-catch so one failure doesn't stop subsequent actions
       if (payload.actions?.length) {
         (async () => {
           for (const action of payload.actions) {
-            await executeAction(action);
+            try {
+              await executeAction(action);
+            } catch (err) {
+              // Log the error but continue with remaining actions
+              console.error('[Chat] Action execution failed, continuing with next action:', action.type, err);
+            }
           }
         })().catch((err) => {
-          console.error('[Chat] Unhandled error in action execution:', err);
+          // This handles any truly unexpected errors in the loop itself
+          console.error('[Chat] Unhandled error in action execution loop:', err);
         });
       }
     }, [completeResponse, executeAction]),
