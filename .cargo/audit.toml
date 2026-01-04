@@ -25,6 +25,27 @@ ignore = [
     # No fix available yet, and we're using PostgreSQL not MySQL
     # This dependency is pulled in by sqlx even with only postgres feature
     "RUSTSEC-2023-0071",
+
+    # GTK3 bindings are unmaintained - from tauri for Linux desktop support
+    # These are transitive dependencies of Tauri and not actual vulnerabilities
+    # Tauri team is aware and working on GTK4 migration
+    "RUSTSEC-2024-0413",  # atk
+    "RUSTSEC-2024-0414",  # atk-sys
+    "RUSTSEC-2024-0415",  # gdk
+    "RUSTSEC-2024-0416",  # gdk-pixbuf
+    "RUSTSEC-2024-0417",  # gdk-pixbuf-sys
+    "RUSTSEC-2024-0418",  # gdk-sys
+    "RUSTSEC-2024-0419",  # gdkx11
+    "RUSTSEC-2024-0420",  # gdkx11-sys
+    "RUSTSEC-2024-0422",  # gtk
+    "RUSTSEC-2024-0423",  # gtk-sys
+    "RUSTSEC-2024-0424",  # gtk3-macros
+    "RUSTSEC-2024-0425",  # javascriptcore-rs
+    "RUSTSEC-2024-0426",  # javascriptcore-rs-sys
+    "RUSTSEC-2024-0427",  # soup2
+    "RUSTSEC-2024-0428",  # soup2-sys
+    "RUSTSEC-2024-0429",  # webkit2gtk
+    "RUSTSEC-2024-0430",  # webkit2gtk-sys
 ]
 
 # Treat warnings as non-fatal (don't fail the build for warnings)
