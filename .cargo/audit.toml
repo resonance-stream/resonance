@@ -50,6 +50,10 @@ ignore = [
     # fxhash is unmaintained - from tauri via wry/kuchikiki/selectors
     # Used for CSS selector matching in webview rendering
     "RUSTSEC-2025-0057",  # fxhash
+
+    # unic-ucd-version is unmaintained - from tauri via urlpattern
+    # Used for URL pattern matching in Tauri's routing
+    "RUSTSEC-2025-0098",  # unic-ucd-version
 ]
 
 # Treat warnings as non-fatal (don't fail the build for warnings)
