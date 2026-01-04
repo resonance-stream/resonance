@@ -2,6 +2,13 @@
 //!
 //! Provides a [`MockRedisStore`] that simulates Redis key-value operations
 //! in-memory for testing without a real Redis server.
+//!
+//! # Lock Poisoning Recovery
+//!
+//! This implementation uses `unwrap_or_else(|e| e.into_inner())` when acquiring
+//! locks to recover from poisoned locks. If a test panics while holding a lock,
+//! subsequent tests can still access the store rather than failing with a
+//! `PoisonError`. This prevents cascading test failures.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -60,7 +67,7 @@ impl MockRedisStore {
             None
         };
 
-        let mut store = self.store.write().unwrap();
+        let mut store = self.store.write().unwrap_or_else(|e| e.into_inner());
         store.insert(key.to_string(), MockRedisEntry { value, expires_at });
     }
 
@@ -68,7 +75,7 @@ impl MockRedisStore {
     ///
     /// Returns `None` if the key doesn't exist or has expired.
     pub fn get(&self, key: &str) -> Option<String> {
-        let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap_or_else(|e| e.into_inner());
         store.get(key).and_then(|entry| {
             if let Some(expires_at) = entry.expires_at {
                 if Instant::now() > expires_at {
@@ -83,7 +90,7 @@ impl MockRedisStore {
     ///
     /// Returns `true` if the key existed and was deleted.
     pub fn del(&self, key: &str) -> bool {
-        let mut store = self.store.write().unwrap();
+        let mut store = self.store.write().unwrap_or_else(|e| e.into_inner());
         store.remove(key).is_some()
     }
 
@@ -91,7 +98,7 @@ impl MockRedisStore {
     ///
     /// Returns `false` if the key doesn't exist or has expired.
     pub fn exists(&self, key: &str) -> bool {
-        let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = store.get(key) {
             if let Some(expires_at) = entry.expires_at {
                 return Instant::now() <= expires_at;
@@ -107,7 +114,7 @@ impl MockRedisStore {
     /// contains the pattern (with wildcards removed). For more complex
     /// pattern matching, consider using a real Redis instance.
     pub fn keys(&self, pattern: &str) -> Vec<String> {
-        let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap_or_else(|e| e.into_inner());
         let pattern = pattern.replace('*', "");
         store
             .keys()
@@ -118,7 +125,7 @@ impl MockRedisStore {
 
     /// Clear all keys (FLUSHALL equivalent)
     pub fn flush_all(&self) {
-        let mut store = self.store.write().unwrap();
+        let mut store = self.store.write().unwrap_or_else(|e| e.into_inner());
         store.clear();
     }
 
@@ -126,7 +133,7 @@ impl MockRedisStore {
     ///
     /// Note: This includes expired keys that haven't been cleaned up yet.
     pub fn len(&self) -> usize {
-        let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap_or_else(|e| e.into_inner());
         store.len()
     }
 
@@ -147,7 +154,7 @@ impl MockRedisStore {
     /// - `Some(-1)` if the key exists but has no expiration
     /// - `None` if the key doesn't exist or has expired
     pub fn ttl(&self, key: &str) -> Option<i64> {
-        let store = self.store.read().unwrap();
+        let store = self.store.read().unwrap_or_else(|e| e.into_inner());
         store.get(key).and_then(|entry| {
             match entry.expires_at {
                 Some(expires_at) => {

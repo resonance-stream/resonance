@@ -757,6 +757,9 @@ The API applies security headers to all responses via Axum middleware (`apps/api
 - `media-src 'self' blob:` - Audio/video streaming with blob URLs
 - `connect-src 'self' ws: wss:` - API calls + WebSocket for real-time sync
 - `font-src 'self'` - Fonts from same origin
+- `object-src 'none'` - Disallow plugins (Flash, Java applets)
+- `base-uri 'self'` - Restrict base element URLs (prevents base tag hijacking)
+- `form-action 'self'` - Restrict form submissions (prevents form hijacking)
 - `frame-ancestors 'none'` - Prevent embedding (reinforces X-Frame-Options)
 
 **Permissions-Policy restrictions:**

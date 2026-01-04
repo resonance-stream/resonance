@@ -143,6 +143,8 @@ impl SecurityHeadersConfig {
 ///   - `connect-src 'self' ws: wss:` - XHR/fetch/WebSocket to same origin + WebSocket protocols
 ///   - `font-src 'self'` - Fonts from same origin only
 ///   - `object-src 'none'` - Disallow plugins (Flash, Java applets, etc.)
+///   - `base-uri 'self'` - Restrict base element URLs to same origin
+///   - `form-action 'self'` - Restrict form submissions to same origin
 ///   - `frame-ancestors 'none'` - Disallow embedding in frames (like X-Frame-Options)
 ///
 /// - **Permissions-Policy** - Disables potentially dangerous browser features:
@@ -207,12 +209,40 @@ pub async fn security_headers_with_config(
     apply_security_headers(request, next, &config).await
 }
 
+/// Check if the request is using HTTPS based on x-forwarded-proto header or scheme.
+///
+/// In production behind a reverse proxy (nginx, Caddy, etc.), the proxy typically
+/// terminates TLS and forwards requests to the backend over HTTP. The proxy sets
+/// the `x-forwarded-proto` header to indicate the original protocol.
+///
+/// This function checks:
+/// 1. The `x-forwarded-proto` header (set by reverse proxies)
+/// 2. Falls back to checking if the request scheme is HTTPS
+fn is_https_request(request: &Request<Body>) -> bool {
+    // Check x-forwarded-proto header first (common in reverse proxy setups)
+    if let Some(proto) = request.headers().get("x-forwarded-proto") {
+        if let Ok(proto_str) = proto.to_str() {
+            return proto_str.eq_ignore_ascii_case("https");
+        }
+    }
+
+    // Fall back to checking the request scheme directly
+    // This handles direct HTTPS connections without a proxy
+    request
+        .uri()
+        .scheme_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case("https"))
+}
+
 /// Internal function that applies security headers based on configuration.
 async fn apply_security_headers(
     request: Request<Body>,
     next: Next,
     config: &SecurityHeadersConfig,
 ) -> Response {
+    // Check if request is HTTPS before consuming request
+    let is_https = is_https_request(&request);
+
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
@@ -238,6 +268,8 @@ async fn apply_security_headers(
     // - Allow ws: and wss: for WebSocket connections (real-time sync)
     // - Disallow embedding in frames
     // - Disallow plugins (object-src 'none')
+    // - Restrict base element URLs to prevent base tag hijacking
+    // - Restrict form submissions to same origin to prevent form hijacking
     headers.insert(
         CONTENT_SECURITY_POLICY.clone(),
         HeaderValue::from_static(
@@ -249,6 +281,8 @@ async fn apply_security_headers(
              connect-src 'self' ws: wss:; \
              font-src 'self'; \
              object-src 'none'; \
+             base-uri 'self'; \
+             form-action 'self'; \
              frame-ancestors 'none'",
         ),
     );
@@ -260,9 +294,11 @@ async fn apply_security_headers(
         HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
     );
 
-    // HSTS (Strict-Transport-Security) - only in production with HTTPS
-    // This header tells browsers to only connect via HTTPS for the specified duration
-    if config.enable_hsts {
+    // HSTS (Strict-Transport-Security) - only for HTTPS requests in production
+    // This header tells browsers to only connect via HTTPS for the specified duration.
+    // Per RFC 6797, HSTS headers MUST be ignored on HTTP responses, so we only
+    // send it when the request came via HTTPS (detected via x-forwarded-proto or scheme).
+    if config.enable_hsts && is_https {
         let hsts_value = config.build_hsts_value();
         if let Ok(value) = HeaderValue::from_str(&hsts_value) {
             headers.insert(STRICT_TRANSPORT_SECURITY.clone(), value);
@@ -357,6 +393,8 @@ mod tests {
         assert!(csp.contains("connect-src 'self' ws: wss:"));
         assert!(csp.contains("font-src 'self'"));
         assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("base-uri 'self'"));
+        assert!(csp.contains("form-action 'self'"));
         assert!(csp.contains("frame-ancestors 'none'"));
     }
 
