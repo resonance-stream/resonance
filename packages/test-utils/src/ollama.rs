@@ -8,7 +8,20 @@ use std::sync::Arc;
 
 use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
+
+/// A responder that increments a counter each time a request is matched
+struct CountingResponder {
+    template: ResponseTemplate,
+    counter: Arc<AtomicUsize>,
+}
+
+impl Respond for CountingResponder {
+    fn respond(&self, _request: &wiremock::Request) -> ResponseTemplate {
+        self.counter.fetch_add(1, Ordering::SeqCst);
+        self.template.clone()
+    }
+}
 
 /// Mock Ollama server for testing embedding and generation
 ///
@@ -66,9 +79,12 @@ impl MockOllamaServer {
 
         Mock::given(method("POST"))
             .and(path("/api/embeddings"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "embedding": embedding
-            })))
+            .respond_with(CountingResponder {
+                template: ResponseTemplate::new(200).set_body_json(json!({
+                    "embedding": embedding
+                })),
+                counter: self.embedding_call_count.clone(),
+            })
             .mount(&self.server)
             .await;
     }
@@ -110,11 +126,14 @@ impl MockOllamaServer {
     pub async fn mock_generate_success(&self, response_text: &str) {
         Mock::given(method("POST"))
             .and(path("/api/generate"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "model": "mistral",
-                "response": response_text,
-                "done": true
-            })))
+            .respond_with(CountingResponder {
+                template: ResponseTemplate::new(200).set_body_json(json!({
+                    "model": "mistral",
+                    "response": response_text,
+                    "done": true
+                })),
+                counter: self.generate_call_count.clone(),
+            })
             .mount(&self.server)
             .await;
     }
@@ -134,14 +153,17 @@ impl MockOllamaServer {
     pub async fn mock_chat_success(&self, response_text: &str) {
         Mock::given(method("POST"))
             .and(path("/api/chat"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "model": "mistral",
-                "message": {
-                    "role": "assistant",
-                    "content": response_text
-                },
-                "done": true
-            })))
+            .respond_with(CountingResponder {
+                template: ResponseTemplate::new(200).set_body_json(json!({
+                    "model": "mistral",
+                    "message": {
+                        "role": "assistant",
+                        "content": response_text
+                    },
+                    "done": true
+                })),
+                counter: self.chat_call_count.clone(),
+            })
             .mount(&self.server)
             .await;
     }
