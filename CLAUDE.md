@@ -52,6 +52,7 @@ resonance/
 │           └── pages/          # Route pages
 │
 ├── packages/
+│   ├── desktop-bridge/         # Tauri IPC types + cross-platform utilities
 │   ├── shared-config/          # Shared Rust configuration types
 │   └── shared-types/           # Shared TypeScript types (GraphQL codegen)
 │
@@ -402,6 +403,156 @@ The worker (`apps/worker`) handles scheduled background tasks:
 - `weekly_playlist.rs` - Creates weekly discovery playlists
 - `lidarr_sync.rs` - Syncs with Lidarr for library management
 - `prefetch.rs` - Smart prefetch for autoplay queue
+
+### Cross-Platform Environment Detection (Desktop Bridge)
+
+The `@resonance/desktop-bridge` package (`packages/desktop-bridge/`) provides a reusable pattern for conditionally enabling desktop-specific features when the app runs in Tauri vs a standard web browser. This pattern is applicable to any cross-platform conditional feature.
+
+#### Core Detection Pattern
+
+```typescript
+import { isTauri, isWeb, whenTauri, whenTauriAsync } from '@resonance/desktop-bridge';
+
+// Synchronous check - cached after first call
+if (isTauri()) {
+  // Desktop-only code path
+} else {
+  // Web browser fallback
+}
+
+// Conditional execution helpers
+whenTauri(() => {
+  // Only runs in Tauri context
+  // Sync version - use for initialization
+});
+
+await whenTauriAsync(async () => {
+  // Only runs in Tauri context
+  // Async version - use when calling Tauri APIs
+});
+```
+
+#### How Detection Works
+
+```typescript
+// packages/desktop-bridge/src/environment.ts
+export function isTauri(): boolean {
+  if (cachedIsTauri !== null) {
+    return cachedIsTauri;
+  }
+
+  // Tauri 2.x injects __TAURI_INTERNALS__ into the webview
+  cachedIsTauri =
+    typeof window !== 'undefined' &&
+    '__TAURI_INTERNALS__' in window;
+
+  return cachedIsTauri;
+}
+```
+
+Key aspects:
+- **Lightweight**: No Tauri API imports needed for basic detection
+- **Cached**: Result cached after first check for performance
+- **SSR-safe**: Guards against `typeof window === 'undefined'`
+
+#### Platform-Specific Features
+
+```typescript
+import { isMacOS, isWindows, isLinux, getPlatformInfo } from '@resonance/desktop-bridge';
+
+// Async platform checks (may invoke Tauri APIs)
+if (await isMacOS()) {
+  // macOS-specific behavior (e.g., traffic light buttons)
+}
+
+// Detailed platform info
+const info = await getPlatformInfo();
+// { os: 'darwin', version: '14.0', arch: 'aarch64', tauriVersion: '2.0.0' }
+```
+
+#### Usage Pattern for Feature Modules
+
+When adding a new desktop-only feature:
+
+1. **Create feature module** in `packages/desktop-bridge/src/`:
+```typescript
+// my-feature.ts
+import { invoke, event } from '@tauri-apps/api/core';
+import { isTauri } from './environment.js';
+
+// Commands (frontend → Rust)
+export const MY_FEATURE_COMMANDS = {
+  doSomething: 'plugin:my_feature|do_something',
+} as const;
+
+// Events (Rust → frontend)
+export const MY_FEATURE_EVENTS = {
+  somethingHappened: 'my-feature:something-happened',
+} as const;
+
+export async function doSomething(arg: string): Promise<void> {
+  if (!isTauri()) return;  // Silent no-op in web
+  await invoke(MY_FEATURE_COMMANDS.doSomething, { arg });
+}
+
+export function onSomethingHappened(handler: (data: SomeData) => void): () => void {
+  if (!isTauri()) return () => {};  // No-op cleanup
+  const unlisten = event.listen<SomeData>(MY_FEATURE_EVENTS.somethingHappened, (e) => {
+    handler(e.payload);
+  });
+  return () => { unlisten.then((fn) => fn()); };
+}
+```
+
+2. **Export from index.ts**:
+```typescript
+export {
+  doSomething,
+  onSomethingHappened,
+  MY_FEATURE_COMMANDS,
+  MY_FEATURE_EVENTS,
+  type SomeData,
+} from './my-feature.js';
+```
+
+3. **Consume in React**:
+```typescript
+import { isTauri, doSomething, onSomethingHappened } from '@resonance/desktop-bridge';
+
+function useMyFeature() {
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    const unsubscribe = onSomethingHappened((data) => {
+      // Handle event
+    });
+
+    return unsubscribe;
+  }, []);
+}
+```
+
+#### Available Desktop Features
+
+| Module | Purpose | Key Exports |
+|--------|---------|-------------|
+| `environment` | Runtime detection | `isTauri()`, `isWeb()`, `whenTauri()`, `getPlatformInfo()` |
+| `discord` | Discord Rich Presence | `setDiscordActivity()`, `connectDiscord()`, `onDiscordStatusChange()` |
+| `media-keys` | Global keyboard shortcuts | `registerMediaKeys()`, `onMediaKey()`, `createMediaKeyDispatcher()` |
+| `tray` | System tray integration | `setTrayIcon()`, `setTrayMenu()`, `onTrayMenuClick()` |
+| `window` | Window controls | `minimizeWindow()`, `toggleMaximize()`, `onCloseRequested()` |
+
+#### Testing Considerations
+
+```typescript
+// In tests, mock the environment detection
+import { clearEnvironmentCache } from '@resonance/desktop-bridge';
+
+beforeEach(() => {
+  clearEnvironmentCache();
+  // Mock window.__TAURI_INTERNALS__ as needed
+});
+```
 
 ---
 
