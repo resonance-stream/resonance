@@ -586,3 +586,28 @@ Use browser DevTools Network tab → WS filter to inspect WebSocket messages.
 - Minimum 32-character secret required (enforced at startup)
 - Access tokens: 15-minute expiry
 - Refresh tokens: 7-day expiry with rotation
+
+### Security Headers Middleware
+The API applies security headers to all responses via Axum middleware (`apps/api/src/middleware/security_headers.rs`):
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `X-Frame-Options` | `DENY` | Prevents clickjacking by blocking iframe embedding |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing attacks |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer leakage |
+| `Content-Security-Policy` | See below | Restricts resource loading sources |
+| `Permissions-Policy` | `camera=(), microphone=(), ...` | Disables unused browser APIs |
+
+**Content-Security-Policy directives:**
+- `default-src 'self'` - Only allow resources from same origin
+- `script-src 'self'` - Scripts from same origin only (no inline/eval)
+- `style-src 'self' 'unsafe-inline'` - Styles + inline (for CSS-in-JS)
+- `img-src 'self' data: blob:` - Images, data URIs, blob URLs
+- `media-src 'self' blob:` - Audio/video streaming with blob URLs
+- `connect-src 'self' ws: wss:` - API calls + WebSocket for real-time sync
+- `font-src 'self'` - Fonts from same origin
+- `frame-ancestors 'none'` - Prevent embedding (reinforces X-Frame-Options)
+
+**Permissions-Policy restrictions:**
+- `camera=()`, `microphone=()` - No recording (streaming only)
+- `geolocation=()`, `payment=()`, `usb=()` - Unused features disabled
