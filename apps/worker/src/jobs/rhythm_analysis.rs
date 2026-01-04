@@ -3,8 +3,6 @@
 //! BPM and danceability detection using onset detection via spectral flux
 //! and tempo estimation via autocorrelation.
 
-#![allow(dead_code)] // Functions will be used when integrated with feature extraction
-
 use realfft::{RealFftPlanner, RealToComplex};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

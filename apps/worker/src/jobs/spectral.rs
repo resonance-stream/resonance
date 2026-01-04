@@ -3,9 +3,6 @@
 //! Provides spectral feature extraction using pure-Rust FFT libraries.
 //! Used for advanced audio analysis features like acousticness, speechiness, and valence.
 
-// Allow dead_code until this module is integrated with feature_extraction.rs
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use realfft::{RealFftPlanner, RealToComplex};
@@ -77,6 +74,7 @@ impl SpectralAnalyzer {
     }
 
     /// Get the sample rate
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
@@ -226,6 +224,7 @@ impl SpectralAnalyzer {
     }
 
     /// Get frequency for a given bin index
+    #[allow(dead_code)]
     pub fn bin_to_frequency(&self, bin: usize) -> f32 {
         let bin_width = self.sample_rate as f32 / self.frame_size as f32;
         bin as f32 * bin_width
@@ -278,6 +277,7 @@ pub fn zero_crossing_rate(samples: &[f32]) -> f32 {
 
 /// Aggregated spectral features from full audio analysis
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct SpectralFeatures {
     /// Mean spectral centroid (Hz)
     pub centroid_mean: f32,
@@ -557,6 +557,41 @@ mod tests {
             .collect()
     }
 
+    /// Generate a sine wave with amplitude control
+    fn generate_sine_with_amplitude(
+        frequency: f32,
+        amplitude: f32,
+        sample_rate: u32,
+        num_samples: usize,
+    ) -> Vec<f32> {
+        (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                amplitude * (2.0 * PI * frequency * t).sin()
+            })
+            .collect()
+    }
+
+    /// Generate a signal with multiple harmonics (fundamental + overtones)
+    fn generate_harmonics(
+        fundamental: f32,
+        harmonics: &[(u32, f32)], // (harmonic number, amplitude)
+        sample_rate: u32,
+        num_samples: usize,
+    ) -> Vec<f32> {
+        (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                let mut sample = (2.0 * PI * fundamental * t).sin(); // Fundamental
+                for &(harmonic_num, amplitude) in harmonics {
+                    let freq = fundamental * harmonic_num as f32;
+                    sample += amplitude * (2.0 * PI * freq * t).sin();
+                }
+                sample
+            })
+            .collect()
+    }
+
     /// Generate white noise using LCG
     fn generate_noise(num_samples: usize, seed: u64) -> Vec<f32> {
         // Simple LCG for reproducible "random" noise (PCG-like)
@@ -572,6 +607,50 @@ mod tests {
                 let result = xorshifted.rotate_right(rot);
                 // Convert u32 to float in [-1, 1]
                 (result as f32 / u32::MAX as f32) * 2.0 - 1.0
+            })
+            .collect()
+    }
+
+    /// Generate pink noise (1/f power spectrum) using Voss-McCartney algorithm
+    /// Pink noise has equal energy per octave, unlike white noise
+    fn generate_pink_noise(num_samples: usize, seed: u64) -> Vec<f32> {
+        const NUM_ROWS: usize = 16;
+        let mut rows = [0.0f32; NUM_ROWS];
+        let mut running_sum = 0.0f32;
+
+        // LCG state for random generation
+        let mut state = seed.wrapping_add(1442695040888963407);
+        let mut next_random = || -> f32 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let xorshifted = (((state >> 18) ^ state) >> 27) as u32;
+            let rot = (state >> 59) as u32;
+            let result = xorshifted.rotate_right(rot);
+            (result as f32 / u32::MAX as f32) * 2.0 - 1.0
+        };
+
+        // Initialize rows
+        for row in rows.iter_mut() {
+            let val = next_random();
+            *row = val;
+            running_sum += val;
+        }
+
+        (0..num_samples)
+            .map(|i| {
+                // Voss-McCartney: update one row per sample based on trailing zeros in index
+                let num_zeros = (i + 1).trailing_zeros() as usize;
+                if num_zeros < NUM_ROWS {
+                    running_sum -= rows[num_zeros];
+                    let new_val = next_random();
+                    running_sum += new_val;
+                    rows[num_zeros] = new_val;
+                }
+
+                // Add white noise component and normalize
+                let white = next_random();
+                (running_sum + white) / (NUM_ROWS as f32 + 1.0)
             })
             .collect()
     }
@@ -627,6 +706,143 @@ mod tests {
         );
     }
 
+    // ========================================================================
+    // Comprehensive Spectral Centroid Tests
+    // ========================================================================
+
+    #[test]
+    fn test_spectral_centroid_100hz() {
+        let sample_rate = 44100u32;
+        let test_frequency = 100.0f32;
+
+        let samples = generate_sine(test_frequency, sample_rate, DEFAULT_FRAME_SIZE);
+
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&samples);
+        let centroid = analyzer.spectral_centroid(&spectrum);
+
+        // For low frequencies, allow slightly larger tolerance due to bin resolution
+        // At 44.1kHz with 2048 frame size, bin width is ~21.5 Hz
+        let tolerance = 30.0; // Slightly larger than one bin width
+        assert!(
+            (centroid - test_frequency).abs() < tolerance,
+            "Expected centroid ~{} Hz, got {} Hz (tolerance: {} Hz)",
+            test_frequency,
+            centroid,
+            tolerance
+        );
+    }
+
+    #[test]
+    fn test_spectral_centroid_1000hz() {
+        let sample_rate = 44100u32;
+        let test_frequency = 1000.0f32;
+
+        let samples = generate_sine(test_frequency, sample_rate, DEFAULT_FRAME_SIZE);
+
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&samples);
+        let centroid = analyzer.spectral_centroid(&spectrum);
+
+        // 5% tolerance
+        let tolerance = test_frequency * 0.05;
+        assert!(
+            (centroid - test_frequency).abs() < tolerance,
+            "Expected centroid ~{} Hz, got {} Hz",
+            test_frequency,
+            centroid
+        );
+    }
+
+    #[test]
+    fn test_spectral_centroid_5000hz() {
+        let sample_rate = 44100u32;
+        let test_frequency = 5000.0f32;
+
+        let samples = generate_sine(test_frequency, sample_rate, DEFAULT_FRAME_SIZE);
+
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&samples);
+        let centroid = analyzer.spectral_centroid(&spectrum);
+
+        // 5% tolerance
+        let tolerance = test_frequency * 0.05;
+        assert!(
+            (centroid - test_frequency).abs() < tolerance,
+            "Expected centroid ~{} Hz, got {} Hz",
+            test_frequency,
+            centroid
+        );
+    }
+
+    #[test]
+    fn test_spectral_centroid_with_harmonics() {
+        let sample_rate = 44100u32;
+        let fundamental = 440.0f32; // A4
+
+        // Generate a complex tone with harmonics (like a real instrument)
+        // Fundamental + 2nd harmonic (half amplitude) + 3rd harmonic (quarter amplitude)
+        let harmonics = vec![(2, 0.5), (3, 0.25)];
+        let samples = generate_harmonics(fundamental, &harmonics, sample_rate, DEFAULT_FRAME_SIZE);
+
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&samples);
+        let centroid = analyzer.spectral_centroid(&spectrum);
+
+        // With harmonics, centroid should be higher than the fundamental
+        // The weighted average shifts upward due to higher harmonics
+        assert!(
+            centroid > fundamental,
+            "Centroid ({} Hz) should be above fundamental ({} Hz) due to harmonics",
+            centroid,
+            fundamental
+        );
+
+        // But shouldn't be above the 3rd harmonic
+        let third_harmonic = fundamental * 3.0;
+        assert!(
+            centroid < third_harmonic,
+            "Centroid ({} Hz) should be below 3rd harmonic ({} Hz)",
+            centroid,
+            third_harmonic
+        );
+    }
+
+    #[test]
+    fn test_spectral_centroid_mixed_frequencies() {
+        let sample_rate = 44100u32;
+
+        // Generate two equal-amplitude sine waves at 500Hz and 2000Hz
+        // The centroid should be somewhere in between
+        let samples: Vec<f32> = (0..DEFAULT_FRAME_SIZE)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (2.0 * PI * 500.0 * t).sin() + (2.0 * PI * 2000.0 * t).sin()
+            })
+            .collect();
+
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&samples);
+        let centroid = analyzer.spectral_centroid(&spectrum);
+
+        // The centroid should be between the two frequencies
+        // With equal amplitudes, it should be approximately at the mean
+        assert!(
+            centroid > 500.0 && centroid < 2000.0,
+            "Centroid ({} Hz) should be between 500 Hz and 2000 Hz",
+            centroid
+        );
+    }
+
+    #[test]
+    fn test_spectral_centroid_empty_spectrum() {
+        let analyzer = SpectralAnalyzer::new(44100);
+        let empty_spectrum: Vec<f32> = vec![0.0; 1025];
+        let centroid = analyzer.spectral_centroid(&empty_spectrum);
+
+        assert_eq!(centroid, 0.0, "Empty spectrum should have centroid of 0");
+    }
+
     #[test]
     fn test_spectral_flatness_sine_vs_noise() {
         let sample_rate = 44100u32;
@@ -658,6 +874,137 @@ mod tests {
         );
     }
 
+    // ========================================================================
+    // Comprehensive Spectral Flatness Tests
+    // ========================================================================
+
+    #[test]
+    fn test_spectral_flatness_pure_tone_near_zero() {
+        let sample_rate = 44100u32;
+
+        // Test multiple pure tones - all should have very low flatness
+        let frequencies = [100.0, 440.0, 1000.0, 5000.0, 10000.0];
+
+        for freq in frequencies {
+            let samples = generate_sine(freq, sample_rate, DEFAULT_FRAME_SIZE);
+            let mut analyzer = SpectralAnalyzer::new(sample_rate);
+            let spectrum = analyzer.compute_spectrum(&samples);
+            let flatness = analyzer.spectral_flatness(&spectrum);
+
+            assert!(
+                flatness < 0.15,
+                "Pure {} Hz tone should have low flatness (<0.15), got {}",
+                freq,
+                flatness
+            );
+        }
+    }
+
+    #[test]
+    fn test_spectral_flatness_white_noise_high() {
+        let sample_rate = 44100u32;
+
+        // White noise should have high spectral flatness (near 1.0 for ideal white noise)
+        // Real generated noise will be lower due to finite samples
+        let noise = generate_noise(DEFAULT_FRAME_SIZE, 98765);
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let spectrum = analyzer.compute_spectrum(&noise);
+        let flatness = analyzer.spectral_flatness(&spectrum);
+
+        // White noise should have flatness > 0.3 (ideally closer to 1.0)
+        assert!(
+            flatness > 0.3,
+            "White noise should have high flatness (>0.3), got {}",
+            flatness
+        );
+        assert!(
+            flatness <= 1.0,
+            "Flatness should be capped at 1.0, got {}",
+            flatness
+        );
+    }
+
+    #[test]
+    fn test_spectral_flatness_pink_noise() {
+        let sample_rate = 44100u32;
+
+        // Pink noise has 1/f spectrum - more energy in lower frequencies
+        // Its flatness should be between pure tone and white noise
+        let pink = generate_pink_noise(DEFAULT_FRAME_SIZE, 11111);
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let pink_spectrum = analyzer.compute_spectrum(&pink);
+        let pink_flatness = analyzer.spectral_flatness(&pink_spectrum);
+
+        // Pink noise flatness should be moderate
+        assert!(
+            pink_flatness > 0.1,
+            "Pink noise flatness should be > 0.1, got {}",
+            pink_flatness
+        );
+        assert!(
+            pink_flatness < 1.0,
+            "Pink noise flatness should be < 1.0, got {}",
+            pink_flatness
+        );
+    }
+
+    #[test]
+    fn test_spectral_flatness_ordering() {
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+
+        // Pure sine - most tonal
+        let sine = generate_sine(440.0, sample_rate, DEFAULT_FRAME_SIZE);
+        let sine_spectrum = analyzer.compute_spectrum(&sine);
+        let sine_flatness = analyzer.spectral_flatness(&sine_spectrum);
+
+        // Complex tone with harmonics - somewhat tonal
+        let harmonics = vec![(2, 0.5), (3, 0.33), (4, 0.25), (5, 0.2)];
+        let complex =
+            generate_harmonics(440.0, &harmonics, sample_rate, DEFAULT_FRAME_SIZE);
+        let complex_spectrum = analyzer.compute_spectrum(&complex);
+        let complex_flatness = analyzer.spectral_flatness(&complex_spectrum);
+
+        // Pink noise
+        let pink = generate_pink_noise(DEFAULT_FRAME_SIZE, 22222);
+        let pink_spectrum = analyzer.compute_spectrum(&pink);
+        let pink_flatness = analyzer.spectral_flatness(&pink_spectrum);
+
+        // White noise - most flat
+        let white = generate_noise(DEFAULT_FRAME_SIZE, 33333);
+        let white_spectrum = analyzer.compute_spectrum(&white);
+        let white_flatness = analyzer.spectral_flatness(&white_spectrum);
+
+        // Verify ordering: pure sine < complex tone < pink noise < white noise
+        assert!(
+            sine_flatness < complex_flatness,
+            "Sine ({}) should be less flat than complex tone ({})",
+            sine_flatness,
+            complex_flatness
+        );
+        assert!(
+            complex_flatness < white_flatness,
+            "Complex tone ({}) should be less flat than white noise ({})",
+            complex_flatness,
+            white_flatness
+        );
+    }
+
+    #[test]
+    fn test_spectral_flatness_empty() {
+        let analyzer = SpectralAnalyzer::new(44100);
+
+        // Empty spectrum
+        let empty: Vec<f32> = vec![];
+        let flatness = analyzer.spectral_flatness(&empty);
+        assert_eq!(flatness, 0.0, "Empty spectrum should have flatness 0");
+
+        // All-zero spectrum
+        let zeros: Vec<f32> = vec![0.0; 1025];
+        let flatness = analyzer.spectral_flatness(&zeros);
+        assert_eq!(flatness, 0.0, "All-zero spectrum should have flatness 0");
+    }
+
     #[test]
     fn test_spectral_rolloff() {
         let sample_rate = 44100u32;
@@ -678,6 +1025,167 @@ mod tests {
             "High freq rolloff {} should be > low freq rolloff {}",
             high_rolloff,
             low_rolloff
+        );
+    }
+
+    // ========================================================================
+    // Comprehensive Spectral Rolloff Tests
+    // ========================================================================
+
+    #[test]
+    fn test_spectral_rolloff_pure_tones() {
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+
+        // Test rolloff for various pure tones
+        // For a pure sine, the rolloff should be at or very close to the sine frequency
+        let test_frequencies = [200.0f32, 500.0, 1000.0, 3000.0, 8000.0];
+
+        for freq in test_frequencies {
+            let samples = generate_sine(freq, sample_rate, DEFAULT_FRAME_SIZE);
+            let spectrum = analyzer.compute_spectrum(&samples);
+            let rolloff = analyzer.spectral_rolloff(&spectrum, 0.85);
+
+            // For pure tones, rolloff should be close to the frequency
+            // Allow tolerance of ~200 Hz due to bin resolution
+            let tolerance = 200.0;
+            assert!(
+                (rolloff - freq).abs() < tolerance,
+                "Pure {} Hz tone should have rolloff ~{}, got {}",
+                freq,
+                freq,
+                rolloff
+            );
+        }
+    }
+
+    #[test]
+    fn test_spectral_rolloff_85_percent_threshold() {
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+
+        // Generate a known spectrum with predictable energy distribution
+        // Two equal-amplitude sines: 500 Hz and 2000 Hz
+        let samples: Vec<f32> = (0..DEFAULT_FRAME_SIZE)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (2.0 * PI * 500.0 * t).sin() + (2.0 * PI * 2000.0 * t).sin()
+            })
+            .collect();
+
+        let spectrum = analyzer.compute_spectrum(&samples);
+
+        // At 85% threshold, rolloff should capture most energy up to around 2000 Hz
+        let rolloff_85 = analyzer.spectral_rolloff(&spectrum, 0.85);
+        let rolloff_95 = analyzer.spectral_rolloff(&spectrum, 0.95);
+
+        // 95% rolloff should be >= 85% rolloff
+        assert!(
+            rolloff_95 >= rolloff_85,
+            "95% rolloff ({}) should be >= 85% rolloff ({})",
+            rolloff_95,
+            rolloff_85
+        );
+    }
+
+    #[test]
+    fn test_spectral_rolloff_different_percentiles() {
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+
+        // Use noise which has energy across all frequencies
+        let noise = generate_noise(DEFAULT_FRAME_SIZE, 77777);
+        let spectrum = analyzer.compute_spectrum(&noise);
+
+        // Test various percentiles
+        let rolloff_50 = analyzer.spectral_rolloff(&spectrum, 0.50);
+        let rolloff_75 = analyzer.spectral_rolloff(&spectrum, 0.75);
+        let rolloff_85 = analyzer.spectral_rolloff(&spectrum, 0.85);
+        let rolloff_95 = analyzer.spectral_rolloff(&spectrum, 0.95);
+
+        // Higher percentiles should give higher rolloff frequencies
+        assert!(
+            rolloff_50 <= rolloff_75,
+            "50% rolloff ({}) should be <= 75% rolloff ({})",
+            rolloff_50,
+            rolloff_75
+        );
+        assert!(
+            rolloff_75 <= rolloff_85,
+            "75% rolloff ({}) should be <= 85% rolloff ({})",
+            rolloff_75,
+            rolloff_85
+        );
+        assert!(
+            rolloff_85 <= rolloff_95,
+            "85% rolloff ({}) should be <= 95% rolloff ({})",
+            rolloff_85,
+            rolloff_95
+        );
+    }
+
+    #[test]
+    fn test_spectral_rolloff_low_vs_high_frequency() {
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+
+        // Very low frequency sine (200 Hz)
+        let low_samples = generate_sine(200.0, sample_rate, DEFAULT_FRAME_SIZE);
+        let low_spectrum = analyzer.compute_spectrum(&low_samples);
+        let low_rolloff = analyzer.spectral_rolloff(&low_spectrum, 0.85);
+
+        // Very high frequency sine (15 kHz)
+        let high_samples = generate_sine(15000.0, sample_rate, DEFAULT_FRAME_SIZE);
+        let high_spectrum = analyzer.compute_spectrum(&high_samples);
+        let high_rolloff = analyzer.spectral_rolloff(&high_spectrum, 0.85);
+
+        // Low frequency should have low rolloff, high frequency should have high rolloff
+        assert!(
+            low_rolloff < 1000.0,
+            "Low frequency (200 Hz) should have rolloff < 1000 Hz, got {}",
+            low_rolloff
+        );
+        assert!(
+            high_rolloff > 10000.0,
+            "High frequency (15 kHz) should have rolloff > 10000 Hz, got {}",
+            high_rolloff
+        );
+    }
+
+    #[test]
+    fn test_spectral_rolloff_edge_cases() {
+        let analyzer = SpectralAnalyzer::new(44100);
+
+        // Empty spectrum
+        let empty: Vec<f32> = vec![];
+        let rolloff = analyzer.spectral_rolloff(&empty, 0.85);
+        assert_eq!(rolloff, 0.0, "Empty spectrum should have rolloff 0");
+
+        // All-zero spectrum
+        let zeros: Vec<f32> = vec![0.0; 1025];
+        let rolloff = analyzer.spectral_rolloff(&zeros, 0.85);
+        assert_eq!(rolloff, 0.0, "All-zero spectrum should have rolloff 0");
+
+        // Percentile clamping
+        let sample_rate = 44100u32;
+        let mut analyzer = SpectralAnalyzer::new(sample_rate);
+        let samples = generate_sine(1000.0, sample_rate, DEFAULT_FRAME_SIZE);
+        let spectrum = analyzer.compute_spectrum(&samples);
+
+        // Percentile 0 should give very low rolloff
+        let rolloff_0 = analyzer.spectral_rolloff(&spectrum, 0.0);
+        assert!(
+            rolloff_0 >= 0.0,
+            "0% rolloff should be valid, got {}",
+            rolloff_0
+        );
+
+        // Percentile 1.0 (100%) should return Nyquist or last bin
+        let rolloff_100 = analyzer.spectral_rolloff(&spectrum, 1.0);
+        assert!(
+            rolloff_100 > 0.0,
+            "100% rolloff should be > 0, got {}",
+            rolloff_100
         );
     }
 

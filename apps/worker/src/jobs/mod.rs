@@ -28,7 +28,7 @@ pub mod spectral;
 pub mod weekly_playlist;
 
 // Re-export audio analysis types and functions for external use.
-// These will be consumed when feature_extraction.rs integrates the new modules.
+// Used by feature_extraction.rs and can be used by external consumers.
 #[allow(unused_imports)]
 pub use spectral::{
     analyze_spectral_features, zero_crossing_rate, SpectralAnalyzer, SpectralFeatures,

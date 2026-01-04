@@ -2,9 +2,6 @@
 //!
 //! Implements chromagram extraction and key estimation with Camelot notation output.
 
-// Allow dead code for now - this module will be integrated into feature_extraction
-#![allow(dead_code)]
-
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::f32::consts::PI;
 
