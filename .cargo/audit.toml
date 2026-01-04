@@ -46,6 +46,10 @@ ignore = [
     "RUSTSEC-2024-0428",  # soup2-sys
     "RUSTSEC-2024-0429",  # webkit2gtk
     "RUSTSEC-2024-0430",  # webkit2gtk-sys
+
+    # fxhash is unmaintained - from tauri via wry/kuchikiki/selectors
+    # Used for CSS selector matching in webview rendering
+    "RUSTSEC-2025-0057",  # fxhash
 ]
 
 # Treat warnings as non-fatal (don't fail the build for warnings)
