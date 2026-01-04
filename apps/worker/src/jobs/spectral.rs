@@ -557,21 +557,6 @@ mod tests {
             .collect()
     }
 
-    /// Generate a sine wave with amplitude control
-    fn generate_sine_with_amplitude(
-        frequency: f32,
-        amplitude: f32,
-        sample_rate: u32,
-        num_samples: usize,
-    ) -> Vec<f32> {
-        (0..num_samples)
-            .map(|i| {
-                let t = i as f32 / sample_rate as f32;
-                amplitude * (2.0 * PI * frequency * t).sin()
-            })
-            .collect()
-    }
-
     /// Generate a signal with multiple harmonics (fundamental + overtones)
     fn generate_harmonics(
         fundamental: f32,
@@ -983,9 +968,15 @@ mod tests {
             complex_flatness
         );
         assert!(
-            complex_flatness < white_flatness,
-            "Complex tone ({}) should be less flat than white noise ({})",
+            complex_flatness < pink_flatness,
+            "Complex tone ({}) should be less flat than pink noise ({})",
             complex_flatness,
+            pink_flatness
+        );
+        assert!(
+            pink_flatness < white_flatness,
+            "Pink noise ({}) should be less flat than white noise ({})",
+            pink_flatness,
             white_flatness
         );
     }
@@ -1260,6 +1251,195 @@ mod tests {
         assert_eq!(zero_crossing_rate(&[1.0]), 0.0);
         assert_eq!(zero_crossing_rate(&[1.0, -1.0]), 1.0); // One crossing
         assert_eq!(zero_crossing_rate(&[1.0, 1.0]), 0.0); // No crossing
+    }
+
+    // ========================================================================
+    // Comprehensive Zero Crossing Rate Tests
+    // ========================================================================
+
+    #[test]
+    fn test_zcr_theoretical_relationship() {
+        // For a sine wave, ZCR ≈ 2 * frequency / sample_rate
+        // This tests the theoretical relationship between frequency and ZCR
+        let sample_rate = 44100u32;
+        let duration_samples = 44100; // 1 second for good averaging
+
+        let test_frequencies = [100.0f32, 200.0, 440.0, 1000.0, 2000.0, 5000.0];
+
+        for freq in test_frequencies {
+            let samples = generate_sine(freq, sample_rate, duration_samples);
+            let zcr = zero_crossing_rate(&samples);
+
+            // Theoretical ZCR = 2 * freq / sample_rate
+            // (2 crossings per cycle, normalized by sample count)
+            let theoretical_zcr = 2.0 * freq / sample_rate as f32;
+
+            // Allow 5% tolerance
+            let tolerance = theoretical_zcr * 0.05 + 0.001; // Add small constant for very low frequencies
+            assert!(
+                (zcr - theoretical_zcr).abs() < tolerance,
+                "ZCR for {} Hz should be ~{:.6}, got {:.6} (diff: {:.6})",
+                freq,
+                theoretical_zcr,
+                zcr,
+                (zcr - theoretical_zcr).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn test_zcr_frequency_proportionality() {
+        let sample_rate = 44100u32;
+        let duration = 44100; // 1 second
+
+        // ZCR should be proportional to frequency
+        let freq_1 = 100.0;
+        let freq_2 = 500.0; // 5x higher frequency
+        let freq_3 = 1000.0; // 10x higher than freq_1
+
+        let zcr_1 = zero_crossing_rate(&generate_sine(freq_1, sample_rate, duration));
+        let zcr_2 = zero_crossing_rate(&generate_sine(freq_2, sample_rate, duration));
+        let zcr_3 = zero_crossing_rate(&generate_sine(freq_3, sample_rate, duration));
+
+        // Verify proportionality: zcr_2 ≈ 5 * zcr_1, zcr_3 ≈ 10 * zcr_1
+        let ratio_2_1 = zcr_2 / zcr_1;
+        let ratio_3_1 = zcr_3 / zcr_1;
+
+        assert!(
+            (ratio_2_1 - 5.0).abs() < 0.5,
+            "ZCR ratio (500Hz/100Hz) should be ~5, got {}",
+            ratio_2_1
+        );
+        assert!(
+            (ratio_3_1 - 10.0).abs() < 1.0,
+            "ZCR ratio (1000Hz/100Hz) should be ~10, got {}",
+            ratio_3_1
+        );
+    }
+
+    #[test]
+    fn test_zcr_sine_vs_noise_vs_constant() {
+        let sample_rate = 44100u32;
+        let duration = 4410;
+
+        // Constant signal (DC) - zero crossings
+        let dc: Vec<f32> = vec![0.5; duration];
+        let dc_zcr = zero_crossing_rate(&dc);
+        assert_eq!(dc_zcr, 0.0, "DC signal should have ZCR of 0");
+
+        // Low frequency sine - low ZCR
+        let low_sine = generate_sine(100.0, sample_rate, duration);
+        let low_zcr = zero_crossing_rate(&low_sine);
+
+        // High frequency sine - higher ZCR
+        let high_sine = generate_sine(5000.0, sample_rate, duration);
+        let high_zcr = zero_crossing_rate(&high_sine);
+
+        // White noise - high ZCR (around 0.5 for ideal random)
+        let noise = generate_noise(duration, 12121);
+        let noise_zcr = zero_crossing_rate(&noise);
+
+        // Verify ordering
+        assert!(
+            dc_zcr < low_zcr,
+            "DC ({}) should have lower ZCR than low freq sine ({})",
+            dc_zcr,
+            low_zcr
+        );
+        assert!(
+            low_zcr < high_zcr,
+            "Low freq ({}) should have lower ZCR than high freq ({})",
+            low_zcr,
+            high_zcr
+        );
+
+        // Noise should have high ZCR (random sign changes)
+        assert!(
+            noise_zcr > 0.3,
+            "Noise ZCR should be high (>0.3), got {}",
+            noise_zcr
+        );
+    }
+
+    #[test]
+    fn test_zcr_square_wave() {
+        // A square wave has exactly 2 crossings per period
+        let sample_rate = 44100u32;
+        let frequency = 100.0;
+        let duration = 44100; // 1 second = 100 periods
+
+        // Generate square wave
+        let samples: Vec<f32> = (0..duration)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                let phase = (t * frequency).fract();
+                if phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            })
+            .collect();
+
+        let zcr = zero_crossing_rate(&samples);
+
+        // Expected: 2 crossings per period * 100 periods / 44100 samples ≈ 0.00453
+        let expected_zcr = 2.0 * frequency / sample_rate as f32;
+        let tolerance = expected_zcr * 0.1; // 10% tolerance for edge effects
+
+        assert!(
+            (zcr - expected_zcr).abs() < tolerance,
+            "Square wave ZCR should be ~{:.6}, got {:.6}",
+            expected_zcr,
+            zcr
+        );
+    }
+
+    #[test]
+    fn test_zcr_with_dc_offset() {
+        let sample_rate = 44100u32;
+        let duration = 4410;
+
+        // Sine wave with DC offset that doesn't cross zero
+        let samples_no_cross: Vec<f32> = (0..duration)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                // Amplitude 0.3 + DC offset 0.5 = always positive
+                0.5 + 0.3 * (2.0 * PI * 440.0 * t).sin()
+            })
+            .collect();
+
+        let zcr_no_cross = zero_crossing_rate(&samples_no_cross);
+        assert_eq!(
+            zcr_no_cross, 0.0,
+            "Signal with DC offset that never crosses zero should have ZCR = 0"
+        );
+
+        // Sine wave with small DC offset that still crosses zero
+        let samples_cross: Vec<f32> = (0..duration)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                // Amplitude 1.0 + DC offset 0.3 = crosses zero
+                0.3 + 1.0 * (2.0 * PI * 440.0 * t).sin()
+            })
+            .collect();
+
+        let zcr_cross = zero_crossing_rate(&samples_cross);
+        assert!(
+            zcr_cross > 0.0,
+            "Signal with small DC offset should still have crossings"
+        );
+    }
+
+    #[test]
+    fn test_zcr_deterministic() {
+        // ZCR should be consistent for the same input
+        let samples = generate_sine(440.0, 44100, 4410);
+
+        let zcr1 = zero_crossing_rate(&samples);
+        let zcr2 = zero_crossing_rate(&samples);
+
+        assert_eq!(zcr1, zcr2, "ZCR should be deterministic");
     }
 
     #[test]
@@ -1658,5 +1838,362 @@ mod tests {
             high_freq_instrumentalness,
             mid_freq_instrumentalness
         );
+    }
+
+    // ========================================================================
+    // Additional High-Level Feature Function Tests
+    // ========================================================================
+
+    #[test]
+    fn test_valence_extreme_values() {
+        // Test with extreme SpectralFeatures values
+        let very_bright = SpectralFeatures {
+            centroid_mean: 15000.0, // Way above 8kHz ceiling
+            flatness_mean: 0.0,     // Pure tone (maximally tonal)
+            ..Default::default()
+        };
+        let valence_bright = compute_valence(&very_bright, 44100);
+        assert!(
+            (0.0..=1.0).contains(&valence_bright),
+            "Extreme bright should still be in range, got {}",
+            valence_bright
+        );
+
+        let very_dark = SpectralFeatures {
+            centroid_mean: 50.0,  // Way below 1kHz floor
+            flatness_mean: 1.0,   // Pure noise (maximally flat)
+            ..Default::default()
+        };
+        let valence_dark = compute_valence(&very_dark, 44100);
+        assert!(
+            (0.0..=1.0).contains(&valence_dark),
+            "Extreme dark should still be in range, got {}",
+            valence_dark
+        );
+
+        // Verify ordering
+        assert!(
+            valence_bright > valence_dark,
+            "Bright ({}) should have higher valence than dark ({})",
+            valence_bright,
+            valence_dark
+        );
+    }
+
+    #[test]
+    fn test_valence_tonality_contribution() {
+        // Test that tonality (inverse flatness) contributes to valence
+        let tonal = SpectralFeatures {
+            centroid_mean: 4500.0, // Mid-range centroid
+            flatness_mean: 0.0,    // Pure tone
+            ..Default::default()
+        };
+        let noisy = SpectralFeatures {
+            centroid_mean: 4500.0, // Same centroid
+            flatness_mean: 1.0,    // Pure noise
+            ..Default::default()
+        };
+
+        let valence_tonal = compute_valence(&tonal, 44100);
+        let valence_noisy = compute_valence(&noisy, 44100);
+
+        assert!(
+            valence_tonal > valence_noisy,
+            "Tonal ({}) should have higher valence than noisy ({}) at same centroid",
+            valence_tonal,
+            valence_noisy
+        );
+    }
+
+    #[test]
+    fn test_acousticness_all_components() {
+        // Test each component of acousticness independently
+
+        // High ZCR alone should reduce acousticness
+        let high_zcr_only = SpectralFeatures {
+            zcr_mean: 0.5,
+            hf_energy_ratio: 0.0,
+            spectral_flux_mean: 0.0,
+            ..Default::default()
+        };
+        let acousticness_high_zcr = compute_acousticness(&high_zcr_only);
+
+        // High HF alone should reduce acousticness
+        let high_hf_only = SpectralFeatures {
+            zcr_mean: 0.0,
+            hf_energy_ratio: 0.9,
+            spectral_flux_mean: 0.0,
+            ..Default::default()
+        };
+        let acousticness_high_hf = compute_acousticness(&high_hf_only);
+
+        // High flux alone should reduce acousticness
+        let high_flux_only = SpectralFeatures {
+            zcr_mean: 0.0,
+            hf_energy_ratio: 0.0,
+            spectral_flux_mean: 0.8,
+            ..Default::default()
+        };
+        let acousticness_high_flux = compute_acousticness(&high_flux_only);
+
+        // All low should give high acousticness
+        let all_low = SpectralFeatures {
+            zcr_mean: 0.0,
+            hf_energy_ratio: 0.0,
+            spectral_flux_mean: 0.0,
+            ..Default::default()
+        };
+        let acousticness_low = compute_acousticness(&all_low);
+
+        assert!(
+            acousticness_low > acousticness_high_zcr,
+            "All low ({}) should be more acoustic than high ZCR only ({})",
+            acousticness_low,
+            acousticness_high_zcr
+        );
+        assert!(
+            acousticness_low > acousticness_high_hf,
+            "All low ({}) should be more acoustic than high HF only ({})",
+            acousticness_low,
+            acousticness_high_hf
+        );
+        assert!(
+            acousticness_low > acousticness_high_flux,
+            "All low ({}) should be more acoustic than high flux only ({})",
+            acousticness_low,
+            acousticness_high_flux
+        );
+    }
+
+    #[test]
+    fn test_instrumentalness_boundary_values() {
+        // Test exact boundary at vocal_band_energy = 1.0
+        let boundary = SpectralFeatures {
+            vocal_band_energy: 1.0,
+            ..Default::default()
+        };
+        let instrumentalness_boundary = compute_instrumentalness(&boundary);
+        assert_eq!(
+            instrumentalness_boundary, 0.0,
+            "At vocal_band_energy=1.0, instrumentalness should be 0.0, got {}",
+            instrumentalness_boundary
+        );
+
+        // Test at 0.0
+        let zero_vocal = SpectralFeatures {
+            vocal_band_energy: 0.0,
+            ..Default::default()
+        };
+        let instrumentalness_zero = compute_instrumentalness(&zero_vocal);
+        assert_eq!(
+            instrumentalness_zero, 1.0,
+            "At vocal_band_energy=0.0, instrumentalness should be 1.0, got {}",
+            instrumentalness_zero
+        );
+
+        // Test mid-point
+        let mid = SpectralFeatures {
+            vocal_band_energy: 0.5,
+            ..Default::default()
+        };
+        let instrumentalness_mid = compute_instrumentalness(&mid);
+        assert!(
+            (instrumentalness_mid - 0.5).abs() < 0.01,
+            "At vocal_band_energy=0.5, instrumentalness should be ~0.5, got {}",
+            instrumentalness_mid
+        );
+    }
+
+    #[test]
+    fn test_speechiness_edge_cases() {
+        // Test with zero values
+        let all_zero = SpectralFeatures {
+            zcr_std: 0.0,
+            vocal_band_energy: 0.0,
+            ..Default::default()
+        };
+        let speechiness_zero = compute_speechiness(&all_zero);
+        assert!(
+            (0.0..=1.0).contains(&speechiness_zero),
+            "Zero inputs should still produce valid speechiness, got {}",
+            speechiness_zero
+        );
+
+        // Test with high variance and moderate vocal energy (typical speech)
+        let speech_like = SpectralFeatures {
+            zcr_std: 0.15,          // High variance = speech-like modulation
+            vocal_band_energy: 0.5, // Moderate vocal energy
+            ..Default::default()
+        };
+        let speechiness_speech = compute_speechiness(&speech_like);
+
+        // Test with low variance and high vocal energy (typical singing)
+        let singing_like = SpectralFeatures {
+            zcr_std: 0.02,          // Low variance = sustained tones
+            vocal_band_energy: 0.7, // High vocal energy
+            ..Default::default()
+        };
+        let speechiness_singing = compute_speechiness(&singing_like);
+
+        assert!(
+            speechiness_speech > speechiness_singing,
+            "Speech-like ({}) should have higher speechiness than singing-like ({})",
+            speechiness_speech,
+            speechiness_singing
+        );
+    }
+
+    #[test]
+    fn test_all_features_default_spectral_features() {
+        // Test all feature functions with default SpectralFeatures
+        let default_features = SpectralFeatures::default();
+
+        let valence = compute_valence(&default_features, 44100);
+        let acousticness = compute_acousticness(&default_features);
+        let instrumentalness = compute_instrumentalness(&default_features);
+        let speechiness = compute_speechiness(&default_features);
+
+        // All should be in valid range
+        assert!(
+            (0.0..=1.0).contains(&valence),
+            "Default valence should be valid, got {}",
+            valence
+        );
+        assert!(
+            (0.0..=1.0).contains(&acousticness),
+            "Default acousticness should be valid, got {}",
+            acousticness
+        );
+        assert!(
+            (0.0..=1.0).contains(&instrumentalness),
+            "Default instrumentalness should be valid, got {}",
+            instrumentalness
+        );
+        assert!(
+            (0.0..=1.0).contains(&speechiness),
+            "Default speechiness should be valid, got {}",
+            speechiness
+        );
+    }
+
+    #[test]
+    fn test_features_with_synthetic_noise() {
+        // End-to-end test with synthetic noise
+        let sample_rate = 44100u32;
+        let noise = generate_noise(sample_rate as usize, 54321);
+        let features = analyze_spectral_features(&noise, sample_rate);
+
+        let valence = compute_valence(&features, sample_rate);
+        let acousticness = compute_acousticness(&features);
+        let instrumentalness = compute_instrumentalness(&features);
+        let speechiness = compute_speechiness(&features);
+
+        // All should be in valid range
+        assert!((0.0..=1.0).contains(&valence), "Noise valence: {}", valence);
+        assert!(
+            (0.0..=1.0).contains(&acousticness),
+            "Noise acousticness: {}",
+            acousticness
+        );
+        assert!(
+            (0.0..=1.0).contains(&instrumentalness),
+            "Noise instrumentalness: {}",
+            instrumentalness
+        );
+        assert!(
+            (0.0..=1.0).contains(&speechiness),
+            "Noise speechiness: {}",
+            speechiness
+        );
+
+        // Noise should have low acousticness (electronic/synthetic character)
+        assert!(
+            acousticness < 0.7,
+            "White noise should have low-moderate acousticness, got {}",
+            acousticness
+        );
+    }
+
+    #[test]
+    fn test_features_with_synthetic_complex_tone() {
+        // End-to-end test with complex harmonic tone (like a musical instrument)
+        let sample_rate = 44100u32;
+        let harmonics = vec![(2, 0.7), (3, 0.5), (4, 0.3), (5, 0.2), (6, 0.15)];
+        let complex = generate_harmonics(440.0, &harmonics, sample_rate, sample_rate as usize);
+        let features = analyze_spectral_features(&complex, sample_rate);
+
+        let valence = compute_valence(&features, sample_rate);
+        let acousticness = compute_acousticness(&features);
+        let instrumentalness = compute_instrumentalness(&features);
+        let speechiness = compute_speechiness(&features);
+
+        // All should be in valid range
+        assert!(
+            (0.0..=1.0).contains(&valence),
+            "Complex tone valence: {}",
+            valence
+        );
+        assert!(
+            (0.0..=1.0).contains(&acousticness),
+            "Complex tone acousticness: {}",
+            acousticness
+        );
+        assert!(
+            (0.0..=1.0).contains(&instrumentalness),
+            "Complex tone instrumentalness: {}",
+            instrumentalness
+        );
+        assert!(
+            (0.0..=1.0).contains(&speechiness),
+            "Complex tone speechiness: {}",
+            speechiness
+        );
+
+        // A sustained harmonic tone should have low speechiness (no speech modulation)
+        assert!(
+            speechiness < 0.5,
+            "Sustained harmonic tone should have low speechiness, got {}",
+            speechiness
+        );
+    }
+
+    #[test]
+    fn test_spectral_analyzer_with_various_sample_rates() {
+        // Test that analyzer works with different common sample rates
+        let sample_rates = [22050u32, 44100, 48000, 96000];
+
+        for rate in sample_rates {
+            let analyzer = SpectralAnalyzer::new(rate);
+            assert_eq!(analyzer.sample_rate(), rate);
+
+            // Generate a 1kHz sine at this sample rate
+            let samples = generate_sine(1000.0, rate, DEFAULT_FRAME_SIZE);
+            let mut analyzer = SpectralAnalyzer::new(rate);
+            let spectrum = analyzer.compute_spectrum(&samples);
+
+            // Centroid should be close to 1kHz regardless of sample rate
+            let centroid = analyzer.spectral_centroid(&spectrum);
+            assert!(
+                (centroid - 1000.0).abs() < 100.0,
+                "At {} Hz sample rate, centroid should be ~1000 Hz, got {}",
+                rate,
+                centroid
+            );
+        }
+    }
+
+    #[test]
+    fn test_spectral_analyzer_custom_frame_size() {
+        let sample_rate = 44100u32;
+
+        // Test with smaller frame size
+        let small_frame = 1024;
+        let analyzer_small = SpectralAnalyzer::with_params(sample_rate, small_frame, 256);
+        assert_eq!(analyzer_small.frame_size(), small_frame);
+
+        // Test with larger frame size
+        let large_frame = 4096;
+        let analyzer_large = SpectralAnalyzer::with_params(sample_rate, large_frame, 1024);
+        assert_eq!(analyzer_large.frame_size(), large_frame);
     }
 }
