@@ -185,6 +185,17 @@ pub fn compute_chromagram(samples: &[f32], sample_rate: u32) -> [f32; 12] {
 /// # Returns
 /// `KeyResult` with detected key, mode, confidence, and Camelot notation
 pub fn estimate_key(chromagram: &[f32; 12]) -> KeyResult {
+    // Handle silence: if chromagram is all zeros (or near-zero), return 0.0 confidence
+    let total_energy: f32 = chromagram.iter().sum();
+    if total_energy < f32::EPSILON {
+        return KeyResult {
+            key: "C".to_string(),      // Default key
+            mode: "major".to_string(), // Default mode
+            confidence: 0.0,           // Zero confidence indicates unknown
+            camelot: "8B".to_string(), // C major Camelot
+        };
+    }
+
     let mut best_correlation: f32 = f32::NEG_INFINITY;
     let mut best_pitch_class = 0;
     let mut best_is_major = true;

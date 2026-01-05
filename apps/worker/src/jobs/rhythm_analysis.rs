@@ -60,7 +60,22 @@ impl RhythmAnalyzer {
     }
 
     /// Create a new rhythm analyzer with custom parameters
+    ///
+    /// # Arguments
+    /// * `sample_rate` - Sample rate in Hz (must be > 0)
+    /// * `frame_size` - FFT frame size (must be >= 2 for valid Hann window)
+    /// * `hop_size` - Hop size between frames (must be >= 1)
+    ///
+    /// # Panics
+    /// Panics if frame_size < 2 or hop_size < 1
     pub fn with_params(sample_rate: u32, frame_size: usize, hop_size: usize) -> Self {
+        assert!(
+            frame_size >= 2,
+            "frame_size must be >= 2 for valid Hann window, got {}",
+            frame_size
+        );
+        assert!(hop_size >= 1, "hop_size must be >= 1, got {}", hop_size);
+
         let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(frame_size);
 

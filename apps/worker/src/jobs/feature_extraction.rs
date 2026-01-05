@@ -284,7 +284,13 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
 
     // Get sample rate and channel count for analysis
     let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+    // Ensure channels is at least 1 to prevent divide-by-zero in mono conversion
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(2)
+        .max(1);
 
     // Create sample buffer based on codec params
     let spec = symphonia::core::audio::SignalSpec::new(
@@ -415,12 +421,12 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
             let instrumentalness = spectral::compute_instrumentalness(&spectral_features);
             let speechiness = spectral::compute_speechiness(&spectral_features);
 
-            // Format key as "Note mode" (e.g., "C major", "A minor")
-            let key_string = format!("{} {}", key_result.key, key_result.mode);
-
+            // Store key and mode separately (no redundancy)
+            // key = just the note (e.g., "C", "F#")
+            // mode = just the mode (e.g., "major", "minor")
             (
                 Some(rhythm_features.bpm),
-                Some(key_string),
+                Some(key_result.key),
                 Some(key_result.mode),
                 Some(rhythm_features.danceability),
                 Some(valence),

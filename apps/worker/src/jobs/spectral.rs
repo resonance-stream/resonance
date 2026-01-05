@@ -114,6 +114,11 @@ impl SpectralAnalyzer {
     /// The spectral centroid is the weighted mean of frequencies,
     /// where the weights are the magnitudes. Returns frequency in Hz.
     pub fn spectral_centroid(&self, spectrum: &[f32]) -> f32 {
+        // Guard against frame_size == 0 and empty spectrum to prevent divide-by-zero
+        if self.frame_size == 0 || spectrum.is_empty() {
+            return 0.0;
+        }
+
         // Bin width = sample_rate / frame_size (frequency resolution)
         let bin_width = self.sample_rate as f32 / self.frame_size as f32;
 
@@ -240,6 +245,11 @@ impl SpectralAnalyzer {
 
     /// Calculate energy in a frequency band
     pub fn band_energy(&self, spectrum: &[f32], low_hz: f32, high_hz: f32) -> f32 {
+        // Guard against empty spectrum to prevent panic on spectrum.len() - 1
+        if spectrum.is_empty() {
+            return 0.0;
+        }
+
         let low_bin = self.frequency_to_bin(low_hz);
         let high_bin = self.frequency_to_bin(high_hz).min(spectrum.len() - 1);
 
@@ -525,6 +535,11 @@ pub fn compute_instrumentalness(features: &SpectralFeatures) -> f32 {
 /// Note: Differentiates from singing by using ZCR variance (speech has more
 /// irregular modulation than sustained sung notes).
 pub fn compute_speechiness(features: &SpectralFeatures) -> f32 {
+    // Guard against NaN/infinity in input features
+    if !features.zcr_std.is_finite() || !features.vocal_band_energy.is_finite() {
+        return 0.0;
+    }
+
     // High ZCR variance indicates speech-like modulation patterns
     // Singing tends to have more stable ZCR within phrases
     // Normalize: ZCR std of 0.15 or higher indicates significant speech-like variance
