@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{WorkerError, WorkerResult};
-use crate::jobs::clustering::{cluster_user_taste_with_metadata, TasteCluster, TrackClusterMetadata};
+use crate::jobs::clustering::{
+    cluster_user_taste_with_metadata, TasteCluster, TrackClusterMetadata,
+};
 use crate::AppState;
 
 // =============================================================================
@@ -490,7 +492,8 @@ async fn generate_cluster_playlists(
     tracing::debug!(user_id = %user_id, "Starting cluster playlist generation");
 
     // Step 1: Fetch listening history embeddings with metadata
-    let (embeddings, metadata) = get_listening_history_embeddings(state, user_id, CLUSTER_HISTORY_DAYS).await?;
+    let (embeddings, metadata) =
+        get_listening_history_embeddings(state, user_id, CLUSTER_HISTORY_DAYS).await?;
 
     if embeddings.len() < MIN_HISTORY_FOR_CLUSTERING {
         tracing::info!(
@@ -534,7 +537,8 @@ async fn generate_cluster_playlists(
     // Step 4: For each cluster, create playlist and populate with similar tracks
     for (cluster, cluster_db_id) in clusters.iter().zip(cluster_db_ids.iter()) {
         // Find or create playlist for this cluster
-        let playlist_id = find_or_create_cluster_playlist(state, user_id, cluster, *cluster_db_id).await?;
+        let playlist_id =
+            find_or_create_cluster_playlist(state, user_id, cluster, *cluster_db_id).await?;
 
         // Find tracks similar to the cluster centroid
         let similar_tracks = find_similar_tracks_for_cluster(
@@ -635,9 +639,7 @@ fn parse_pgvector_string(s: &str) -> WorkerResult<Vec<f32>> {
     let inner = trimmed
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
-        .ok_or_else(|| {
-            WorkerError::Internal(format!("Invalid pgvector format: {}", s))
-        })?;
+        .ok_or_else(|| WorkerError::Internal(format!("Invalid pgvector format: {}", s)))?;
 
     if inner.is_empty() {
         return Ok(Vec::new());
@@ -1153,16 +1155,20 @@ mod tests {
     fn test_cluster_constants_consistency() {
         // Cluster history days should match or exceed seed history days
         // since clustering needs at least as much data as seed-based approach
-        assert!(
-            CLUSTER_HISTORY_DAYS >= SEED_HISTORY_DAYS,
-            "CLUSTER_HISTORY_DAYS should be >= SEED_HISTORY_DAYS"
-        );
+        const {
+            assert!(
+                CLUSTER_HISTORY_DAYS >= SEED_HISTORY_DAYS,
+                "CLUSTER_HISTORY_DAYS should be >= SEED_HISTORY_DAYS"
+            )
+        };
 
         // Cluster playlist track count should be clamped by MAX_TRACK_COUNT
-        assert!(
-            CLUSTER_PLAYLIST_TRACK_COUNT <= MAX_TRACK_COUNT,
-            "CLUSTER_PLAYLIST_TRACK_COUNT should not exceed MAX_TRACK_COUNT"
-        );
+        const {
+            assert!(
+                CLUSTER_PLAYLIST_TRACK_COUNT <= MAX_TRACK_COUNT,
+                "CLUSTER_PLAYLIST_TRACK_COUNT should not exceed MAX_TRACK_COUNT"
+            )
+        };
     }
 
     #[test]

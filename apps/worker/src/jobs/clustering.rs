@@ -368,11 +368,7 @@ pub fn calculate_silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
 }
 
 /// Calculate silhouette score using all data points (O(n²) complexity)
-fn calculate_silhouette_score_full(
-    data: &Array2<f64>,
-    labels: &[usize],
-    n_clusters: usize,
-) -> f64 {
+fn calculate_silhouette_score_full(data: &Array2<f64>, labels: &[usize], n_clusters: usize) -> f64 {
     let n_samples = data.nrows();
 
     // Calculate silhouette for each point
@@ -566,10 +562,8 @@ fn build_clusters(
             .collect();
 
         // Collect metadata for cluster tracks
-        let cluster_metadata: Vec<&TrackClusterMetadata> = track_ids
-            .iter()
-            .filter_map(|id| metadata.get(id))
-            .collect();
+        let cluster_metadata: Vec<&TrackClusterMetadata> =
+            track_ids.iter().filter_map(|id| metadata.get(id)).collect();
 
         // Extract moods and genres
         let moods: Vec<String> = cluster_metadata
@@ -824,8 +818,8 @@ mod tests {
 
     #[test]
     fn test_silhouette_score_single_cluster() {
-        let data = Array2::from_shape_vec((4, 2), vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
-            .unwrap();
+        let data =
+            Array2::from_shape_vec((4, 2), vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0]).unwrap();
 
         let labels = vec![0, 0, 0, 0];
 
@@ -884,8 +878,9 @@ mod tests {
 
     #[test]
     fn test_cluster_user_taste_zero_dimension() {
-        let embeddings: Vec<(Uuid, Vec<f32>)> =
-            (0..20).map(|i| (Uuid::from_u128(i as u128), vec![])).collect();
+        let embeddings: Vec<(Uuid, Vec<f32>)> = (0..20)
+            .map(|i| (Uuid::from_u128(i as u128), vec![]))
+            .collect();
 
         let clusters = cluster_user_taste(&embeddings);
         assert!(clusters.is_empty());
@@ -1139,39 +1134,48 @@ mod tests {
 
     #[test]
     fn test_configuration_constants_valid() {
-        assert!(MIN_CLUSTERS >= 2, "Must have at least 2 clusters minimum");
-        assert!(
-            MAX_CLUSTERS >= MIN_CLUSTERS,
-            "Max clusters must be >= min clusters"
-        );
-        assert!(
-            MIN_SILHOUETTE_THRESHOLD > -1.0 && MIN_SILHOUETTE_THRESHOLD < 1.0,
-            "Silhouette threshold must be in valid range"
-        );
-        assert!(
-            MIN_TRACKS_PER_CLUSTER >= 1,
-            "Must have at least 1 track per cluster"
-        );
-        assert!(
-            KMEANS_MAX_ITERATIONS >= 10,
-            "Should have reasonable max iterations"
-        );
+        const { assert!(MIN_CLUSTERS >= 2, "Must have at least 2 clusters minimum") };
+        const {
+            assert!(
+                MAX_CLUSTERS >= MIN_CLUSTERS,
+                "Max clusters must be >= min clusters"
+            )
+        };
+        const {
+            assert!(
+                MIN_SILHOUETTE_THRESHOLD > -1.0 && MIN_SILHOUETTE_THRESHOLD < 1.0,
+                "Silhouette threshold must be in valid range"
+            )
+        };
+        const {
+            assert!(
+                MIN_TRACKS_PER_CLUSTER >= 1,
+                "Must have at least 1 track per cluster"
+            )
+        };
+        const {
+            assert!(
+                KMEANS_MAX_ITERATIONS >= 10,
+                "Should have reasonable max iterations"
+            )
+        };
     }
 
     #[test]
     fn test_silhouette_sampling_constants_valid() {
-        assert!(
-            SILHOUETTE_SAMPLE_THRESHOLD > 0,
-            "Sample threshold must be positive"
-        );
-        assert!(
-            SILHOUETTE_SAMPLE_SIZE > 0,
-            "Sample size must be positive"
-        );
-        assert!(
-            SILHOUETTE_SAMPLE_SIZE < SILHOUETTE_SAMPLE_THRESHOLD,
-            "Sample size should be less than threshold"
-        );
+        const {
+            assert!(
+                SILHOUETTE_SAMPLE_THRESHOLD > 0,
+                "Sample threshold must be positive"
+            )
+        };
+        const { assert!(SILHOUETTE_SAMPLE_SIZE > 0, "Sample size must be positive") };
+        const {
+            assert!(
+                SILHOUETTE_SAMPLE_SIZE < SILHOUETTE_SAMPLE_THRESHOLD,
+                "Sample size should be less than threshold"
+            )
+        };
     }
 
     // =========================================================================
@@ -1239,7 +1243,11 @@ mod tests {
 
         // Should still get a reasonable score with sampling
         // (may be slightly different from full calculation, but should be positive for well-separated clusters)
-        assert!(score > 0.3, "Expected positive silhouette score with sampling, got {}", score);
+        assert!(
+            score > 0.3,
+            "Expected positive silhouette score with sampling, got {}",
+            score
+        );
     }
 
     #[test]
@@ -1303,6 +1311,10 @@ mod tests {
         let score = calculate_silhouette_score(&data, &labels);
 
         // Should handle imbalanced clusters gracefully
-        assert!(score > 0.0, "Expected positive silhouette score for imbalanced clusters, got {}", score);
+        assert!(
+            score > 0.0,
+            "Expected positive silhouette score for imbalanced clusters, got {}",
+            score
+        );
     }
 }
