@@ -35,6 +35,7 @@ use linfa::traits::{Fit, Predict};
 use linfa::DatasetBase;
 use linfa_clustering::KMeans;
 use ndarray::Array2;
+use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256Plus;
 use uuid::Uuid;
@@ -64,6 +65,14 @@ const KMEANS_TOLERANCE: f64 = 1e-4;
 
 /// Random seed for reproducible clustering results
 const KMEANS_RANDOM_SEED: u64 = 42;
+
+/// Threshold for using sampling-based silhouette calculation
+/// For datasets larger than this, we sample to avoid O(n²) computation
+const SILHOUETTE_SAMPLE_THRESHOLD: usize = 500;
+
+/// Number of samples to use for silhouette calculation on large datasets
+/// This provides a good approximation while keeping computation reasonable
+const SILHOUETTE_SAMPLE_SIZE: usize = 300;
 
 // =============================================================================
 // Types
@@ -324,6 +333,10 @@ fn count_cluster_sizes(labels: &[usize], k: usize) -> Vec<usize> {
 /// - 0: Points are on the boundary between clusters
 /// - -1: Points may be assigned to the wrong cluster
 ///
+/// For large datasets (> 500 samples), this function uses sampling-based
+/// calculation to avoid O(n²) complexity while still providing a good
+/// approximation of the true silhouette score.
+///
 /// # Arguments
 ///
 /// * `data` - The data points as a 2D array (n_samples x n_features)
@@ -331,7 +344,7 @@ fn count_cluster_sizes(labels: &[usize], k: usize) -> Vec<usize> {
 ///
 /// # Returns
 ///
-/// The mean silhouette score across all points
+/// The mean silhouette score across all points (or sampled points for large datasets)
 pub fn calculate_silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
     let n_samples = data.nrows();
 
@@ -345,6 +358,23 @@ pub fn calculate_silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
         return 0.0;
     }
 
+    // For large datasets, use sampling to avoid O(n²) computation
+    if n_samples > SILHOUETTE_SAMPLE_THRESHOLD {
+        return calculate_silhouette_score_sampled(data, labels, n_clusters);
+    }
+
+    // Full calculation for smaller datasets
+    calculate_silhouette_score_full(data, labels, n_clusters)
+}
+
+/// Calculate silhouette score using all data points (O(n²) complexity)
+fn calculate_silhouette_score_full(
+    data: &Array2<f64>,
+    labels: &[usize],
+    n_clusters: usize,
+) -> f64 {
+    let n_samples = data.nrows();
+
     // Calculate silhouette for each point
     let silhouettes: Vec<f64> = (0..n_samples)
         .map(|i| calculate_point_silhouette(data, labels, i, n_clusters))
@@ -352,6 +382,90 @@ pub fn calculate_silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
 
     // Return mean silhouette
     silhouettes.iter().sum::<f64>() / n_samples as f64
+}
+
+/// Calculate silhouette score using stratified sampling for large datasets
+///
+/// This function samples points proportionally from each cluster to maintain
+/// representative coverage while reducing computation time from O(n²) to O(sample²).
+fn calculate_silhouette_score_sampled(
+    data: &Array2<f64>,
+    labels: &[usize],
+    n_clusters: usize,
+) -> f64 {
+    let n_samples = data.nrows();
+    let sample_size = SILHOUETTE_SAMPLE_SIZE.min(n_samples);
+
+    // Group indices by cluster for stratified sampling
+    let mut cluster_indices: Vec<Vec<usize>> = vec![Vec::new(); n_clusters];
+    for (idx, &label) in labels.iter().enumerate() {
+        if label < n_clusters {
+            cluster_indices[label].push(idx);
+        }
+    }
+
+    // Create RNG with fixed seed for reproducibility
+    let mut rng = Xoshiro256Plus::seed_from_u64(KMEANS_RANDOM_SEED);
+
+    // Stratified sampling: sample proportionally from each cluster
+    let mut sampled_indices: Vec<usize> = Vec::with_capacity(sample_size);
+
+    // Calculate how many samples to take from each cluster (proportional)
+    let total_points: usize = cluster_indices.iter().map(|c| c.len()).sum();
+    let mut remaining_samples = sample_size;
+
+    for (cluster_idx, indices) in cluster_indices.iter_mut().enumerate() {
+        if indices.is_empty() {
+            continue;
+        }
+
+        // Calculate proportional sample count for this cluster
+        // For the last cluster, use all remaining samples to handle rounding
+        let cluster_sample_count = if cluster_idx == n_clusters - 1 {
+            remaining_samples
+        } else {
+            let proportion = indices.len() as f64 / total_points as f64;
+            let count = (proportion * sample_size as f64).round() as usize;
+            count.min(remaining_samples).min(indices.len())
+        };
+
+        if cluster_sample_count == 0 {
+            continue;
+        }
+
+        // Shuffle and take samples
+        indices.shuffle(&mut rng);
+        sampled_indices.extend(indices.iter().take(cluster_sample_count));
+        remaining_samples = remaining_samples.saturating_sub(cluster_sample_count);
+    }
+
+    // If we didn't get enough samples (due to rounding), fill randomly
+    if sampled_indices.len() < sample_size {
+        let mut all_indices: Vec<usize> = (0..n_samples)
+            .filter(|i| !sampled_indices.contains(i))
+            .collect();
+        all_indices.shuffle(&mut rng);
+        let additional = sample_size - sampled_indices.len();
+        sampled_indices.extend(all_indices.into_iter().take(additional));
+    }
+
+    tracing::debug!(
+        n_samples = n_samples,
+        sample_size = sampled_indices.len(),
+        "Using sampling-based silhouette calculation"
+    );
+
+    // Calculate silhouette for sampled points only
+    let silhouettes: Vec<f64> = sampled_indices
+        .iter()
+        .map(|&i| calculate_point_silhouette(data, labels, i, n_clusters))
+        .collect();
+
+    if silhouettes.is_empty() {
+        return 0.0;
+    }
+
+    silhouettes.iter().sum::<f64>() / silhouettes.len() as f64
 }
 
 /// Calculate silhouette score for a single point
@@ -1042,5 +1156,153 @@ mod tests {
             KMEANS_MAX_ITERATIONS >= 10,
             "Should have reasonable max iterations"
         );
+    }
+
+    #[test]
+    fn test_silhouette_sampling_constants_valid() {
+        assert!(
+            SILHOUETTE_SAMPLE_THRESHOLD > 0,
+            "Sample threshold must be positive"
+        );
+        assert!(
+            SILHOUETTE_SAMPLE_SIZE > 0,
+            "Sample size must be positive"
+        );
+        assert!(
+            SILHOUETTE_SAMPLE_SIZE < SILHOUETTE_SAMPLE_THRESHOLD,
+            "Sample size should be less than threshold"
+        );
+    }
+
+    // =========================================================================
+    // Sampling-based Silhouette Tests
+    // =========================================================================
+
+    #[test]
+    fn test_silhouette_uses_full_calculation_below_threshold() {
+        // Create dataset with exactly SILHOUETTE_SAMPLE_THRESHOLD points
+        // This should use full calculation
+        let n_points = SILHOUETTE_SAMPLE_THRESHOLD;
+        let dim = 2;
+
+        // Create two well-separated clusters
+        let mut data_vec = Vec::with_capacity(n_points * dim);
+        let mut labels = Vec::with_capacity(n_points);
+
+        for i in 0..n_points {
+            if i < n_points / 2 {
+                // Cluster 0 around (0, 0)
+                data_vec.push(0.1 * (i as f64));
+                data_vec.push(0.1 * (i as f64));
+                labels.push(0);
+            } else {
+                // Cluster 1 around (100, 100)
+                data_vec.push(100.0 + 0.1 * (i as f64));
+                data_vec.push(100.0 + 0.1 * (i as f64));
+                labels.push(1);
+            }
+        }
+
+        let data = Array2::from_shape_vec((n_points, dim), data_vec).unwrap();
+        let score = calculate_silhouette_score(&data, &labels);
+
+        // Should get a high score for well-separated clusters
+        assert!(score > 0.5, "Expected high silhouette score, got {}", score);
+    }
+
+    #[test]
+    fn test_silhouette_uses_sampling_above_threshold() {
+        // Create dataset larger than SILHOUETTE_SAMPLE_THRESHOLD
+        let n_points = SILHOUETTE_SAMPLE_THRESHOLD + 100;
+        let dim = 2;
+
+        // Create two well-separated clusters
+        let mut data_vec = Vec::with_capacity(n_points * dim);
+        let mut labels = Vec::with_capacity(n_points);
+
+        for i in 0..n_points {
+            if i < n_points / 2 {
+                // Cluster 0 around (0, 0)
+                data_vec.push(0.1 * (i as f64 % 10.0));
+                data_vec.push(0.1 * (i as f64 % 10.0));
+                labels.push(0);
+            } else {
+                // Cluster 1 around (100, 100)
+                data_vec.push(100.0 + 0.1 * (i as f64 % 10.0));
+                data_vec.push(100.0 + 0.1 * (i as f64 % 10.0));
+                labels.push(1);
+            }
+        }
+
+        let data = Array2::from_shape_vec((n_points, dim), data_vec).unwrap();
+        let score = calculate_silhouette_score(&data, &labels);
+
+        // Should still get a reasonable score with sampling
+        // (may be slightly different from full calculation, but should be positive for well-separated clusters)
+        assert!(score > 0.3, "Expected positive silhouette score with sampling, got {}", score);
+    }
+
+    #[test]
+    fn test_sampled_silhouette_consistent_with_seed() {
+        // Verify that sampling produces consistent results due to fixed seed
+        let n_points = SILHOUETTE_SAMPLE_THRESHOLD + 200;
+        let dim = 3;
+
+        let mut data_vec = Vec::with_capacity(n_points * dim);
+        let mut labels = Vec::with_capacity(n_points);
+
+        for i in 0..n_points {
+            let cluster = i % 3;
+            let base = (cluster * 50) as f64;
+            data_vec.push(base + (i as f64 % 5.0));
+            data_vec.push(base + (i as f64 % 7.0));
+            data_vec.push(base + (i as f64 % 3.0));
+            labels.push(cluster);
+        }
+
+        let data = Array2::from_shape_vec((n_points, dim), data_vec).unwrap();
+
+        // Run multiple times - should get same result due to fixed seed
+        let score1 = calculate_silhouette_score(&data, &labels);
+        let score2 = calculate_silhouette_score(&data, &labels);
+
+        assert!(
+            (score1 - score2).abs() < 1e-10,
+            "Sampled silhouette should be deterministic, got {} and {}",
+            score1,
+            score2
+        );
+    }
+
+    #[test]
+    fn test_sampled_silhouette_handles_imbalanced_clusters() {
+        // Test with one large cluster and one small cluster
+        let n_points = SILHOUETTE_SAMPLE_THRESHOLD + 100;
+        let dim = 2;
+
+        let mut data_vec = Vec::with_capacity(n_points * dim);
+        let mut labels = Vec::with_capacity(n_points);
+
+        // 90% in cluster 0, 10% in cluster 1
+        let cluster1_size = n_points / 10;
+        let cluster0_size = n_points - cluster1_size;
+
+        for i in 0..cluster0_size {
+            data_vec.push(0.1 * (i as f64 % 10.0));
+            data_vec.push(0.1 * (i as f64 % 10.0));
+            labels.push(0);
+        }
+
+        for i in 0..cluster1_size {
+            data_vec.push(100.0 + 0.1 * (i as f64 % 10.0));
+            data_vec.push(100.0 + 0.1 * (i as f64 % 10.0));
+            labels.push(1);
+        }
+
+        let data = Array2::from_shape_vec((n_points, dim), data_vec).unwrap();
+        let score = calculate_silhouette_score(&data, &labels);
+
+        // Should handle imbalanced clusters gracefully
+        assert!(score > 0.0, "Expected positive silhouette score for imbalanced clusters, got {}", score);
     }
 }
