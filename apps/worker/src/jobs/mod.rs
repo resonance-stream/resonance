@@ -5,6 +5,7 @@
 //! - Audio feature extraction
 //! - AI embedding generation
 //! - Weekly Discover playlist creation
+//! - Taste-clustered playlist generation
 //! - Smart prefetch for autoplay
 //! - Lidarr integration sync
 
@@ -16,6 +17,7 @@ use tokio::sync::broadcast;
 use crate::error::{WorkerError, WorkerResult};
 use crate::AppState;
 
+pub mod clustering;
 pub mod embedding_generation;
 pub mod feature_extraction;
 pub mod key_detection;
