@@ -1,7 +1,7 @@
 //! Audio feature extraction job
 //!
 //! Extracts audio features from tracks using Symphonia for analysis.
-//! Features include loudness, energy, and basic audio characteristics.
+//! Features include loudness, energy, BPM, key, danceability, and more.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -18,11 +18,21 @@ use uuid::Uuid;
 use crate::error::{WorkerError, WorkerResult};
 use crate::AppState;
 
+// Import the analyzer modules
+use super::key_detection;
+use super::rhythm_analysis;
+use super::spectral;
+
 /// Maximum file size for feature extraction (500 MB)
 const MAX_FILE_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Maximum samples to process (~17 minutes at 96kHz stereo)
 const MAX_SAMPLES: u64 = 100_000_000;
+
+/// Duration in seconds for advanced analysis buffer
+/// This provides enough audio data for BPM, key, and spectral analysis
+/// while keeping memory usage reasonable (~7.5MB for mono f32 at 44.1kHz)
+const ANALYSIS_DURATION_SECS: usize = 45;
 
 /// Feature extraction job payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,9 +282,19 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
     // Collect audio statistics
     let mut stats = AudioStats::default();
 
+    // Get sample rate and channel count for analysis
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    // Ensure channels is at least 1 to prevent divide-by-zero in mono conversion
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(2)
+        .max(1);
+
     // Create sample buffer based on codec params
     let spec = symphonia::core::audio::SignalSpec::new(
-        track.codec_params.sample_rate.unwrap_or(44100),
+        sample_rate,
         track
             .codec_params
             .channels
@@ -282,6 +302,10 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
     );
     let max_frames = track.codec_params.max_frames_per_packet.unwrap_or(4096) as u64;
     let mut sample_buf = SampleBuffer::<f32>::new(max_frames, spec);
+
+    // Buffer for advanced analysis (mono samples from first 45 seconds)
+    let analysis_buffer_size = ANALYSIS_DURATION_SECS * sample_rate as usize;
+    let mut analysis_buffer: Vec<f32> = Vec::with_capacity(analysis_buffer_size);
 
     // Decode packets and analyze samples
     loop {
@@ -321,14 +345,36 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
                 // Copy decoded samples to buffer
                 sample_buf.copy_interleaved_ref(decoded);
 
-                // Analyze samples
-                for &sample in sample_buf.samples() {
-                    let abs_sample = sample.abs();
-                    stats.sum_squared += (sample * sample) as f64;
-                    stats.sample_count += 1;
-                    if abs_sample > stats.peak {
-                        stats.peak = abs_sample;
+                let samples = sample_buf.samples();
+
+                // Analyze samples and collect for advanced analysis
+                // Process samples in channel-sized chunks for stereo-to-mono conversion
+                let mut i = 0;
+                while i < samples.len() {
+                    // Sum channels to create mono sample
+                    let mut mono_sum = 0.0f32;
+                    for ch in 0..channels {
+                        if i + ch < samples.len() {
+                            let sample = samples[i + ch];
+                            let abs_sample = sample.abs();
+
+                            // Update basic stats
+                            stats.sum_squared += (sample * sample) as f64;
+                            stats.sample_count += 1;
+                            if abs_sample > stats.peak {
+                                stats.peak = abs_sample;
+                            }
+
+                            mono_sum += sample;
+                        }
                     }
+
+                    // Add mono sample to analysis buffer (first N seconds only)
+                    if analysis_buffer.len() < analysis_buffer_size {
+                        analysis_buffer.push(mono_sum / channels as f32);
+                    }
+
+                    i += channels;
 
                     // Check limit during sample processing
                     if stats.sample_count >= MAX_SAMPLES {
@@ -356,20 +402,60 @@ fn extract_features(path: &Path) -> WorkerResult<AudioFeatures> {
         None
     };
 
+    // Run advanced audio analysis on the buffered samples
+    let (bpm, key, mode, danceability, valence, acousticness, instrumentalness, speechiness) =
+        if analysis_buffer.len() >= spectral::DEFAULT_FRAME_SIZE {
+            // Analyze rhythm for BPM and danceability
+            let rhythm_features = rhythm_analysis::analyze(&analysis_buffer, sample_rate);
+
+            // Analyze key and mode
+            let key_result = key_detection::analyze(&analysis_buffer, sample_rate);
+
+            // Analyze spectral features for valence, acousticness, instrumentalness, speechiness
+            let spectral_features =
+                spectral::analyze_spectral_features(&analysis_buffer, sample_rate);
+
+            // Compute derived features from spectral analysis
+            let valence = spectral::compute_valence(&spectral_features, sample_rate);
+            let acousticness = spectral::compute_acousticness(&spectral_features);
+            let instrumentalness = spectral::compute_instrumentalness(&spectral_features);
+            let speechiness = spectral::compute_speechiness(&spectral_features);
+
+            // Store key and mode separately (no redundancy)
+            // key = just the note (e.g., "C", "F#")
+            // mode = just the mode (e.g., "major", "minor")
+            (
+                Some(rhythm_features.bpm),
+                Some(key_result.key),
+                Some(key_result.mode),
+                Some(rhythm_features.danceability),
+                Some(valence),
+                Some(acousticness),
+                Some(instrumentalness),
+                Some(speechiness),
+            )
+        } else {
+            tracing::debug!(
+                "Not enough samples for advanced analysis: {} < {}",
+                analysis_buffer.len(),
+                spectral::DEFAULT_FRAME_SIZE
+            );
+            (None, None, None, None, None, None, None, None)
+        };
+
     let features = AudioFeatures {
         loudness: Some(stats.approximate_lufs()),
         energy: Some(stats.energy()),
         peak: Some(stats.peak),
         dynamic_range,
-        // Advanced features require specialized algorithms
-        bpm: None,
-        key: None,
-        mode: None,
-        danceability: None,
-        valence: None,
-        acousticness: None,
-        instrumentalness: None,
-        speechiness: None,
+        bpm,
+        key,
+        mode,
+        danceability,
+        valence,
+        acousticness,
+        instrumentalness,
+        speechiness,
     };
 
     Ok(features)

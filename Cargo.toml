@@ -63,6 +63,11 @@ symphonia = { version = "0.5", features = ["all"] }
 lofty = "0.18"
 # bliss-audio requires aubio C library - using pure-Rust similarity instead
 
+# FFT / DSP (pure-Rust, no C dependencies)
+rustfft = "6.2"
+realfft = "3"
+apodize = "1.0"
+
 # File system
 walkdir = "2"
 
