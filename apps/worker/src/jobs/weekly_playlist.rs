@@ -3,11 +3,19 @@
 //! Generates personalized "Discover Weekly" style playlists for users
 //! based on their listening history and AI recommendations using pgvector
 //! embeddings for semantic similarity.
+//!
+//! This module also supports taste-clustered playlists that supplement
+//! the Discover Weekly by using k-means clustering on listening history
+//! embeddings to identify distinct taste groups and generate a playlist
+//! per cluster using centroid similarity search.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{WorkerError, WorkerResult};
+use crate::jobs::clustering::{cluster_user_taste_with_metadata, TasteCluster, TrackClusterMetadata};
 use crate::AppState;
 
 // =============================================================================
@@ -35,6 +43,23 @@ const DISCOVER_WEEKLY_NAME: &str = "Discover Weekly";
 /// Description for the auto-generated discover weekly playlist
 const DISCOVER_WEEKLY_DESCRIPTION: &str =
     "Personalized tracks based on your listening history, updated weekly";
+
+// =============================================================================
+// Cluster Playlist Configuration Constants
+// =============================================================================
+
+/// Minimum listening history entries required for clustering
+/// Below this threshold, clustering likely won't produce meaningful results
+const MIN_HISTORY_FOR_CLUSTERING: usize = 20;
+
+/// Number of tracks to include in each cluster playlist
+const CLUSTER_PLAYLIST_TRACK_COUNT: usize = 30;
+
+/// Number of days of listening history to consider for clustering
+const CLUSTER_HISTORY_DAYS: i32 = 30;
+
+/// Number of days to filter out recently played tracks from cluster playlists
+const CLUSTER_RECENTLY_PLAYED_DAYS: i32 = 7;
 
 // =============================================================================
 // Job Types
@@ -84,6 +109,27 @@ struct TrackIdRecord {
 struct PlaylistUpsertResult {
     id: Uuid,
     created: bool,
+}
+
+/// Track embedding with metadata for clustering
+///
+/// The embedding is stored as a string representation from PostgreSQL's
+/// pgvector type (e.g., "[0.1, 0.2, 0.3]") and parsed into Vec<f32>.
+#[derive(Debug, sqlx::FromRow)]
+struct TrackEmbeddingWithMetadata {
+    track_id: Uuid,
+    /// Embedding as string "[f32, f32, ...]" from vector::text
+    description_embedding: String,
+    mood: Option<String>,
+    genre: Option<String>,
+    energy: Option<f32>,
+    valence: Option<f32>,
+}
+
+/// Cluster upsert result
+#[derive(Debug, sqlx::FromRow)]
+struct ClusterUpsertResult {
+    id: Uuid,
 }
 
 /// Execute the weekly playlist generation job
@@ -183,6 +229,16 @@ async fn generate_for_user(
         track_count = similar_tracks.len(),
         "Weekly playlist updated successfully"
     );
+
+    // Step 5: Generate taste-clustered playlists (supplementary)
+    if let Err(e) = generate_cluster_playlists(state, user_id, track_count).await {
+        tracing::warn!(
+            user_id = %user_id,
+            error = %e,
+            "Failed to generate cluster playlists"
+        );
+        // Don't fail the whole job, cluster playlists are supplementary
+    }
 
     Ok(())
 }
@@ -388,6 +444,387 @@ async fn replace_playlist_tracks(
     Ok(())
 }
 
+// =============================================================================
+// Cluster-Based Playlist Generation
+// =============================================================================
+
+/// Generate taste-clustered playlists for a user
+///
+/// This function orchestrates the cluster playlist generation process:
+/// 1. Fetches listening history embeddings
+/// 2. Performs k-means clustering using the clustering module
+/// 3. For each cluster: saves metadata, creates playlist, finds similar tracks
+///
+/// Cluster playlists supplement the Discover Weekly with more targeted
+/// recommendations based on distinct taste preferences.
+async fn generate_cluster_playlists(
+    state: &AppState,
+    user_id: Uuid,
+    track_count: usize,
+) -> WorkerResult<()> {
+    tracing::debug!(user_id = %user_id, "Starting cluster playlist generation");
+
+    // Step 1: Fetch listening history embeddings with metadata
+    let (embeddings, metadata) = get_listening_history_embeddings(state, user_id, CLUSTER_HISTORY_DAYS).await?;
+
+    if embeddings.len() < MIN_HISTORY_FOR_CLUSTERING {
+        tracing::info!(
+            user_id = %user_id,
+            embedding_count = embeddings.len(),
+            min_required = MIN_HISTORY_FOR_CLUSTERING,
+            "Insufficient listening history for clustering"
+        );
+        return Ok(());
+    }
+
+    tracing::debug!(
+        user_id = %user_id,
+        embedding_count = embeddings.len(),
+        "Fetched embeddings for clustering"
+    );
+
+    // Step 2: Perform k-means clustering
+    let clusters = cluster_user_taste_with_metadata(&embeddings, &metadata);
+
+    if clusters.is_empty() {
+        tracing::info!(
+            user_id = %user_id,
+            "No distinct clusters found in listening history"
+        );
+        return Ok(());
+    }
+
+    tracing::info!(
+        user_id = %user_id,
+        cluster_count = clusters.len(),
+        "Generated taste clusters"
+    );
+
+    // Step 3: Save cluster metadata and generate playlists
+    let cluster_db_ids = save_cluster_metadata(state, user_id, &clusters).await?;
+
+    // Clamp track count for cluster playlists
+    let playlist_track_count = track_count.min(CLUSTER_PLAYLIST_TRACK_COUNT);
+
+    // Step 4: For each cluster, create playlist and populate with similar tracks
+    for (cluster, cluster_db_id) in clusters.iter().zip(cluster_db_ids.iter()) {
+        // Find or create playlist for this cluster
+        let playlist_id = find_or_create_cluster_playlist(state, user_id, cluster, *cluster_db_id).await?;
+
+        // Find tracks similar to the cluster centroid
+        let similar_tracks = find_similar_tracks_for_cluster(
+            state,
+            user_id,
+            &cluster.centroid,
+            playlist_track_count,
+        )
+        .await?;
+
+        if similar_tracks.is_empty() {
+            tracing::warn!(
+                user_id = %user_id,
+                cluster_name = %cluster.suggested_name,
+                "No similar tracks found for cluster"
+            );
+            continue;
+        }
+
+        // Replace playlist tracks with new discoveries
+        replace_playlist_tracks(state, user_id, playlist_id, &similar_tracks).await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            cluster_name = %cluster.suggested_name,
+            playlist_id = %playlist_id,
+            track_count = similar_tracks.len(),
+            "Cluster playlist updated successfully"
+        );
+    }
+
+    Ok(())
+}
+
+/// Fetch user's listening history embeddings with metadata for clustering
+///
+/// Returns embeddings as (track_id, embedding_vector) pairs along with
+/// a metadata map for cluster naming purposes.
+async fn get_listening_history_embeddings(
+    state: &AppState,
+    user_id: Uuid,
+    days: i32,
+) -> WorkerResult<(Vec<(Uuid, Vec<f32>)>, HashMap<Uuid, TrackClusterMetadata>)> {
+    // Fetch unique tracks from listening history with embeddings and metadata
+    // Cast the embedding to text so we can parse it as a string
+    let tracks: Vec<TrackEmbeddingWithMetadata> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ON (te.track_id)
+            te.track_id,
+            te.description_embedding::text as description_embedding,
+            t.ai_mood[1] as mood,
+            t.genres[1] as genre,
+            (t.audio_features->>'energy')::float as energy,
+            (t.audio_features->>'valence')::float as valence
+        FROM listening_history lh
+        JOIN track_embeddings te ON te.track_id = lh.track_id
+        JOIN tracks t ON t.id = lh.track_id
+        WHERE lh.user_id = $1
+          AND lh.played_at > NOW() - make_interval(days => $2)
+          AND lh.completed = true
+          AND te.description_embedding IS NOT NULL
+        ORDER BY te.track_id, lh.played_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .bind(days)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Convert to clustering format
+    let mut embeddings: Vec<(Uuid, Vec<f32>)> = Vec::with_capacity(tracks.len());
+    let mut metadata: HashMap<Uuid, TrackClusterMetadata> = HashMap::with_capacity(tracks.len());
+
+    for track in tracks {
+        // Parse pgvector string representation "[0.1, 0.2, ...]" to Vec<f32>
+        let embedding_vec = parse_pgvector_string(&track.description_embedding)?;
+
+        embeddings.push((track.track_id, embedding_vec));
+
+        metadata.insert(
+            track.track_id,
+            TrackClusterMetadata {
+                mood: track.mood,
+                genre: track.genre,
+                energy: track.energy.unwrap_or(0.5),
+                valence: track.valence.unwrap_or(0.5),
+            },
+        );
+    }
+
+    Ok((embeddings, metadata))
+}
+
+/// Parse a pgvector string representation "[0.1, 0.2, ...]" into Vec<f32>
+fn parse_pgvector_string(s: &str) -> WorkerResult<Vec<f32>> {
+    // Remove brackets and split by comma
+    let trimmed = s.trim();
+    let inner = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .ok_or_else(|| {
+            WorkerError::Internal(format!("Invalid pgvector format: {}", s))
+        })?;
+
+    if inner.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    inner
+        .split(',')
+        .map(|v| {
+            v.trim().parse::<f32>().map_err(|e| {
+                WorkerError::Internal(format!("Failed to parse vector element '{}': {}", v, e))
+            })
+        })
+        .collect()
+}
+
+/// Format a Vec<f32> as a pgvector string representation "[0.1, 0.2, ...]"
+fn format_pgvector_string(embedding: &[f32]) -> WorkerResult<String> {
+    // Validate that all values are finite to prevent database errors
+    if embedding.iter().any(|v| !v.is_finite()) {
+        return Err(WorkerError::Internal(
+            "Embedding contains non-finite values (NaN/inf)".to_string(),
+        ));
+    }
+
+    let values: Vec<String> = embedding.iter().map(|v| format!("{:.6}", v)).collect();
+    Ok(format!("[{}]", values.join(",")))
+}
+
+/// Save cluster metadata to the database
+///
+/// Upserts cluster data into user_taste_clusters table using the
+/// (user_id, cluster_index) unique constraint for atomic updates.
+/// Returns the database IDs of the saved/updated clusters.
+async fn save_cluster_metadata(
+    state: &AppState,
+    user_id: Uuid,
+    clusters: &[TasteCluster],
+) -> WorkerResult<Vec<Uuid>> {
+    let mut cluster_ids = Vec::with_capacity(clusters.len());
+
+    for cluster in clusters {
+        // Convert centroid to pgvector string format "[0.1, 0.2, ...]"
+        let centroid_str = format_pgvector_string(&cluster.centroid)?;
+
+        // Upsert cluster record
+        let result: ClusterUpsertResult = sqlx::query_as(
+            r#"
+            INSERT INTO user_taste_clusters (
+                user_id,
+                cluster_index,
+                centroid_embedding,
+                dominant_mood,
+                dominant_genre,
+                average_energy,
+                average_valence,
+                track_count,
+                cluster_name
+            )
+            VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (user_id, cluster_index)
+            DO UPDATE SET
+                centroid_embedding = EXCLUDED.centroid_embedding,
+                dominant_mood = EXCLUDED.dominant_mood,
+                dominant_genre = EXCLUDED.dominant_genre,
+                average_energy = EXCLUDED.average_energy,
+                average_valence = EXCLUDED.average_valence,
+                track_count = EXCLUDED.track_count,
+                cluster_name = EXCLUDED.cluster_name,
+                updated_at = NOW()
+            RETURNING id
+            "#,
+        )
+        .bind(user_id)
+        .bind(cluster.index as i16)
+        .bind(&centroid_str)
+        .bind(&cluster.dominant_mood)
+        .bind(&cluster.dominant_genre)
+        .bind(cluster.average_energy)
+        .bind(cluster.average_valence)
+        .bind(cluster.track_ids.len() as i32)
+        .bind(&cluster.suggested_name)
+        .fetch_one(&state.db)
+        .await?;
+
+        cluster_ids.push(result.id);
+
+        tracing::debug!(
+            user_id = %user_id,
+            cluster_index = cluster.index,
+            cluster_id = %result.id,
+            cluster_name = %cluster.suggested_name,
+            "Saved cluster metadata"
+        );
+    }
+
+    // Clean up old clusters that no longer exist
+    // (e.g., if user went from 3 clusters to 2)
+    let max_index = clusters.len() as i16;
+    sqlx::query(
+        r#"
+        DELETE FROM user_taste_clusters
+        WHERE user_id = $1 AND cluster_index >= $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(max_index)
+    .execute(&state.db)
+    .await?;
+
+    Ok(cluster_ids)
+}
+
+/// Find or create a playlist for a taste cluster
+///
+/// Uses atomic upsert to create or update a cluster playlist.
+/// The playlist is linked to its source cluster via the cluster_id column.
+async fn find_or_create_cluster_playlist(
+    state: &AppState,
+    user_id: Uuid,
+    cluster: &TasteCluster,
+    cluster_db_id: Uuid,
+) -> WorkerResult<Uuid> {
+    // Generate a description for the cluster playlist
+    let description = format!(
+        "Tracks matching your {} taste, updated weekly",
+        cluster.suggested_name.to_lowercase()
+    );
+
+    // Atomic upsert: create or update cluster playlist
+    // Use cluster_id to find existing playlist for this cluster
+    let result: PlaylistUpsertResult = sqlx::query_as(
+        r#"
+        INSERT INTO playlists (user_id, name, description, playlist_type, is_public, cluster_id)
+        VALUES ($1, $2, $3, 'discover', false, $4)
+        ON CONFLICT (cluster_id) WHERE cluster_id IS NOT NULL
+        DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            updated_at = NOW()
+        RETURNING id, (xmax = 0) AS created
+        "#,
+    )
+    .bind(user_id)
+    .bind(&cluster.suggested_name)
+    .bind(&description)
+    .bind(cluster_db_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if result.created {
+        tracing::info!(
+            user_id = %user_id,
+            playlist_id = %result.id,
+            cluster_name = %cluster.suggested_name,
+            "Created new cluster playlist"
+        );
+    } else {
+        tracing::debug!(
+            user_id = %user_id,
+            playlist_id = %result.id,
+            cluster_name = %cluster.suggested_name,
+            "Found existing cluster playlist"
+        );
+    }
+
+    Ok(result.id)
+}
+
+/// Find tracks similar to a cluster centroid
+///
+/// Uses pgvector cosine similarity to find tracks closest to the
+/// cluster centroid embedding, excluding recently played tracks.
+async fn find_similar_tracks_for_cluster(
+    state: &AppState,
+    user_id: Uuid,
+    centroid: &[f32],
+    limit: usize,
+) -> WorkerResult<Vec<Uuid>> {
+    if centroid.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Convert centroid to pgvector string format
+    let centroid_str = format_pgvector_string(centroid)?;
+
+    // Find tracks similar to the centroid, excluding recently played
+    let tracks: Vec<TrackIdRecord> = sqlx::query_as(
+        r#"
+        WITH recently_played AS (
+            SELECT DISTINCT track_id
+            FROM listening_history
+            WHERE user_id = $1
+              AND played_at > NOW() - make_interval(days => $3)
+        )
+        SELECT te.track_id as id
+        FROM track_embeddings te
+        WHERE NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = te.track_id)
+          AND te.description_embedding IS NOT NULL
+        ORDER BY te.description_embedding <=> $2::vector
+        LIMIT $4
+        "#,
+    )
+    .bind(user_id)
+    .bind(&centroid_str)
+    .bind(CLUSTER_RECENTLY_PLAYED_DAYS)
+    .bind(limit as i64)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(tracks.into_iter().map(|t| t.id).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +878,136 @@ mod tests {
 
         assert_eq!(deserialized.user_id, job.user_id);
         assert_eq!(deserialized.track_count, job.track_count);
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn test_cluster_playlist_configuration_constants() {
+        // Validate cluster playlist constants are within expected ranges.
+        // These assertions serve as documentation and catch accidental changes.
+
+        // Minimum history for clustering should be at least 10 (enough for 2 clusters of 5)
+        assert!(
+            MIN_HISTORY_FOR_CLUSTERING >= 10,
+            "MIN_HISTORY_FOR_CLUSTERING should be at least 10"
+        );
+
+        // Cluster playlist track count should be reasonable
+        assert!(
+            CLUSTER_PLAYLIST_TRACK_COUNT >= 10 && CLUSTER_PLAYLIST_TRACK_COUNT <= 50,
+            "CLUSTER_PLAYLIST_TRACK_COUNT should be between 10 and 50"
+        );
+
+        // Cluster history days should cover at least 2 weeks
+        assert!(
+            CLUSTER_HISTORY_DAYS >= 14,
+            "CLUSTER_HISTORY_DAYS should be at least 14"
+        );
+
+        // Recently played filter should be less than cluster history days
+        assert!(
+            CLUSTER_RECENTLY_PLAYED_DAYS < CLUSTER_HISTORY_DAYS,
+            "CLUSTER_RECENTLY_PLAYED_DAYS should be less than CLUSTER_HISTORY_DAYS"
+        );
+
+        // Cluster recently played should be at least 1 day
+        assert!(
+            CLUSTER_RECENTLY_PLAYED_DAYS >= 1,
+            "CLUSTER_RECENTLY_PLAYED_DAYS should be at least 1"
+        );
+    }
+
+    #[test]
+    fn test_cluster_constants_consistency() {
+        // Cluster history days should match or exceed seed history days
+        // since clustering needs at least as much data as seed-based approach
+        assert!(
+            CLUSTER_HISTORY_DAYS >= SEED_HISTORY_DAYS,
+            "CLUSTER_HISTORY_DAYS should be >= SEED_HISTORY_DAYS"
+        );
+
+        // Cluster playlist track count should be clamped by MAX_TRACK_COUNT
+        assert!(
+            CLUSTER_PLAYLIST_TRACK_COUNT <= MAX_TRACK_COUNT,
+            "CLUSTER_PLAYLIST_TRACK_COUNT should not exceed MAX_TRACK_COUNT"
+        );
+    }
+
+    #[test]
+    fn test_parse_pgvector_string_valid() {
+        let result = parse_pgvector_string("[0.1,0.2,0.3]").unwrap();
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - 0.1).abs() < f32::EPSILON);
+        assert!((result[1] - 0.2).abs() < f32::EPSILON);
+        assert!((result[2] - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_pgvector_string_with_spaces() {
+        let result = parse_pgvector_string("[ 0.1 , 0.2 , 0.3 ]").unwrap();
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_pgvector_string_empty() {
+        let result = parse_pgvector_string("[]").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pgvector_string_invalid_format() {
+        let result = parse_pgvector_string("not a vector");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_pgvector_string_invalid_number() {
+        let result = parse_pgvector_string("[0.1,abc,0.3]");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_format_pgvector_string_basic() {
+        let embedding = vec![0.1, 0.2, 0.3];
+        let result = format_pgvector_string(&embedding).unwrap();
+        assert!(result.starts_with('['));
+        assert!(result.ends_with(']'));
+        assert!(result.contains("0.100000"));
+    }
+
+    #[test]
+    fn test_format_pgvector_string_empty() {
+        let embedding: Vec<f32> = vec![];
+        let result = format_pgvector_string(&embedding).unwrap();
+        assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_format_pgvector_string_rejects_nan() {
+        let embedding = vec![0.1, f32::NAN, 0.3];
+        let result = format_pgvector_string(&embedding);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_format_pgvector_string_rejects_inf() {
+        let embedding = vec![0.1, f32::INFINITY, 0.3];
+        let result = format_pgvector_string(&embedding);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pgvector_roundtrip() {
+        // Test that format and parse are inverses
+        let original = vec![0.123456, -0.654321, 0.0, 1.0];
+        let formatted = format_pgvector_string(&original).unwrap();
+        let parsed = parse_pgvector_string(&formatted).unwrap();
+
+        assert_eq!(original.len(), parsed.len());
+        for (orig, parsed) in original.iter().zip(parsed.iter()) {
+            // Allow for floating point precision loss from formatting
+            assert!((orig - parsed).abs() < 1e-5);
+        }
     }
 }
