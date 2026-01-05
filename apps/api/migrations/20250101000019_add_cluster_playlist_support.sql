@@ -34,8 +34,8 @@ CREATE INDEX idx_user_taste_clusters_user_id ON user_taste_clusters(user_id);
 ALTER TABLE playlists
 ADD COLUMN cluster_id UUID REFERENCES user_taste_clusters(id) ON DELETE SET NULL;
 
--- Partial index for cluster playlists (only indexes rows with cluster_id set)
-CREATE INDEX idx_playlists_cluster_id ON playlists(cluster_id) WHERE cluster_id IS NOT NULL;
+-- Partial UNIQUE index for cluster playlists (required for ON CONFLICT (cluster_id) upsert)
+CREATE UNIQUE INDEX idx_playlists_cluster_id ON playlists(cluster_id) WHERE cluster_id IS NOT NULL;
 
 -- Table and column documentation
 COMMENT ON TABLE user_taste_clusters IS 'K-means clusters of user listening history for taste-based playlist generation';
