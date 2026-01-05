@@ -673,11 +673,15 @@ fn format_pgvector_string(embedding: &[f32]) -> WorkerResult<String> {
 /// Upserts cluster data into user_taste_clusters table using the
 /// (user_id, cluster_index) unique constraint for atomic updates.
 /// Returns the database IDs of the saved/updated clusters.
+///
+/// Uses a transaction to ensure atomicity: either all cluster upserts
+/// and the cleanup DELETE succeed together, or none of them do.
 async fn save_cluster_metadata(
     state: &AppState,
     user_id: Uuid,
     clusters: &[TasteCluster],
 ) -> WorkerResult<Vec<Uuid>> {
+    let mut tx = state.db.begin().await?;
     let mut cluster_ids = Vec::with_capacity(clusters.len());
 
     for cluster in clusters {
@@ -721,7 +725,7 @@ async fn save_cluster_metadata(
         .bind(cluster.average_valence)
         .bind(cluster.track_ids.len() as i32)
         .bind(&cluster.suggested_name)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
 
         cluster_ids.push(result.id);
@@ -746,8 +750,10 @@ async fn save_cluster_metadata(
     )
     .bind(user_id)
     .bind(max_index)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(cluster_ids)
 }
@@ -871,12 +877,15 @@ async fn find_similar_tracks_combined(
         ),
         embedding_scores AS (
             SELECT
-                te.track_id as id,
-                -- Clamp cosine similarity to [0, 1] range
-                GREATEST(0.0, LEAST(1.0, 1.0 - (te.description_embedding <=> $3::vector))) as score
-            FROM track_embeddings te
-            WHERE te.description_embedding IS NOT NULL
-              AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = te.track_id)
+                t.id,
+                -- Clamp cosine similarity to [0, 1] range, default to 0 if no embedding
+                CASE WHEN te.description_embedding IS NOT NULL
+                    THEN GREATEST(0.0, LEAST(1.0, 1.0 - (te.description_embedding <=> $3::vector)))
+                    ELSE 0.0
+                END as score
+            FROM tracks t
+            LEFT JOIN track_embeddings te ON t.id = te.track_id
+            WHERE NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = t.id)
         ),
         -- For acoustic/categorical, we use the centroid's embedding to find
         -- the most similar tracks, then use THOSE tracks' features as reference
