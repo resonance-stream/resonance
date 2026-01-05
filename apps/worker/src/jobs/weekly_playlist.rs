@@ -52,6 +52,32 @@ const DISCOVER_WEEKLY_DESCRIPTION: &str =
 /// Below this threshold, clustering likely won't produce meaningful results
 const MIN_HISTORY_FOR_CLUSTERING: usize = 20;
 
+// =============================================================================
+// Similarity Weight Constants (aligned with prefetch.rs and SimilarityService)
+// =============================================================================
+
+/// Weight for semantic (embedding) similarity in combined scoring
+const WEIGHT_SEMANTIC: f64 = 0.5;
+
+/// Weight for acoustic (audio feature) similarity in combined scoring
+const WEIGHT_ACOUSTIC: f64 = 0.3;
+
+/// Weight for categorical (genre/mood/tag) similarity in combined scoring
+const WEIGHT_CATEGORICAL: f64 = 0.2;
+
+/// Weight for audio features in fallback mode (no embeddings)
+const WEIGHT_FALLBACK_FEATURE: f64 = 0.6;
+
+/// Weight for tags in fallback mode (no embeddings)
+const WEIGHT_FALLBACK_TAGS: f64 = 0.4;
+
+/// BPM normalization factor (typical BPM range: 60-200)
+/// Dividing by 200 normalizes BPM difference to roughly [0, 1] range
+const BPM_NORMALIZATION_FACTOR: f64 = 200.0;
+
+/// Loudness normalization offset (typical loudness range: -60 to 0 dB)
+const LOUDNESS_OFFSET: f64 = 60.0;
+
 /// Number of tracks to include in each cluster playlist
 const CLUSTER_PLAYLIST_TRACK_COUNT: usize = 30;
 
@@ -279,11 +305,10 @@ async fn get_seed_tracks(state: &AppState, user_id: Uuid) -> WorkerResult<Vec<Uu
 /// Uses the average embedding of all seed tracks to find similar tracks,
 /// filtering out recently played tracks and the seeds themselves.
 ///
-/// NOTE: This uses only description_embedding for similarity. A future improvement
-/// would be to adopt the combined similarity approach from prefetch.rs that weights:
-/// - Semantic similarity (50%): description_embedding
-/// - Acoustic similarity (30%): audio features
-/// - Categorical similarity (20%): genres, moods, AI tags
+/// NOTE: This uses only description_embedding for similarity. The cluster-based
+/// playlists (via find_similar_tracks_for_cluster) use the full combined similarity
+/// approach with embedding + audio features + categorical metadata. Consider
+/// adopting the same approach here for consistency.
 ///
 /// The average embedding approach may produce suboptimal results for users with
 /// eclectic taste, as the centroid may fall between distinct preference clusters.
@@ -781,10 +806,14 @@ async fn find_or_create_cluster_playlist(
     Ok(result.id)
 }
 
-/// Find tracks similar to a cluster centroid
+/// Find tracks similar to a cluster centroid using combined similarity scoring.
 ///
-/// Uses pgvector cosine similarity to find tracks closest to the
-/// cluster centroid embedding, excluding recently played tracks.
+/// Uses a multi-dimensional similarity approach for better recommendations:
+/// - Semantic similarity (50%): pgvector cosine distance on description embeddings
+/// - Acoustic similarity (30%): Euclidean distance on normalized audio features
+/// - Categorical similarity (20%): Weighted Jaccard on genres, moods, and AI tags
+///
+/// Falls back to acoustic + categorical only if embeddings aren't available.
 async fn find_similar_tracks_for_cluster(
     state: &AppState,
     user_id: Uuid,
@@ -798,27 +827,230 @@ async fn find_similar_tracks_for_cluster(
     // Convert centroid to pgvector string format
     let centroid_str = format_pgvector_string(centroid)?;
 
-    // Find tracks similar to the centroid, excluding recently played
+    // Try combined similarity first (embedding + features + tags)
+    let tracks = find_similar_tracks_combined(state, user_id, &centroid_str, limit).await?;
+
+    if !tracks.is_empty() {
+        return Ok(tracks);
+    }
+
+    // Fallback: use audio features + tags only (for libraries without embeddings)
+    tracing::debug!(
+        user_id = %user_id,
+        "No tracks found with combined similarity, falling back to feature-based matching"
+    );
+    find_similar_tracks_by_features(state, user_id, limit).await
+}
+
+/// Find tracks using combined similarity (embedding + features + tags)
+///
+/// This approach aligns with prefetch.rs and the SimilarityService for consistency.
+async fn find_similar_tracks_combined(
+    state: &AppState,
+    user_id: Uuid,
+    centroid_str: &str,
+    limit: usize,
+) -> WorkerResult<Vec<Uuid>> {
+    // Combined similarity query using all three dimensions:
+    // - Semantic: pgvector cosine distance on description embeddings vs centroid
+    // - Acoustic: Euclidean distance on normalized audio features
+    // - Categorical: Weighted Jaccard similarity on genres, moods, and ai_tags
+    //
+    // Since we're matching against a centroid (not a single track), we compute
+    // the average audio features and dominant tags from tracks in the cluster
+    // for acoustic/categorical similarity.
     let tracks: Vec<TrackIdRecord> = sqlx::query_as(
         r#"
         WITH recently_played AS (
             SELECT DISTINCT track_id
             FROM listening_history
             WHERE user_id = $1
-              AND played_at > NOW() - make_interval(days => $3)
+              AND played_at > NOW() - make_interval(days => $2)
+        ),
+        embedding_scores AS (
+            SELECT
+                te.track_id as id,
+                -- Clamp cosine similarity to [0, 1] range
+                GREATEST(0.0, LEAST(1.0, 1.0 - (te.description_embedding <=> $3::vector))) as score
+            FROM track_embeddings te
+            WHERE te.description_embedding IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = te.track_id)
+        ),
+        -- For acoustic/categorical, we use the centroid's embedding to find
+        -- the most similar tracks, then use THOSE tracks' features as reference
+        -- This is necessary because centroids don't have audio features directly
+        seed_track AS (
+            SELECT
+                t.id,
+                (t.audio_features->>'energy')::float as energy,
+                (t.audio_features->>'loudness')::float as loudness,
+                (t.audio_features->>'valence')::float as valence,
+                (t.audio_features->>'danceability')::float as danceability,
+                (t.audio_features->>'bpm')::float as bpm,
+                t.genres,
+                t.ai_mood,
+                t.ai_tags
+            FROM track_embeddings te
+            JOIN tracks t ON t.id = te.track_id
+            WHERE te.description_embedding IS NOT NULL
+            ORDER BY te.description_embedding <=> $3::vector
+            LIMIT 1
+        ),
+        feature_scores AS (
+            SELECT
+                t.id,
+                -- Euclidean distance on normalized features, clamped to [0, 1]
+                GREATEST(0.0, LEAST(1.0, 1.0 - (
+                    SQRT(
+                        COALESCE(POWER((t.audio_features->>'energy')::float - src.energy, 2), 0) +
+                        COALESCE(POWER(((t.audio_features->>'loudness')::float + $6) / $6 - (src.loudness + $6) / $6, 2), 0) +
+                        COALESCE(POWER((t.audio_features->>'valence')::float - src.valence, 2), 0) +
+                        COALESCE(POWER((t.audio_features->>'danceability')::float - src.danceability, 2), 0) +
+                        COALESCE(POWER(((t.audio_features->>'bpm')::float - src.bpm) / $7, 2), 0)
+                    ) / 2.0
+                ))) as score
+            FROM tracks t
+            CROSS JOIN seed_track src
+            WHERE t.id != src.id
+              AND t.audio_features->>'energy' IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = t.id)
+        ),
+        tag_scores AS (
+            SELECT
+                t.id,
+                -- Weighted Jaccard similarity: mood weighted 2x (more specific than genre)
+                -- Includes ai_tags for consistency with SimilarityService
+                (
+                    COALESCE(array_length(t.genres & src.genres, 1), 0) +
+                    COALESCE(array_length(t.ai_mood & src.ai_mood, 1), 0) * 2 +
+                    COALESCE(array_length(t.ai_tags & src.ai_tags, 1), 0)
+                )::float / GREATEST(1,
+                    COALESCE(array_length(t.genres | src.genres, 1), 0) +
+                    COALESCE(array_length(t.ai_mood | src.ai_mood, 1), 0) * 2 +
+                    COALESCE(array_length(t.ai_tags | src.ai_tags, 1), 0)
+                ) as score
+            FROM tracks t
+            CROSS JOIN seed_track src
+            WHERE t.id != src.id
+              AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = t.id)
+        ),
+        combined_scores AS (
+            -- FULL OUTER JOIN allows tracks without embeddings to still be recommended
+            -- based on audio features and/or tags alone
+            SELECT
+                COALESCE(e.id, f.id, g.id) as id,
+                (
+                    COALESCE(e.score, 0) * $4 +
+                    COALESCE(f.score, 0) * $5 +
+                    COALESCE(g.score, 0) * $8
+                ) as combined_score
+            FROM embedding_scores e
+            FULL OUTER JOIN feature_scores f ON e.id = f.id
+            FULL OUTER JOIN tag_scores g ON COALESCE(e.id, f.id) = g.id
         )
-        SELECT te.track_id as id
-        FROM track_embeddings te
-        WHERE NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = te.track_id)
-          AND te.description_embedding IS NOT NULL
-        ORDER BY te.description_embedding <=> $2::vector
-        LIMIT $4
+        SELECT cs.id
+        FROM combined_scores cs
+        JOIN tracks t ON t.id = cs.id
+        ORDER BY cs.combined_score DESC
+        LIMIT $9
         "#,
     )
     .bind(user_id)
-    .bind(&centroid_str)
+    .bind(CLUSTER_RECENTLY_PLAYED_DAYS)
+    .bind(centroid_str)
+    .bind(WEIGHT_SEMANTIC)
+    .bind(WEIGHT_ACOUSTIC)
+    .bind(LOUDNESS_OFFSET)
+    .bind(BPM_NORMALIZATION_FACTOR)
+    .bind(WEIGHT_CATEGORICAL)
+    .bind(limit as i64)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(tracks.into_iter().map(|t| t.id).collect())
+}
+
+/// Fallback: Find tracks using audio features + tags only (no embeddings).
+///
+/// Used when the library doesn't have embeddings or combined query returns empty.
+/// Finds tracks with similar audio characteristics and categorical metadata.
+async fn find_similar_tracks_by_features(
+    state: &AppState,
+    user_id: Uuid,
+    limit: usize,
+) -> WorkerResult<Vec<Uuid>> {
+    // Fallback query using only audio features and tags
+    // Uses user's listening history to derive average features as seed
+    let tracks: Vec<TrackIdRecord> = sqlx::query_as(
+        r#"
+        WITH recently_played AS (
+            SELECT DISTINCT track_id
+            FROM listening_history
+            WHERE user_id = $1
+              AND played_at > NOW() - make_interval(days => $2)
+        ),
+        -- Derive average audio features from user's recent history
+        user_profile AS (
+            SELECT
+                AVG((t.audio_features->>'energy')::float) as energy,
+                AVG((t.audio_features->>'loudness')::float) as loudness,
+                AVG((t.audio_features->>'valence')::float) as valence,
+                AVG((t.audio_features->>'danceability')::float) as danceability,
+                AVG((t.audio_features->>'bpm')::float) as bpm,
+                -- Collect all genres/moods/tags from history for categorical matching
+                array_agg(DISTINCT unnest_genre) FILTER (WHERE unnest_genre IS NOT NULL) as genres,
+                array_agg(DISTINCT unnest_mood) FILTER (WHERE unnest_mood IS NOT NULL) as ai_mood,
+                array_agg(DISTINCT unnest_tag) FILTER (WHERE unnest_tag IS NOT NULL) as ai_tags
+            FROM listening_history lh
+            JOIN tracks t ON t.id = lh.track_id
+            LEFT JOIN LATERAL unnest(t.genres) as unnest_genre ON true
+            LEFT JOIN LATERAL unnest(t.ai_mood) as unnest_mood ON true
+            LEFT JOIN LATERAL unnest(t.ai_tags) as unnest_tag ON true
+            WHERE lh.user_id = $1
+              AND lh.played_at > NOW() - make_interval(days => 30)
+              AND lh.completed = true
+        ),
+        feature_scores AS (
+            SELECT
+                t.id,
+                -- Euclidean distance on normalized features
+                GREATEST(0.0, LEAST(1.0, 1.0 - (
+                    SQRT(
+                        COALESCE(POWER((t.audio_features->>'energy')::float - src.energy, 2), 0) +
+                        COALESCE(POWER(((t.audio_features->>'loudness')::float + $4) / $4 - (src.loudness + $4) / $4, 2), 0) +
+                        COALESCE(POWER((t.audio_features->>'valence')::float - src.valence, 2), 0) +
+                        COALESCE(POWER((t.audio_features->>'danceability')::float - src.danceability, 2), 0) +
+                        COALESCE(POWER(((t.audio_features->>'bpm')::float - src.bpm) / $5, 2), 0)
+                    ) / 2.0
+                ))) as feature_score,
+                -- Weighted Jaccard similarity
+                (
+                    COALESCE(array_length(t.genres & src.genres, 1), 0) +
+                    COALESCE(array_length(t.ai_mood & src.ai_mood, 1), 0) * 2 +
+                    COALESCE(array_length(t.ai_tags & src.ai_tags, 1), 0)
+                )::float / GREATEST(1,
+                    COALESCE(array_length(t.genres | src.genres, 1), 0) +
+                    COALESCE(array_length(t.ai_mood | src.ai_mood, 1), 0) * 2 +
+                    COALESCE(array_length(t.ai_tags | src.ai_tags, 1), 0)
+                ) as tag_score
+            FROM tracks t
+            CROSS JOIN user_profile src
+            WHERE t.audio_features->>'energy' IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM recently_played rp WHERE rp.track_id = t.id)
+        )
+        SELECT fs.id
+        FROM feature_scores fs
+        ORDER BY (fs.feature_score * $6 + fs.tag_score * $7) DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(user_id)
     .bind(CLUSTER_RECENTLY_PLAYED_DAYS)
     .bind(limit as i64)
+    .bind(LOUDNESS_OFFSET)
+    .bind(BPM_NORMALIZATION_FACTOR)
+    .bind(WEIGHT_FALLBACK_FEATURE)
+    .bind(WEIGHT_FALLBACK_TAGS)
     .fetch_all(&state.db)
     .await?;
 
@@ -930,6 +1162,67 @@ mod tests {
         assert!(
             CLUSTER_PLAYLIST_TRACK_COUNT <= MAX_TRACK_COUNT,
             "CLUSTER_PLAYLIST_TRACK_COUNT should not exceed MAX_TRACK_COUNT"
+        );
+    }
+
+    #[test]
+    fn test_similarity_weights_sum_to_one() {
+        // Combined weights (semantic + acoustic + categorical) should sum to 1.0
+        let total = WEIGHT_SEMANTIC + WEIGHT_ACOUSTIC + WEIGHT_CATEGORICAL;
+        assert!(
+            (total - 1.0).abs() < f64::EPSILON,
+            "Combined weights should sum to 1.0, got {}",
+            total
+        );
+    }
+
+    #[test]
+    fn test_fallback_weights_sum_to_one() {
+        // Fallback weights (feature + tags) should sum to 1.0
+        let total = WEIGHT_FALLBACK_FEATURE + WEIGHT_FALLBACK_TAGS;
+        assert!(
+            (total - 1.0).abs() < f64::EPSILON,
+            "Fallback weights should sum to 1.0, got {}",
+            total
+        );
+    }
+
+    #[test]
+    fn test_normalization_constants() {
+        // BPM normalization: 200 BPM difference should normalize to ~1.0
+        assert!(
+            (BPM_NORMALIZATION_FACTOR - 200.0).abs() < f64::EPSILON,
+            "BPM normalization factor should be 200.0"
+        );
+
+        // Loudness normalization: -60 dB to 0 dB range
+        assert!(
+            (LOUDNESS_OFFSET - 60.0).abs() < f64::EPSILON,
+            "Loudness offset should be 60.0"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn test_similarity_weight_ranges() {
+        // Individual weights should be positive and less than 1
+        assert!(
+            WEIGHT_SEMANTIC > 0.0 && WEIGHT_SEMANTIC < 1.0,
+            "Semantic weight should be between 0 and 1"
+        );
+        assert!(
+            WEIGHT_ACOUSTIC > 0.0 && WEIGHT_ACOUSTIC < 1.0,
+            "Acoustic weight should be between 0 and 1"
+        );
+        assert!(
+            WEIGHT_CATEGORICAL > 0.0 && WEIGHT_CATEGORICAL < 1.0,
+            "Categorical weight should be between 0 and 1"
+        );
+
+        // Semantic should have the highest weight (most discriminative)
+        assert!(
+            WEIGHT_SEMANTIC >= WEIGHT_ACOUSTIC && WEIGHT_SEMANTIC >= WEIGHT_CATEGORICAL,
+            "Semantic weight should be >= other weights"
         );
     }
 
