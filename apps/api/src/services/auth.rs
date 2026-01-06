@@ -774,8 +774,9 @@ impl AuthService {
     /// Delete a user's account
     ///
     /// This is a destructive operation that:
-    /// 1. Verifies the user's password for security
-    /// 2. Atomically (within a transaction):
+    /// 1. Validates password length (prevents DoS via expensive hashing)
+    /// 2. Verifies the user's password for security
+    /// 3. Atomically (within a transaction):
     ///    - Invalidates all active sessions
     ///    - Permanently deletes the user and all associated data
     ///
@@ -787,9 +788,23 @@ impl AuthService {
     /// * `Ok(())` on success
     ///
     /// # Errors
+    /// - `ApiError::ValidationError` if password is empty or too long
     /// - `ApiError::NotFound` if user doesn't exist
     /// - `ApiError::Unauthorized` if password is incorrect
     pub async fn delete_account(&self, user_id: Uuid, password: &str) -> ApiResult<()> {
+        // Validate password length to prevent DoS via expensive Argon2 hashing
+        if password.is_empty() {
+            return Err(ApiError::ValidationError(
+                "password is required".to_string(),
+            ));
+        }
+        if password.len() > MAX_PASSWORD_LENGTH {
+            return Err(ApiError::ValidationError(format!(
+                "password must be at most {} characters",
+                MAX_PASSWORD_LENGTH
+            )));
+        }
+
         // Fetch the user to verify password
         let user = self
             .user_repo
