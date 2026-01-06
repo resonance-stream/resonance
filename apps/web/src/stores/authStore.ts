@@ -22,6 +22,7 @@ import {
   CHANGE_PASSWORD_MUTATION,
   UPDATE_EMAIL_MUTATION,
   UPDATE_PROFILE_MUTATION,
+  DELETE_ACCOUNT_MUTATION,
 } from '../lib/graphql/auth'
 
 interface AuthState {
@@ -47,6 +48,7 @@ interface AuthState {
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ sessionsInvalidated: number }>
   updateEmail: (newEmail: string, currentPassword: string) => Promise<void>
   updateProfile: (displayName?: string, avatarUrl?: string | null) => Promise<void>
+  deleteAccount: (password: string) => Promise<void>
 }
 
 /**
@@ -814,6 +816,52 @@ export const useAuthStore = create<AuthState>()(
                 avatarUrl: response.updateProfile.avatarUrl ?? undefined,
                 updatedAt: response.updateProfile.updatedAt,
               },
+            })
+          }
+        } catch (error) {
+          const authError = parseAuthError(error)
+          set({ error: authError })
+          throw authError
+        }
+      },
+
+      /**
+       * Delete the current user's account permanently
+       * Requires password verification. This action is irreversible.
+       *
+       * @param password - Current password for verification
+       */
+      deleteAccount: async (password: string) => {
+        set({ error: null })
+
+        try {
+          interface DeleteAccountResponse {
+            deleteAccount: {
+              success: boolean
+            }
+          }
+
+          const response = await graphqlClient.request<DeleteAccountResponse>(
+            DELETE_ACCOUNT_MUTATION,
+            {
+              input: {
+                password,
+              },
+            }
+          )
+
+          if (response.deleteAccount.success) {
+            // Clear auth header
+            setAuthToken(null)
+
+            // Clear all state
+            set({
+              user: null,
+              accessToken: null,
+              refreshToken: null,
+              expiresAt: null,
+              status: 'unauthenticated',
+              error: null,
             })
           }
         } catch (error) {
