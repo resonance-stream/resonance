@@ -141,6 +141,18 @@ pub struct ChatResponse {
     pub eval_count: Option<u32>,
 }
 
+/// A single chunk from a streaming chat response
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatStreamChunk {
+    /// The partial message content
+    pub message: ChatMessage,
+    /// Whether generation is complete
+    pub done: bool,
+    /// Reason generation completed (e.g., "stop", "length")
+    #[serde(default)]
+    pub done_reason: Option<String>,
+}
+
 /// Response from listing models
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListModelsResponse {

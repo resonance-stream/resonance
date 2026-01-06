@@ -1,16 +1,19 @@
 //! Core Ollama HTTP client with retry logic and connection pooling
 
 use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
+use bytes::Bytes;
+use futures_util::Stream;
 use reqwest::Client;
 use resonance_shared_config::OllamaConfig;
 use tracing::{debug, warn};
 
 use crate::error::{OllamaError, OllamaResult};
 use crate::models::{
-    ChatMessage, ChatRequest, ChatResponse, EmbeddingRequest, EmbeddingResponse, GenerateOptions,
-    GenerateRequest, GenerateResponse, ListModelsResponse,
+    ChatMessage, ChatRequest, ChatResponse, ChatStreamChunk, EmbeddingRequest, EmbeddingResponse,
+    GenerateOptions, GenerateRequest, GenerateResponse, ListModelsResponse,
 };
 
 /// Maximum error body size to prevent memory exhaustion
@@ -457,6 +460,188 @@ impl OllamaClient {
         debug!(response_len = result.len(), "Chat response received");
 
         Ok(result)
+    }
+
+    /// Stream chat completion responses token by token
+    ///
+    /// This method sends a chat request to Ollama with streaming enabled,
+    /// returning a stream of `ChatStreamChunk` items as tokens are generated.
+    ///
+    /// # Arguments
+    /// * `messages` - The conversation history
+    /// * `options` - Optional generation parameters
+    ///
+    /// # Returns
+    /// A stream of `OllamaResult<ChatStreamChunk>` items
+    ///
+    /// # Example
+    /// ```ignore
+    /// use futures_util::StreamExt;
+    ///
+    /// let mut stream = client.chat_stream(messages, None).await?;
+    /// while let Some(chunk) = stream.next().await {
+    ///     match chunk {
+    ///         Ok(c) => print!("{}", c.message.content),
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    pub async fn chat_stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        options: Option<GenerateOptions>,
+    ) -> OllamaResult<Pin<Box<dyn Stream<Item = OllamaResult<ChatStreamChunk>> + Send>>> {
+        debug!(
+            model = %self.config.model,
+            message_count = messages.len(),
+            "Starting streaming chat request"
+        );
+
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages,
+            stream: true,
+            options: options.or_else(|| {
+                Some(GenerateOptions {
+                    temperature: Some(self.config.temperature),
+                    num_predict: Some(self.config.max_tokens),
+                    ..Default::default()
+                })
+            }),
+        };
+
+        let response = self
+            .http_client
+            .post(self.config.chat_url())
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    OllamaError::ConnectionRefused(self.config.url.clone())
+                } else if e.is_timeout() {
+                    OllamaError::Timeout(self.config.timeout_secs)
+                } else {
+                    OllamaError::HttpError(e)
+                }
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = Self::truncate_error_body(response.text().await.unwrap_or_default());
+
+            if body.contains("model") && body.contains("not found") {
+                return Err(OllamaError::ModelNotFound(self.config.model.clone()));
+            }
+
+            return Err(OllamaError::ApiError(format!(
+                "Status {}: {}",
+                status, body
+            )));
+        }
+
+        // Get the bytes stream from reqwest and transform it to parse NDJSON
+        let byte_stream = response.bytes_stream();
+
+        // Create a stream that parses NDJSON lines
+        let chunk_stream = NdjsonStream::new(byte_stream);
+
+        debug!("Streaming chat response started");
+
+        Ok(Box::pin(chunk_stream))
+    }
+}
+
+/// A stream adapter that parses NDJSON (newline-delimited JSON) from a byte stream
+struct NdjsonStream<S> {
+    inner: S,
+    buffer: String,
+}
+
+impl<S> NdjsonStream<S> {
+    fn new(stream: S) -> Self {
+        Self {
+            inner: stream,
+            buffer: String::new(),
+        }
+    }
+}
+
+impl<S, E> Stream for NdjsonStream<S>
+where
+    S: Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    type Item = OllamaResult<ChatStreamChunk>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+
+        // First check if we have a complete line in the buffer
+        if let Some(newline_pos) = self.buffer.find('\n') {
+            let line = self.buffer[..newline_pos].trim().to_string();
+            self.buffer = self.buffer[newline_pos + 1..].to_string();
+
+            if line.is_empty() {
+                // Empty line, poll again
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
+            return Poll::Ready(Some(
+                serde_json::from_str::<ChatStreamChunk>(&line).map_err(OllamaError::from),
+            ));
+        }
+
+        // No complete line, try to read more data
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                // Append new data to buffer
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    self.buffer.push_str(text);
+                }
+
+                // Try to extract a line now
+                if let Some(newline_pos) = self.buffer.find('\n') {
+                    let line = self.buffer[..newline_pos].trim().to_string();
+                    self.buffer = self.buffer[newline_pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        // Empty line, poll again
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+
+                    return Poll::Ready(Some(
+                        serde_json::from_str::<ChatStreamChunk>(&line).map_err(OllamaError::from),
+                    ));
+                }
+
+                // Still no complete line, need more data
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(Some(Err(e))) => {
+                Poll::Ready(Some(Err(OllamaError::ApiError(e.to_string()))))
+            }
+            Poll::Ready(None) => {
+                // Stream ended, check if there's remaining data in buffer
+                if !self.buffer.is_empty() {
+                    let line = std::mem::take(&mut self.buffer);
+                    let line = line.trim();
+                    if !line.is_empty() {
+                        return Poll::Ready(Some(
+                            serde_json::from_str::<ChatStreamChunk>(line).map_err(OllamaError::from),
+                        ));
+                    }
+                }
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 

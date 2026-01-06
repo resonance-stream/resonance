@@ -58,9 +58,9 @@ mod models;
 pub use client::OllamaClient;
 pub use error::{OllamaError, OllamaResult};
 pub use models::{
-    ChatMessage, ChatRequest, ChatResponse, ChatRole, EmbeddingRequest, EmbeddingResponse,
-    EnergyLevel, GenerateOptions, GenerateRequest, GenerateResponse, ListModelsResponse, ModelInfo,
-    MoodAnalysis, Valence,
+    ChatMessage, ChatRequest, ChatResponse, ChatRole, ChatStreamChunk, EmbeddingRequest,
+    EmbeddingResponse, EnergyLevel, GenerateOptions, GenerateRequest, GenerateResponse,
+    ListModelsResponse, ModelInfo, MoodAnalysis, Valence,
 };
 
 /// Expected embedding dimension for nomic-embed-text

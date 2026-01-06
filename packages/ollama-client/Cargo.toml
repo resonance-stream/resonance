@@ -8,7 +8,10 @@ description = "Ollama API client for Resonance AI features"
 
 [dependencies]
 # HTTP client
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
+
+# Bytes for streaming
+bytes = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -20,6 +23,7 @@ thiserror = { workspace = true }
 # Async runtime
 tokio = { workspace = true }
 futures-util = { workspace = true }
+tokio-stream = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
