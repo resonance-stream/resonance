@@ -417,6 +417,32 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await
     }
+
+    /// Delete a user from the database
+    ///
+    /// This will cascade delete all related data (sessions, playlists, etc.)
+    /// based on the database foreign key constraints.
+    ///
+    /// # Arguments
+    /// * `user_id` - The UUID of the user to delete
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the user was deleted
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Used by AuthService for account deletion
+    pub async fn delete(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 #[cfg(test)]

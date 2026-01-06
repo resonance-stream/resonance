@@ -10,6 +10,7 @@
 //! - changePassword: Change the user's password (invalidates other sessions)
 //! - updateEmail: Change the user's email (requires password verification)
 //! - updateProfile: Update display name and/or avatar URL
+//! - deleteAccount: Permanently delete the user's account (requires password verification)
 
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 
@@ -224,6 +225,13 @@ pub struct UpdateProfileInput {
     /// - `""` (empty string): Clear the avatar (set to null)
     /// - `"https://..."`: Set to the provided URL
     pub avatar_url: Option<String>,
+}
+
+/// Input for deleting account
+#[derive(Debug, InputObject)]
+pub struct DeleteAccountInput {
+    /// Current password for verification (required for security)
+    pub password: String,
 }
 
 /// Result of changing password
@@ -539,5 +547,40 @@ impl AuthMutation {
         })?;
 
         Ok(User::from(user))
+    }
+
+    /// Delete the current user's account
+    ///
+    /// This is a destructive operation that permanently deletes the user's account
+    /// and all associated data. Requires password verification for security.
+    /// All sessions will be invalidated before deletion.
+    ///
+    /// Rate limited to 5 attempts per 15 minutes per IP address (same as password change).
+    ///
+    /// # Arguments
+    /// * `input` - Contains the password for verification
+    ///
+    /// # Returns
+    /// True if the account was deleted successfully
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated
+    /// - Returns error if password is incorrect
+    /// - Returns error if rate limit is exceeded
+    #[graphql(guard = "RateLimitGuard::new(RateLimitType::ChangePassword)")]
+    async fn delete_account(&self, ctx: &Context<'_>, input: DeleteAccountInput) -> Result<bool> {
+        let auth_service = ctx.data::<AuthService>()?;
+
+        // Get the current session from context
+        let claims = ctx
+            .data_opt::<crate::models::user::Claims>()
+            .ok_or_else(|| async_graphql::Error::new("authentication required"))?;
+
+        auth_service
+            .delete_account(claims.sub, &input.password)
+            .await
+            .map_err(|e| sanitize_auth_error(&e))?;
+
+        Ok(true)
     }
 }

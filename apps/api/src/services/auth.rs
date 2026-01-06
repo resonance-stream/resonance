@@ -771,6 +771,69 @@ impl AuthService {
         Ok(())
     }
 
+    /// Delete a user's account
+    ///
+    /// This is a destructive operation that:
+    /// 1. Verifies the user's password for security
+    /// 2. Invalidates all active sessions
+    /// 3. Permanently deletes the user and all associated data
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose account to delete
+    /// * `password` - The user's password for verification
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    ///
+    /// # Errors
+    /// - `ApiError::NotFound` if user doesn't exist
+    /// - `ApiError::Unauthorized` if password is incorrect
+    #[allow(dead_code)] // Used by GraphQL mutations
+    pub async fn delete_account(&self, user_id: Uuid, password: &str) -> ApiResult<()> {
+        // Fetch the user to verify password
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            })?;
+
+        // Verify password
+        if !self.verify_password(password, &user.password_hash)? {
+            tracing::warn!(user_id = %user_id, "Account deletion failed: incorrect password");
+            return Err(ApiError::Unauthorized);
+        }
+
+        // Invalidate all sessions first
+        let sessions_invalidated = self.session_repo.deactivate_all_for_user(user_id).await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            sessions_invalidated = sessions_invalidated,
+            "All sessions invalidated for account deletion"
+        );
+
+        // Delete the user (cascade will handle related data)
+        let deleted = self.user_repo.delete(user_id).await?;
+
+        if !deleted {
+            return Err(ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            });
+        }
+
+        tracing::info!(
+            user_id = %user_id,
+            email = %user.email,
+            "User account deleted successfully"
+        );
+
+        Ok(())
+    }
+
     /// Verify an access token and return its claims
     ///
     /// # Arguments
