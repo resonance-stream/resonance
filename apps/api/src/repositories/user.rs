@@ -430,6 +430,7 @@ impl UserRepository {
     /// * `Ok(true)` - If the user was deleted
     /// * `Ok(false)` - If no user was found with the given ID
     /// * `Err(sqlx::Error)` - If a database error occurs
+    #[allow(dead_code)] // Available for non-transactional use cases
     pub async fn delete(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"
@@ -439,6 +440,35 @@ impl UserRepository {
         )
         .bind(user_id)
         .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete a user from the database within a transaction
+    ///
+    /// This is the transaction-aware version for use in atomic operations like
+    /// account deletion where session deactivation and user deletion must be atomic.
+    ///
+    /// # Arguments
+    /// * `tx` - The transaction to execute within
+    /// * `user_id` - The UUID of the user to delete
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If the user was deleted
+    /// * `Ok(false)` - If no user was found with the given ID
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    pub async fn delete_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        user_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .execute(&mut **tx)
         .await?;
         Ok(result.rows_affected() > 0)
     }

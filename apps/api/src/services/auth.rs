@@ -775,8 +775,9 @@ impl AuthService {
     ///
     /// This is a destructive operation that:
     /// 1. Verifies the user's password for security
-    /// 2. Invalidates all active sessions
-    /// 3. Permanently deletes the user and all associated data
+    /// 2. Atomically (within a transaction):
+    ///    - Invalidates all active sessions
+    ///    - Permanently deletes the user and all associated data
     ///
     /// # Arguments
     /// * `user_id` - The user whose account to delete
@@ -805,8 +806,13 @@ impl AuthService {
             return Err(ApiError::Unauthorized);
         }
 
+        // Start a transaction to ensure atomicity of session deactivation and user deletion
+        // If either operation fails, both are rolled back to prevent inconsistent state
+        let mut tx = self.user_repo.pool().begin().await?;
+
         // Invalidate all sessions first
-        let sessions_invalidated = self.session_repo.deactivate_all_for_user(user_id).await?;
+        let sessions_invalidated =
+            SessionRepository::deactivate_all_for_user_tx(&mut tx, user_id).await?;
 
         tracing::info!(
             user_id = %user_id,
@@ -815,14 +821,19 @@ impl AuthService {
         );
 
         // Delete the user (cascade will handle related data)
-        let deleted = self.user_repo.delete(user_id).await?;
+        let deleted = UserRepository::delete_tx(&mut tx, user_id).await?;
 
         if !deleted {
+            // This shouldn't happen since we found the user earlier, but handle it anyway
+            // Transaction will be rolled back when tx is dropped
             return Err(ApiError::NotFound {
                 resource_type: "user",
                 id: user_id.to_string(),
             });
         }
+
+        // Commit the transaction - both session deactivation and user deletion succeed together
+        tx.commit().await?;
 
         tracing::info!(
             user_id = %user_id,
