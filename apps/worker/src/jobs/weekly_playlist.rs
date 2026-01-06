@@ -586,8 +586,8 @@ async fn get_listening_history_embeddings(
             te.description_embedding::text as description_embedding,
             t.ai_mood[1] as mood,
             t.genres[1] as genre,
-            (t.audio_features->>'energy')::float as energy,
-            (t.audio_features->>'valence')::float as valence
+            NULLIF(t.audio_features->>'energy', '')::float as energy,
+            NULLIF(t.audio_features->>'valence', '')::float as valence
         FROM listening_history lh
         JOIN track_embeddings te ON te.track_id = lh.track_id
         JOIN tracks t ON t.id = lh.track_id
