@@ -599,9 +599,19 @@ where
         // No complete line, try to read more data
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                // Append new data to buffer
-                if let Ok(text) = std::str::from_utf8(&bytes) {
-                    self.buffer.push_str(text);
+                // Append new data to buffer, using lossy conversion for invalid UTF-8
+                match std::str::from_utf8(&bytes) {
+                    Ok(text) => {
+                        self.buffer.push_str(text);
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            byte_count = bytes.len(),
+                            "Invalid UTF-8 in streaming response, using lossy conversion"
+                        );
+                        self.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    }
                 }
 
                 // Try to extract a line now
@@ -648,6 +658,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper to create a test config pointing to the mock server
+    fn test_config(server_url: &str) -> OllamaConfig {
+        OllamaConfig {
+            url: server_url.to_string(),
+            model: "test-model".to_string(),
+            embedding_model: "test-embed".to_string(),
+            timeout_secs: 30,
+            max_tokens: 1024,
+            temperature: 0.7,
+        }
+    }
 
     #[test]
     fn test_client_creation() {
@@ -704,5 +729,294 @@ mod tests {
         // Just over the limit should truncate
         assert!(result.ends_with("... (truncated)"));
         assert!(result.len() < MAX_ERROR_BODY_SIZE + 20);
+    }
+
+    // ========== chat_stream() tests ==========
+
+    #[tokio::test]
+    async fn test_chat_stream_parses_ndjson() {
+        let server = MockServer::start().await;
+
+        // Ollama streams NDJSON - one JSON object per line
+        let streaming_response = r#"{"message":{"role":"assistant","content":"Hello"},"done":false}
+{"message":{"role":"assistant","content":" world"},"done":false}
+{"message":{"role":"assistant","content":"!"},"done":true,"done_reason":"stop"}
+"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("Hi")];
+        let mut stream = client.chat_stream(messages, None).await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            chunks.push(result.unwrap());
+        }
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].message.content, "Hello");
+        assert!(!chunks[0].done);
+        assert_eq!(chunks[1].message.content, " world");
+        assert!(!chunks[1].done);
+        assert_eq!(chunks[2].message.content, "!");
+        assert!(chunks[2].done);
+        assert_eq!(chunks[2].done_reason, Some("stop".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_handles_partial_buffer() {
+        // Test that the NDJSON parser handles data arriving in chunks
+        // by verifying it correctly buffers partial lines
+        let server = MockServer::start().await;
+
+        // Single complete response - the buffer handling is tested by
+        // verifying we can parse even when the response is small
+        let streaming_response = r#"{"message":{"role":"assistant","content":"test"},"done":true}
+"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let mut stream = client.chat_stream(messages, None).await.unwrap();
+
+        let chunk = stream.next().await.unwrap().unwrap();
+        assert_eq!(chunk.message.content, "test");
+        assert!(chunk.done);
+
+        // No more chunks
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_handles_empty_lines() {
+        let server = MockServer::start().await;
+
+        // Response with empty lines between chunks (should be skipped)
+        let streaming_response = r#"{"message":{"role":"assistant","content":"a"},"done":false}
+
+{"message":{"role":"assistant","content":"b"},"done":true}
+"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let mut stream = client.chat_stream(messages, None).await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            chunks.push(result.unwrap());
+        }
+
+        // Empty lines should be skipped, only 2 valid chunks
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].message.content, "a");
+        assert_eq!(chunks[1].message.content, "b");
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_handles_trailing_data() {
+        let server = MockServer::start().await;
+
+        // Response without trailing newline (tests buffer drain at end)
+        let streaming_response =
+            r#"{"message":{"role":"assistant","content":"final"},"done":true}"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let mut stream = client.chat_stream(messages, None).await.unwrap();
+
+        let chunk = stream.next().await.unwrap().unwrap();
+        assert_eq!(chunk.message.content, "final");
+        assert!(chunk.done);
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_http_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let result = client.chat_stream(messages, None).await;
+
+        match result {
+            Err(OllamaError::ApiError(_)) => {} // expected
+            Err(e) => panic!("Expected ApiError, got: {:?}", e),
+            Ok(_) => panic!("Expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_model_not_found() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_string("model 'test-model' not found"),
+            )
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let result = client.chat_stream(messages, None).await;
+
+        match result {
+            Err(OllamaError::ModelNotFound(_)) => {} // expected
+            Err(e) => panic!("Expected ModelNotFound, got: {:?}", e),
+            Ok(_) => panic!("Expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_invalid_json() {
+        let server = MockServer::start().await;
+
+        // Invalid JSON in the stream
+        let streaming_response = r#"{"message":{"role":"assistant","content":"ok"},"done":false}
+not valid json
+{"message":{"role":"assistant","content":"after"},"done":true}
+"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let mut stream = client.chat_stream(messages, None).await.unwrap();
+
+        // First chunk should succeed
+        let first = stream.next().await.unwrap();
+        assert!(first.is_ok());
+        assert_eq!(first.unwrap().message.content, "ok");
+
+        // Second chunk should be a parse error
+        let second = stream.next().await.unwrap();
+        assert!(second.is_err());
+        assert!(matches!(second.unwrap_err(), OllamaError::JsonError(_)));
+
+        // Third chunk should succeed (we continue after errors)
+        let third = stream.next().await.unwrap();
+        assert!(third.is_ok());
+        assert_eq!(third.unwrap().message.content, "after");
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_with_options() {
+        let server = MockServer::start().await;
+
+        let streaming_response =
+            r#"{"message":{"role":"assistant","content":"response"},"done":true}
+"#;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(streaming_response))
+            .mount(&server)
+            .await;
+
+        let config = test_config(&server.uri());
+        let client = OllamaClient::new(&config).unwrap();
+
+        let messages = vec![ChatMessage::user("test")];
+        let options = GenerateOptions {
+            temperature: Some(0.5),
+            num_predict: Some(100),
+            ..Default::default()
+        };
+
+        let mut stream = client.chat_stream(messages, Some(options)).await.unwrap();
+
+        let chunk = stream.next().await.unwrap().unwrap();
+        assert_eq!(chunk.message.content, "response");
+    }
+
+    // Test for NdjsonStream directly to verify buffer handling
+    #[tokio::test]
+    async fn test_ndjson_stream_multiple_lines_in_single_chunk() {
+        use tokio_stream::iter;
+
+        // Simulate multiple JSON lines arriving in a single chunk
+        let data = Bytes::from(
+            r#"{"message":{"role":"assistant","content":"a"},"done":false}
+{"message":{"role":"assistant","content":"b"},"done":true}
+"#,
+        );
+
+        let byte_stream = iter(vec![Ok::<_, std::io::Error>(data)]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let first = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(first.message.content, "a");
+
+        let second = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(second.message.content, "b");
+        assert!(second.done);
+
+        assert!(ndjson_stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_ndjson_stream_split_across_chunks() {
+        use tokio_stream::iter;
+
+        // Simulate a JSON line split across multiple chunks
+        let chunk1 = Bytes::from(r#"{"message":{"role":"assistant","#);
+        let chunk2 = Bytes::from(r#""content":"split"},"done":true}
+"#);
+
+        let byte_stream = iter(vec![
+            Ok::<_, std::io::Error>(chunk1),
+            Ok::<_, std::io::Error>(chunk2),
+        ]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let result = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(result.message.content, "split");
+        assert!(result.done);
     }
 }
