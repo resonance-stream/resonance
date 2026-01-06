@@ -836,9 +836,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           interface DeleteAccountResponse {
-            deleteAccount: {
-              success: boolean
-            }
+            deleteAccount: boolean
           }
 
           const response = await graphqlClient.request<DeleteAccountResponse>(
@@ -850,7 +848,7 @@ export const useAuthStore = create<AuthState>()(
             }
           )
 
-          if (response.deleteAccount.success) {
+          if (response.deleteAccount) {
             // Clear auth header
             setAuthToken(null)
 

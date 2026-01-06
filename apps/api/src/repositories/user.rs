@@ -430,7 +430,6 @@ impl UserRepository {
     /// * `Ok(true)` - If the user was deleted
     /// * `Ok(false)` - If no user was found with the given ID
     /// * `Err(sqlx::Error)` - If a database error occurs
-    #[allow(dead_code)] // Used by AuthService for account deletion
     pub async fn delete(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"

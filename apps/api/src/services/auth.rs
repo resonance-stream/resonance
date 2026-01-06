@@ -788,7 +788,6 @@ impl AuthService {
     /// # Errors
     /// - `ApiError::NotFound` if user doesn't exist
     /// - `ApiError::Unauthorized` if password is incorrect
-    #[allow(dead_code)] // Used by GraphQL mutations
     pub async fn delete_account(&self, user_id: Uuid, password: &str) -> ApiResult<()> {
         // Fetch the user to verify password
         let user = self

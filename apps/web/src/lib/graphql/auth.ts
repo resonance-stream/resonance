@@ -180,8 +180,6 @@ export const UPDATE_PROFILE_MUTATION = gql`
  */
 export const DELETE_ACCOUNT_MUTATION = gql`
   mutation DeleteAccount($input: DeleteAccountInput!) {
-    deleteAccount(input: $input) {
-      success
-    }
+    deleteAccount(input: $input)
   }
 `

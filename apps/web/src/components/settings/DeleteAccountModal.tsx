@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
@@ -27,18 +27,6 @@ export function DeleteAccountModal({ open, onOpenChange }: DeleteAccountModalPro
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<AuthError | null>(null)
 
-  // Ref for auto-redirect timeout cleanup
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
-
   const resetForm = (): void => {
     setPassword('')
     setConfirmText('')
@@ -47,11 +35,6 @@ export function DeleteAccountModal({ open, onOpenChange }: DeleteAccountModalPro
 
   const handleOpenChange = (newOpen: boolean): void => {
     if (!newOpen) {
-      // Clear any pending auto-redirect timer
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
       resetForm()
     }
     onOpenChange(newOpen)
