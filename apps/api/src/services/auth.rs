@@ -771,6 +771,94 @@ impl AuthService {
         Ok(())
     }
 
+    /// Delete a user's account
+    ///
+    /// This is a destructive operation that:
+    /// 1. Validates password length (prevents DoS via expensive hashing)
+    /// 2. Verifies the user's password for security
+    /// 3. Atomically (within a transaction):
+    ///    - Invalidates all active sessions
+    ///    - Permanently deletes the user and all associated data
+    ///
+    /// # Arguments
+    /// * `user_id` - The user whose account to delete
+    /// * `password` - The user's password for verification
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    ///
+    /// # Errors
+    /// - `ApiError::ValidationError` if password is empty or too long
+    /// - `ApiError::NotFound` if user doesn't exist
+    /// - `ApiError::Unauthorized` if password is incorrect
+    pub async fn delete_account(&self, user_id: Uuid, password: &str) -> ApiResult<()> {
+        // Validate password length to prevent DoS via expensive Argon2 hashing
+        if password.is_empty() {
+            return Err(ApiError::ValidationError(
+                "password is required".to_string(),
+            ));
+        }
+        if password.len() > MAX_PASSWORD_LENGTH {
+            return Err(ApiError::ValidationError(format!(
+                "password must be at most {} characters",
+                MAX_PASSWORD_LENGTH
+            )));
+        }
+
+        // Fetch the user to verify password
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            })?;
+
+        // Verify password
+        if !self.verify_password(password, &user.password_hash)? {
+            tracing::warn!(user_id = %user_id, "Account deletion failed: incorrect password");
+            return Err(ApiError::Unauthorized);
+        }
+
+        // Start a transaction to ensure atomicity of session deactivation and user deletion
+        // If either operation fails, both are rolled back to prevent inconsistent state
+        let mut tx = self.user_repo.pool().begin().await?;
+
+        // Invalidate all sessions first
+        let sessions_invalidated =
+            SessionRepository::deactivate_all_for_user_tx(&mut tx, user_id).await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            sessions_invalidated = sessions_invalidated,
+            "All sessions invalidated for account deletion"
+        );
+
+        // Delete the user (cascade will handle related data)
+        let deleted = UserRepository::delete_tx(&mut tx, user_id).await?;
+
+        if !deleted {
+            // This shouldn't happen since we found the user earlier, but handle it anyway
+            // Transaction will be rolled back when tx is dropped
+            return Err(ApiError::NotFound {
+                resource_type: "user",
+                id: user_id.to_string(),
+            });
+        }
+
+        // Commit the transaction - both session deactivation and user deletion succeed together
+        tx.commit().await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            email = %user.email,
+            "User account deleted successfully"
+        );
+
+        Ok(())
+    }
+
     /// Verify an access token and return its claims
     ///
     /// # Arguments

@@ -172,3 +172,14 @@ export const UPDATE_PROFILE_MUTATION = gql`
     }
   }
 `
+
+/**
+ * Delete account mutation
+ * Permanently deletes the user's account after password verification.
+ * This action is irreversible.
+ */
+export const DELETE_ACCOUNT_MUTATION = gql`
+  mutation DeleteAccount($input: DeleteAccountInput!) {
+    deleteAccount(input: $input)
+  }
+`

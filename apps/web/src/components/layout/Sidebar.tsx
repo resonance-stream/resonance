@@ -1,8 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Search, Library, Settings, Shield } from 'lucide-react';
+import { Home, Search, Library, Settings, Shield, ListMusic } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ScrollArea } from '../ui/ScrollArea';
+import { Skeleton } from '../ui/Skeleton';
 import { useAuthStore } from '../../stores/authStore';
+import { useMyPlaylists } from '../../hooks/useLibrary';
 
 interface NavItemProps {
   to: string;
@@ -34,6 +36,7 @@ function NavItem({ to, icon, label }: NavItemProps): JSX.Element {
 export function Sidebar(): JSX.Element {
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === 'admin';
+  const { data: playlists, isLoading: playlistsLoading } = useMyPlaylists();
 
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-64 bg-background/95 backdrop-blur-xl border-r border-white/5 flex flex-col z-40">
@@ -70,46 +73,44 @@ export function Sidebar(): JSX.Element {
         </div>
         <ScrollArea className="h-[calc(100%-40px)]">
           <div className="flex flex-col gap-1 pb-4">
-            {/* Placeholder playlists - will be dynamic */}
-            <NavLink
-              to="/playlist/daily-mix"
-              className={({ isActive }) =>
-                cn(
-                  'px-6 py-2 text-sm text-text-secondary',
-                  'hover:text-text-primary',
-                  'transition-colors duration-150',
-                  isActive && 'text-text-primary'
-                )
-              }
-            >
-              Daily Mix
-            </NavLink>
-            <NavLink
-              to="/playlist/chill"
-              className={({ isActive }) =>
-                cn(
-                  'px-6 py-2 text-sm text-text-secondary',
-                  'hover:text-text-primary',
-                  'transition-colors duration-150',
-                  isActive && 'text-text-primary'
-                )
-              }
-            >
-              Chill Vibes
-            </NavLink>
-            <NavLink
-              to="/playlist/workout"
-              className={({ isActive }) =>
-                cn(
-                  'px-6 py-2 text-sm text-text-secondary',
-                  'hover:text-text-primary',
-                  'transition-colors duration-150',
-                  isActive && 'text-text-primary'
-                )
-              }
-            >
-              Workout
-            </NavLink>
+            {playlistsLoading ? (
+              // Loading skeleton
+              <>
+                <div className="px-6 py-2">
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <div className="px-6 py-2">
+                  <Skeleton className="h-4 w-32" />
+                </div>
+                <div className="px-6 py-2">
+                  <Skeleton className="h-4 w-20" />
+                </div>
+              </>
+            ) : playlists && playlists.length > 0 ? (
+              // Dynamic playlists
+              playlists.map((playlist) => (
+                <NavLink
+                  key={playlist.id}
+                  to={`/playlist/${playlist.id}`}
+                  className={({ isActive }) =>
+                    cn(
+                      'px-6 py-2 text-sm text-text-secondary',
+                      'hover:text-text-primary',
+                      'transition-colors duration-150',
+                      isActive && 'text-text-primary'
+                    )
+                  }
+                >
+                  {playlist.name}
+                </NavLink>
+              ))
+            ) : (
+              // Empty state
+              <div className="px-6 py-4 text-sm text-text-muted flex flex-col items-center gap-2">
+                <ListMusic size={24} className="opacity-50" />
+                <span>No playlists yet</span>
+              </div>
+            )}
           </div>
         </ScrollArea>
       </div>

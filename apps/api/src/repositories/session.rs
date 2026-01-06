@@ -163,6 +163,32 @@ impl SessionRepository {
         Ok(result.rows_affected())
     }
 
+    /// Deactivate all active sessions for a user within a transaction
+    ///
+    /// This is the transaction-aware version for use in atomic operations like
+    /// account deletion where session deactivation and user deletion must be atomic.
+    ///
+    /// # Arguments
+    /// * `tx` - The transaction to execute within
+    /// * `user_id` - The user whose sessions to deactivate
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - The number of sessions that were deactivated
+    /// * `Err(sqlx::Error)` - If a database error occurs
+    pub async fn deactivate_all_for_user_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        user_id: Uuid,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE sessions SET is_active = false WHERE user_id = $1 AND is_active = true",
+        )
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Deactivate all active sessions for a user EXCEPT the specified session
     ///
     /// This is used when changing a password to log out all other devices

@@ -8,6 +8,7 @@ import {
   ChangePasswordModal,
   ChangeEmailModal,
   EditProfileModal,
+  DeleteAccountModal,
 } from '../components/settings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAuthStore } from '../stores/authStore'
@@ -122,6 +123,7 @@ export default function Settings() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
+  const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false)
 
   const formatDuration = (seconds: number): string => {
     return `${seconds}s`
@@ -350,7 +352,12 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="mt-4">
-            <Button variant="ghost" size="sm" className="text-error-text hover:bg-error/20">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-error-text hover:bg-error/20"
+              onClick={() => setIsDeleteAccountModalOpen(true)}
+            >
               Delete Account
             </Button>
           </CardContent>
@@ -370,6 +377,10 @@ export default function Settings() {
       <EditProfileModal
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
+      />
+      <DeleteAccountModal
+        open={isDeleteAccountModalOpen}
+        onOpenChange={setIsDeleteAccountModalOpen}
       />
     </div>
   )
