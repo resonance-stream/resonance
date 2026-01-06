@@ -46,7 +46,8 @@ fn sanitize_auth_error(error: &ApiError) -> async_graphql::Error {
             async_graphql::Error::new("Access denied")
         }
         ApiError::NotFound { .. } => {
-            // Don't reveal whether a user exists
+            // Don't reveal whether a user exists - prevents user enumeration attacks
+            tracing::debug!("Auth not found error treated as invalid credentials");
             async_graphql::Error::new("Invalid credentials")
         }
         ApiError::Conflict { resource_type, .. } => {
