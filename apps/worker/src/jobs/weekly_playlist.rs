@@ -831,7 +831,8 @@ async fn find_similar_tracks_for_cluster(
     let centroid_str = format_pgvector_string(&cluster.centroid)?;
 
     // Try combined similarity first (embedding + features + tags)
-    let tracks = find_similar_tracks_combined(state, user_id, &centroid_str, cluster, limit).await?;
+    let tracks =
+        find_similar_tracks_combined(state, user_id, &centroid_str, cluster, limit).await?;
 
     if !tracks.is_empty() {
         return Ok(tracks);
