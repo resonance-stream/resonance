@@ -848,20 +848,28 @@ export const useAuthStore = create<AuthState>()(
             }
           )
 
-          if (response.deleteAccount) {
-            // Clear auth header
-            setAuthToken(null)
-
-            // Clear all state
-            set({
-              user: null,
-              accessToken: null,
-              refreshToken: null,
-              expiresAt: null,
-              status: 'unauthenticated',
-              error: null,
-            })
+          if (!response.deleteAccount) {
+            // Deletion failed - throw error so UI can display failure message
+            const authError: AuthError = {
+              code: 'UNKNOWN_ERROR',
+              message: 'Account deletion failed. Please try again.',
+            }
+            set({ error: authError })
+            throw authError
           }
+
+          // Deletion succeeded - clear auth header
+          setAuthToken(null)
+
+          // Clear all state
+          set({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            status: 'unauthenticated',
+            error: null,
+          })
         } catch (error) {
           const authError = parseAuthError(error)
           set({ error: authError })
