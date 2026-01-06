@@ -1913,4 +1913,479 @@ mod tests {
         let api_err: ApiError = chat_err.into();
         assert!(matches!(api_err, ApiError::AiService(_)));
     }
+
+    // ==================== StreamEvent Tests ====================
+
+    #[test]
+    fn test_stream_event_from_error_database() {
+        let err = ChatError::Database(sqlx::Error::RowNotFound);
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { code, .. } => {
+                assert_eq!(code, StreamErrorCode::Database);
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_conversation_not_found() {
+        let conv_id = Uuid::new_v4();
+        let err = ChatError::ConversationNotFound(conv_id);
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::ConversationNotFound);
+                assert!(message.contains(&conv_id.to_string()));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_ollama_response() {
+        let err = ChatError::OllamaResponse("Model not available".to_string());
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::OllamaResponse);
+                assert_eq!(message, "Model not available");
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_invalid_input() {
+        let err = ChatError::InvalidInput("Message too long".to_string());
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::InvalidInput);
+                assert_eq!(message, "Message too long");
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_timeout() {
+        let err = ChatError::Timeout;
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::Timeout);
+                assert!(message.contains("timed out"));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_tool_execution() {
+        let err = ChatError::ToolExecution {
+            tool_name: "search_library".to_string(),
+            message: "Search failed".to_string(),
+        };
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::ToolExecution);
+                assert!(message.contains("search_library"));
+                assert!(message.contains("Search failed"));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_error_code_equality() {
+        assert_eq!(StreamErrorCode::Database, StreamErrorCode::Database);
+        assert_ne!(StreamErrorCode::Database, StreamErrorCode::Timeout);
+        assert_eq!(
+            StreamErrorCode::ConversationNotFound,
+            StreamErrorCode::ConversationNotFound
+        );
+    }
+
+    // ==================== Channel Communication Tests ====================
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_token_events() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Simulate sending token events
+        let tokens = vec!["Hello", " ", "world", "!"];
+        for token in &tokens {
+            tx.send(StreamEvent::Token(token.to_string()))
+                .await
+                .unwrap();
+        }
+        drop(tx); // Close sender to end the stream
+
+        // Collect received events
+        let mut received_tokens = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::Token(t) = event {
+                received_tokens.push(t);
+            }
+        }
+
+        assert_eq!(received_tokens.len(), 4);
+        assert_eq!(received_tokens.join(""), "Hello world!");
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_complete_event() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        let message_id = Uuid::new_v4();
+        let full_response = "This is the full response".to_string();
+        let actions = vec![ChatAction {
+            action_type: "play_track".to_string(),
+            data: serde_json::json!({"track_id": "123"}),
+        }];
+
+        tx.send(StreamEvent::Complete {
+            message_id,
+            full_response: full_response.clone(),
+            actions: actions.clone(),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            StreamEvent::Complete {
+                message_id: recv_id,
+                full_response: recv_response,
+                actions: recv_actions,
+            } => {
+                assert_eq!(recv_id, message_id);
+                assert_eq!(recv_response, full_response);
+                assert_eq!(recv_actions.len(), 1);
+                assert_eq!(recv_actions[0].action_type, "play_track");
+            }
+            _ => panic!("Expected Complete event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_error_event() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        tx.send(StreamEvent::Error {
+            message: "Something went wrong".to_string(),
+            code: StreamErrorCode::OllamaResponse,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(message, "Something went wrong");
+                assert_eq!(code, StreamErrorCode::OllamaResponse);
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_full_flow_tokens_then_complete() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Simulate a realistic streaming flow: tokens followed by complete
+        tokio::spawn(async move {
+            // Send tokens
+            tx.send(StreamEvent::Token("I".to_string())).await.unwrap();
+            tx.send(StreamEvent::Token(" recommend".to_string()))
+                .await
+                .unwrap();
+            tx.send(StreamEvent::Token(" this".to_string()))
+                .await
+                .unwrap();
+            tx.send(StreamEvent::Token(" song".to_string()))
+                .await
+                .unwrap();
+
+            // Send complete event
+            tx.send(StreamEvent::Complete {
+                message_id: Uuid::new_v4(),
+                full_response: "I recommend this song".to_string(),
+                actions: vec![],
+            })
+            .await
+            .unwrap();
+        });
+
+        // Collect all events
+        let mut token_count = 0;
+        let mut complete_count = 0;
+        let mut full_content = String::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(t) => {
+                    token_count += 1;
+                    full_content.push_str(&t);
+                }
+                StreamEvent::Complete { full_response, .. } => {
+                    complete_count += 1;
+                    assert_eq!(full_response, full_content);
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(token_count, 4);
+        assert_eq!(complete_count, 1);
+        assert_eq!(full_content, "I recommend this song");
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_handles_dropped_receiver() {
+        let (tx, rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Drop the receiver immediately
+        drop(rx);
+
+        // Sending should fail gracefully (return Err)
+        let result = tx.send(StreamEvent::Token("test".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_tool_call_events() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        let call_id = "call_123".to_string();
+
+        // Simulate tool call flow
+        tx.send(StreamEvent::ToolCallStart {
+            tool_name: "search_library".to_string(),
+            call_id: call_id.clone(),
+        })
+        .await
+        .unwrap();
+
+        tx.send(StreamEvent::ToolCallComplete {
+            call_id: call_id.clone(),
+            result: r#"{"results": []}"#.to_string(),
+        })
+        .await
+        .unwrap();
+
+        drop(tx);
+
+        // Verify events received in order
+        let event1 = rx.recv().await.unwrap();
+        match event1 {
+            StreamEvent::ToolCallStart { tool_name, call_id } => {
+                assert_eq!(tool_name, "search_library");
+                assert_eq!(call_id, "call_123");
+            }
+            _ => panic!("Expected ToolCallStart event"),
+        }
+
+        let event2 = rx.recv().await.unwrap();
+        match event2 {
+            StreamEvent::ToolCallComplete { call_id, result } => {
+                assert_eq!(call_id, "call_123");
+                assert!(result.contains("results"));
+            }
+            _ => panic!("Expected ToolCallComplete event"),
+        }
+    }
+
+    // ==================== Message Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_send_message_streaming_validates_empty_message() {
+        let service = test_service().await;
+        let user_id = Uuid::new_v4();
+        let context = UserContext {
+            user_id,
+            track_count: 10,
+            artist_count: 5,
+            album_count: 2,
+            playlist_count: 1,
+            top_genres: vec![],
+            current_track_id: None,
+            current_track_title: None,
+        };
+
+        let result = service
+            .send_message_streaming(None, user_id, "   ".to_string(), context)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(ChatError::InvalidInput(msg)) => {
+                assert!(msg.contains("empty"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_message_streaming_validates_message_length() {
+        let service = test_service().await;
+        let user_id = Uuid::new_v4();
+        let context = UserContext {
+            user_id,
+            track_count: 10,
+            artist_count: 5,
+            album_count: 2,
+            playlist_count: 1,
+            top_genres: vec![],
+            current_track_id: None,
+            current_track_title: None,
+        };
+
+        // Create a message longer than MAX_MESSAGE_LENGTH (10_000)
+        let long_message = "a".repeat(10_001);
+
+        let result = service
+            .send_message_streaming(None, user_id, long_message, context)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(ChatError::InvalidInput(msg)) => {
+                assert!(msg.contains("too long"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    // ==================== StreamEvent Clone & Debug Tests ====================
+
+    #[test]
+    fn test_stream_event_clone() {
+        let token_event = StreamEvent::Token("test".to_string());
+        let cloned = token_event.clone();
+        if let (StreamEvent::Token(a), StreamEvent::Token(b)) = (&token_event, &cloned) {
+            assert_eq!(a, b);
+        } else {
+            panic!("Clone failed");
+        }
+
+        let error_event = StreamEvent::Error {
+            message: "error".to_string(),
+            code: StreamErrorCode::Timeout,
+        };
+        let cloned_error = error_event.clone();
+        if let StreamEvent::Error { code, .. } = cloned_error {
+            assert_eq!(code, StreamErrorCode::Timeout);
+        } else {
+            panic!("Clone failed");
+        }
+    }
+
+    #[test]
+    fn test_stream_event_debug() {
+        let token_event = StreamEvent::Token("hello".to_string());
+        let debug_str = format!("{:?}", token_event);
+        assert!(debug_str.contains("Token"));
+        assert!(debug_str.contains("hello"));
+
+        let complete_event = StreamEvent::Complete {
+            message_id: Uuid::nil(),
+            full_response: "test".to_string(),
+            actions: vec![],
+        };
+        let debug_str = format!("{:?}", complete_event);
+        assert!(debug_str.contains("Complete"));
+    }
+
+    #[test]
+    fn test_stream_error_code_debug_and_copy() {
+        let code = StreamErrorCode::Database;
+        let copied = code; // Copy
+        assert_eq!(code, copied);
+
+        let debug_str = format!("{:?}", code);
+        assert!(debug_str.contains("Database"));
+    }
+
+    // ==================== ChatAction Tests ====================
+
+    #[test]
+    fn test_chat_action_serialization() {
+        let action = ChatAction {
+            action_type: "play_track".to_string(),
+            data: serde_json::json!({"track_id": "abc-123"}),
+        };
+
+        let json = serde_json::to_string(&action).unwrap();
+        assert!(json.contains("play_track"));
+        assert!(json.contains("abc-123"));
+    }
+
+    #[test]
+    fn test_chat_action_clone() {
+        let action = ChatAction {
+            action_type: "add_to_queue".to_string(),
+            data: serde_json::json!({"track_ids": ["id1", "id2"]}),
+        };
+
+        let cloned = action.clone();
+        assert_eq!(cloned.action_type, action.action_type);
+        assert_eq!(cloned.data, action.data);
+    }
+
+    // ==================== Integration-Style Unit Tests ====================
+
+    #[tokio::test]
+    async fn test_stream_channel_capacity() {
+        // Test that channel with specific capacity works correctly
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(STREAM_CHANNEL_CAPACITY);
+
+        // Send several events
+        for i in 0..50 {
+            tx.send(StreamEvent::Token(format!("token_{}", i)))
+                .await
+                .unwrap();
+        }
+
+        // Receive and verify
+        let mut count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if let StreamEvent::Token(_) = event {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 50);
+    }
+
+    #[tokio::test]
+    async fn test_stream_event_ordering_preserved() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(100);
+
+        // Send numbered tokens
+        for i in 0..20 {
+            tx.send(StreamEvent::Token(i.to_string())).await.unwrap();
+        }
+        drop(tx);
+
+        // Verify order is preserved
+        let mut expected = 0;
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::Token(t) = event {
+                let num: i32 = t.parse().unwrap();
+                assert_eq!(num, expected);
+                expected += 1;
+            }
+        }
+        assert_eq!(expected, 20);
+    }
 }
