@@ -15,10 +15,11 @@ use uuid::Uuid;
 
 use super::connection::ConnectionManager;
 use super::messages::{
-    ChatAction, ChatCompletePayload, ChatErrorPayload, ChatSendPayload, ServerMessage,
+    ChatAction, ChatCompletePayload, ChatErrorPayload, ChatSendPayload, ChatTokenPayload,
+    ServerMessage,
 };
 use crate::services::chat::{
-    ChatAction as ServiceChatAction, ChatError, ChatService, UserContextBuilder,
+    ChatAction as ServiceChatAction, ChatError, ChatService, StreamEvent, UserContextBuilder,
 };
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
@@ -149,8 +150,8 @@ impl ChatHandler {
 
     /// Handle an incoming chat message
     ///
-    /// This processes the chat message asynchronously, sending the
-    /// complete response back to the client.
+    /// This processes the chat message asynchronously, streaming tokens
+    /// back to the client as they are generated.
     pub async fn handle_chat_send(&self, payload: ChatSendPayload) {
         let conversation_id = payload.conversation_id;
         let message = payload.message;
@@ -171,7 +172,7 @@ impl ChatHandler {
             device_id = %self.device_id,
             conversation_id = ?conversation_id,
             message_len = message.len(),
-            "Processing chat message"
+            "Processing chat message with streaming"
         );
 
         // Build user context for this request
@@ -193,26 +194,74 @@ impl ChatHandler {
             }
         };
 
-        // Send the message to the AI service
+        // Send the message to the AI service with streaming
         match self
             .chat_service
-            .send_message(conversation_id, self.user_id, message, &context)
+            .send_message_streaming(conversation_id, self.user_id, message, context)
             .await
         {
-            Ok((conversation, assistant_message, actions)) => {
-                // Convert service actions to WebSocket actions
-                let ws_actions: Vec<ChatAction> =
-                    actions.into_iter().filter_map(convert_action).collect();
+            Ok((conv_id, mut rx)) => {
+                // Process streaming events from the channel
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        StreamEvent::Token(token) => {
+                            self.send_token(conv_id, token, false);
+                        }
+                        StreamEvent::ToolCallStart { tool_name, call_id } => {
+                            // Log tool call start for debugging
+                            info!(
+                                conversation_id = %conv_id,
+                                tool_name = %tool_name,
+                                call_id = %call_id,
+                                "Tool call started"
+                            );
+                        }
+                        StreamEvent::ToolCallComplete { call_id, result } => {
+                            // Log tool call completion for debugging
+                            info!(
+                                conversation_id = %conv_id,
+                                call_id = %call_id,
+                                result_len = result.len(),
+                                "Tool call completed"
+                            );
+                        }
+                        StreamEvent::Complete {
+                            message_id,
+                            full_response,
+                            actions,
+                        } => {
+                            // Convert service actions to WebSocket actions
+                            let ws_actions: Vec<ChatAction> =
+                                actions.into_iter().filter_map(convert_action).collect();
 
-                let complete_msg = ServerMessage::ChatComplete(ChatCompletePayload {
-                    conversation_id: conversation.id,
-                    message_id: assistant_message.id,
-                    full_response: assistant_message.content.unwrap_or_default(),
-                    actions: ws_actions,
-                    created_at: assistant_message.created_at,
-                });
+                            self.send_complete(
+                                conv_id,
+                                message_id,
+                                full_response,
+                                ws_actions,
+                                chrono::Utc::now(),
+                            );
+                            break;
+                        }
+                        StreamEvent::Error { message, code } => {
+                            warn!(
+                                user_id = %self.user_id,
+                                device_id = %self.device_id,
+                                error = %message,
+                                error_code = ?code,
+                                "Chat streaming error"
+                            );
 
-                self.send_to_self(complete_msg);
+                            let error_payload = ChatErrorPayload::new(
+                                Some(conv_id),
+                                format!("{:?}", code),
+                                message,
+                            );
+                            self.send_to_self(ServerMessage::ChatError(error_payload));
+                            break;
+                        }
+                    }
+                }
             }
             Err(e) => {
                 warn!(
@@ -241,6 +290,35 @@ impl ChatHandler {
                 "Failed to send chat response"
             );
         }
+    }
+
+    /// Send a streaming token to this device
+    fn send_token(&self, conversation_id: Uuid, token: String, is_final: bool) {
+        let msg = ServerMessage::ChatToken(ChatTokenPayload {
+            conversation_id,
+            token,
+            is_final,
+        });
+        self.send_to_self(msg);
+    }
+
+    /// Send the complete response to this device
+    fn send_complete(
+        &self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        full_response: String,
+        actions: Vec<ChatAction>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) {
+        let msg = ServerMessage::ChatComplete(ChatCompletePayload {
+            conversation_id,
+            message_id,
+            full_response,
+            actions,
+            created_at,
+        });
+        self.send_to_self(msg);
     }
 }
 
