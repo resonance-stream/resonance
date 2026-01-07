@@ -96,19 +96,36 @@ impl SystemSettingsMutation {
     ) -> Result<AuthPayload> {
         let pool = ctx.data::<PgPool>()?;
         let auth_service = ctx.data::<AuthService>()?;
-        let user_repo = ctx.data::<UserRepository>()?;
 
-        // Check if any users already exist
-        let user_count: i64 =
-            sqlx::query_scalar(r#"SELECT COUNT(*) FROM users"#)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| {
-                    tracing::error!(error = %e, "Failed to count users");
-                    async_graphql::Error::new("Failed to check existing users")
-                })?;
+        // Use a transaction with advisory lock to prevent TOCTOU race condition
+        // Advisory lock 1 is reserved for initial admin creation
+        // This ensures only one request can check and create at a time
+        let mut tx = pool.begin().await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to start transaction");
+            async_graphql::Error::new("Failed to start transaction")
+        })?;
+
+        // Acquire advisory lock (released automatically when transaction ends)
+        sqlx::query("SELECT pg_advisory_xact_lock(1)")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to acquire advisory lock");
+                async_graphql::Error::new("Failed to acquire lock")
+            })?;
+
+        // Check if any users already exist (within the lock)
+        let user_count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM users"#)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to count users");
+                async_graphql::Error::new("Failed to check existing users")
+            })?;
 
         if user_count > 0 {
+            // Roll back (releases lock) and return error
+            tx.rollback().await.ok();
             return Err(async_graphql::Error::new(
                 "Initial admin creation is only available when no users exist",
             ));
@@ -150,30 +167,41 @@ impl SystemSettingsMutation {
                 .to_string()
         };
 
-        // Create the admin user
+        // Create the admin user within the transaction
         let preferences_json = serde_json::to_value(UserPreferences::default()).map_err(|e| {
             tracing::error!(error = %e, "Failed to serialize preferences");
             async_graphql::Error::new("Failed to create user preferences")
         })?;
 
-        let user = user_repo
-            .create(
-                &input.email,
-                &password_hash,
-                &input.username,
-                UserRole::Admin,
-                &preferences_json,
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to create admin user");
-                if let sqlx::Error::Database(ref db_err) = e {
-                    if db_err.is_unique_violation() {
-                        return async_graphql::Error::new("Email already registered");
-                    }
+        let user = sqlx::query_as::<_, crate::models::user::User>(
+            r#"
+            INSERT INTO users (email, password_hash, username, role, preferences)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+            "#,
+        )
+        .bind(&input.email)
+        .bind(&password_hash)
+        .bind(&input.username)
+        .bind(UserRole::Admin)
+        .bind(&preferences_json)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to create admin user");
+            if let sqlx::Error::Database(ref db_err) = e {
+                if db_err.is_unique_violation() {
+                    return async_graphql::Error::new("Email already registered");
                 }
-                async_graphql::Error::new("Failed to create admin user")
-            })?;
+            }
+            async_graphql::Error::new("Failed to create admin user")
+        })?;
+
+        // Commit the transaction (releases advisory lock)
+        tx.commit().await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to commit transaction");
+            async_graphql::Error::new("Failed to complete admin creation")
+        })?;
 
         tracing::info!(user_id = %user.id, email = %user.email, "Initial admin user created");
 
@@ -349,9 +377,9 @@ impl SystemSettingsMutation {
                 convert_health_to_result(health, start.elapsed())
             }
             ServiceType::Lidarr => {
-                let lidarr_setting = setting.as_ref().ok_or_else(|| {
-                    async_graphql::Error::new("Lidarr is not configured")
-                })?;
+                let lidarr_setting = setting
+                    .as_ref()
+                    .ok_or_else(|| async_graphql::Error::new("Lidarr is not configured"))?;
 
                 let url = lidarr_setting
                     .config
@@ -377,9 +405,9 @@ impl SystemSettingsMutation {
                 test_lidarr_connection(url, &api_key).await
             }
             ServiceType::Lastfm => {
-                let lastfm_setting = setting.as_ref().ok_or_else(|| {
-                    async_graphql::Error::new("Last.fm is not configured")
-                })?;
+                let lastfm_setting = setting
+                    .as_ref()
+                    .ok_or_else(|| async_graphql::Error::new("Last.fm is not configured"))?;
 
                 let api_key = if let Some(encrypted) = &lastfm_setting.encrypted_secrets {
                     encryption.decrypt(encrypted).map_err(|e| {
@@ -401,16 +429,21 @@ impl SystemSettingsMutation {
                 let env_url = std::env::var("MEILISEARCH_URL").ok();
                 let url = setting
                     .as_ref()
-                    .and_then(|s| s.config.get("url").and_then(|v| v.as_str()).map(String::from))
+                    .and_then(|s| {
+                        s.config
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    })
                     .or(env_url)
                     .unwrap_or_else(|| "http://meilisearch:7700".to_string());
 
                 let api_key = setting
                     .as_ref()
                     .and_then(|s| {
-                        s.encrypted_secrets.as_ref().and_then(|encrypted| {
-                            encryption.decrypt(encrypted).ok()
-                        })
+                        s.encrypted_secrets
+                            .as_ref()
+                            .and_then(|encrypted| encryption.decrypt(encrypted).ok())
                     })
                     .or_else(|| std::env::var("MEILISEARCH_KEY").ok())
                     .unwrap_or_default();
@@ -422,7 +455,12 @@ impl SystemSettingsMutation {
                 let env_path = std::env::var("MUSIC_LIBRARY_PATH").ok();
                 let path = setting
                     .as_ref()
-                    .and_then(|s| s.config.get("path").and_then(|v| v.as_str()).map(String::from))
+                    .and_then(|s| {
+                        s.config
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    })
                     .or(env_path)
                     .unwrap_or_else(|| "/music".to_string());
 
@@ -433,11 +471,7 @@ impl SystemSettingsMutation {
         // Update health status in database if we have a setting
         if has_db_setting {
             let _ = repo
-                .update_health(
-                    db_service,
-                    result.success,
-                    result.error.clone(),
-                )
+                .update_health(db_service, result.success, result.error.clone())
                 .await;
             tracing::debug!(
                 service = ?service,

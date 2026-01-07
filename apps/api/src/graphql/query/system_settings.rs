@@ -50,15 +50,14 @@ impl SystemSettingsQuery {
         })?;
 
         // Check if any admin users exist
-        let has_admin: Option<bool> = sqlx::query_scalar(
-            r#"SELECT EXISTS(SELECT 1 FROM users WHERE role = 'admin')"#,
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to check for admin users");
-            async_graphql::Error::new("Failed to check for admin users")
-        })?;
+        let has_admin: Option<bool> =
+            sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM users WHERE role = 'admin')"#)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to check for admin users");
+                    async_graphql::Error::new("Failed to check for admin users")
+                })?;
         let has_admin = has_admin.unwrap_or(false);
 
         // Get all configured (enabled) services

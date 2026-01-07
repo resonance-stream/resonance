@@ -240,8 +240,12 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "my-secret-api-key-12345";
-        let ciphertext = service.encrypt(plaintext).expect("encryption should succeed");
-        let decrypted = service.decrypt(&ciphertext).expect("decryption should succeed");
+        let ciphertext = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
+        let decrypted = service
+            .decrypt(&ciphertext)
+            .expect("decryption should succeed");
 
         assert_eq!(plaintext, decrypted);
     }
@@ -251,8 +255,12 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "";
-        let ciphertext = service.encrypt(plaintext).expect("encryption should succeed");
-        let decrypted = service.decrypt(&ciphertext).expect("decryption should succeed");
+        let ciphertext = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
+        let decrypted = service
+            .decrypt(&ciphertext)
+            .expect("decryption should succeed");
 
         assert_eq!(plaintext, decrypted);
     }
@@ -262,8 +270,12 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "api-key-with-unicode-🔐🎵";
-        let ciphertext = service.encrypt(plaintext).expect("encryption should succeed");
-        let decrypted = service.decrypt(&ciphertext).expect("decryption should succeed");
+        let ciphertext = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
+        let decrypted = service
+            .decrypt(&ciphertext)
+            .expect("decryption should succeed");
 
         assert_eq!(plaintext, decrypted);
     }
@@ -273,8 +285,12 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "a".repeat(10000);
-        let ciphertext = service.encrypt(&plaintext).expect("encryption should succeed");
-        let decrypted = service.decrypt(&ciphertext).expect("decryption should succeed");
+        let ciphertext = service
+            .encrypt(&plaintext)
+            .expect("encryption should succeed");
+        let decrypted = service
+            .decrypt(&ciphertext)
+            .expect("decryption should succeed");
 
         assert_eq!(plaintext, decrypted);
     }
@@ -284,7 +300,9 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "test";
-        let ciphertext = service.encrypt(plaintext).expect("encryption should succeed");
+        let ciphertext = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
 
         // Ciphertext should be at least nonce (12) + plaintext (4) + auth_tag (16) = 32 bytes
         assert!(ciphertext.len() >= NONCE_SIZE + 4 + 16);
@@ -295,15 +313,23 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "same-plaintext";
-        let ciphertext1 = service.encrypt(plaintext).expect("encryption should succeed");
-        let ciphertext2 = service.encrypt(plaintext).expect("encryption should succeed");
+        let ciphertext1 = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
+        let ciphertext2 = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
 
         // Due to random nonces, ciphertexts should be different
         assert_ne!(ciphertext1, ciphertext2);
 
         // But both should decrypt to the same plaintext
-        let decrypted1 = service.decrypt(&ciphertext1).expect("decryption should succeed");
-        let decrypted2 = service.decrypt(&ciphertext2).expect("decryption should succeed");
+        let decrypted1 = service
+            .decrypt(&ciphertext1)
+            .expect("decryption should succeed");
+        let decrypted2 = service
+            .decrypt(&ciphertext2)
+            .expect("decryption should succeed");
         assert_eq!(decrypted1, plaintext);
         assert_eq!(decrypted2, plaintext);
     }
@@ -334,7 +360,9 @@ mod tests {
         let service = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "my-api-key";
-        let mut ciphertext = service.encrypt(plaintext).expect("encryption should succeed");
+        let mut ciphertext = service
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
 
         // Tamper with the ciphertext (after the nonce)
         if ciphertext.len() > NONCE_SIZE {
@@ -352,7 +380,9 @@ mod tests {
         let service2 = EncryptionService::new("secret-two-that-is-at-least-32-characters");
 
         let plaintext = "test-data";
-        let ciphertext = service1.encrypt(plaintext).expect("encryption should succeed");
+        let ciphertext = service1
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
 
         // Decryption with different key should fail
         let result = service2.decrypt(&ciphertext);
@@ -366,10 +396,14 @@ mod tests {
         let service2 = EncryptionService::new(TEST_JWT_SECRET);
 
         let plaintext = "test-data";
-        let ciphertext = service1.encrypt(plaintext).expect("encryption should succeed");
+        let ciphertext = service1
+            .encrypt(plaintext)
+            .expect("encryption should succeed");
 
         // Decryption with same key (different instance) should succeed
-        let decrypted = service2.decrypt(&ciphertext).expect("decryption should succeed");
+        let decrypted = service2
+            .decrypt(&ciphertext)
+            .expect("decryption should succeed");
         assert_eq!(plaintext, decrypted);
     }
 
@@ -386,10 +420,10 @@ mod tests {
     #[test]
     fn test_key_derivation_consistency() {
         // HKDF should always derive the same key from the same input
-        let key1 = EncryptionService::derive_key(TEST_JWT_SECRET)
-            .expect("key derivation should succeed");
-        let key2 = EncryptionService::derive_key(TEST_JWT_SECRET)
-            .expect("key derivation should succeed");
+        let key1 =
+            EncryptionService::derive_key(TEST_JWT_SECRET).expect("key derivation should succeed");
+        let key2 =
+            EncryptionService::derive_key(TEST_JWT_SECRET).expect("key derivation should succeed");
 
         assert_eq!(key1, key2);
     }

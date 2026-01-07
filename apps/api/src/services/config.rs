@@ -216,31 +216,43 @@ impl ConfigService {
 
         let defaults = OllamaConfig::default();
 
-        let url = cached.config.get("url")
+        let url = cached
+            .config
+            .get("url")
             .and_then(|v| v.as_str())
             .map(String::from)
             .unwrap_or(defaults.url);
 
-        let model = cached.config.get("model")
+        let model = cached
+            .config
+            .get("model")
             .and_then(|v| v.as_str())
             .map(String::from)
             .unwrap_or(defaults.model);
 
-        let embedding_model = cached.config.get("embedding_model")
+        let embedding_model = cached
+            .config
+            .get("embedding_model")
             .and_then(|v| v.as_str())
             .map(String::from)
             .unwrap_or(defaults.embedding_model);
 
-        let timeout_secs = cached.config.get("timeout_secs")
+        let timeout_secs = cached
+            .config
+            .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(defaults.timeout_secs);
 
-        let max_tokens = cached.config.get("max_tokens")
+        let max_tokens = cached
+            .config
+            .get("max_tokens")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
             .unwrap_or(defaults.max_tokens);
 
-        let temperature = cached.config.get("temperature")
+        let temperature = cached
+            .config
+            .get("temperature")
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
             .unwrap_or(defaults.temperature);
@@ -285,7 +297,9 @@ impl ConfigService {
         // }
         // Secrets: API key stored in encrypted_secrets
 
-        let url = cached.config.get("url")
+        let url = cached
+            .config
+            .get("url")
             .and_then(|v| v.as_str())
             .map(String::from)?;
 
@@ -296,11 +310,15 @@ impl ConfigService {
             return None;
         }
 
-        let sync_interval_secs = cached.config.get("sync_interval_secs")
+        let sync_interval_secs = cached
+            .config
+            .get("sync_interval_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(3600);
 
-        let timeout_secs = cached.config.get("timeout_secs")
+        let timeout_secs = cached
+            .config
+            .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
 
@@ -363,10 +381,12 @@ impl ConfigService {
         }
 
         // Fall back to environment variable with default
-        let path = std::env::var("MUSIC_LIBRARY_PATH")
-            .unwrap_or_else(|_| "/music".to_string());
+        let path = std::env::var("MUSIC_LIBRARY_PATH").unwrap_or_else(|_| "/music".to_string());
 
-        debug!("Using music library path from environment/default: {}", path);
+        debug!(
+            "Using music library path from environment/default: {}",
+            path
+        );
         PathBuf::from(path)
     }
 
@@ -377,7 +397,9 @@ impl ConfigService {
         //   "path": "/path/to/music"
         // }
 
-        let path = cached.config.get("path")
+        let path = cached
+            .config
+            .get("path")
             .and_then(|v| v.as_str())
             .map(String::from)?;
 

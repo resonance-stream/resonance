@@ -388,12 +388,11 @@ impl SystemSettingsRepository {
         label: Option<&str>,
     ) -> Result<UserLibraryPath, sqlx::Error> {
         // Check if user has any paths - if not, make this one primary
-        let existing_count: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM user_library_paths WHERE user_id = $1"#,
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let existing_count: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM user_library_paths WHERE user_id = $1"#)
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         let is_primary = existing_count == 0;
 
