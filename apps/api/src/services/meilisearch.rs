@@ -43,6 +43,7 @@ fn validate_limit(limit: Option<usize>) -> usize {
 
 /// Track document for Meilisearch indexing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TrackDocument {
     /// Unique identifier (primary key)
     pub id: String,
@@ -78,6 +79,7 @@ pub struct TrackDocument {
 
 impl TrackDocument {
     /// Create a new track document from database fields
+    #[allow(dead_code)]
     pub fn new(
         track_id: Uuid,
         title: String,
@@ -116,6 +118,7 @@ impl TrackDocument {
 
 /// Album document for Meilisearch indexing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct AlbumDocument {
     /// Unique identifier (primary key)
     pub id: String,
@@ -141,6 +144,7 @@ pub struct AlbumDocument {
 
 impl AlbumDocument {
     /// Create a new album document from database fields
+    #[allow(dead_code)]
     pub fn new(
         album_id: Uuid,
         title: String,
@@ -169,6 +173,7 @@ impl AlbumDocument {
 
 /// Artist document for Meilisearch indexing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ArtistDocument {
     /// Unique identifier (primary key)
     pub id: String,
@@ -188,6 +193,7 @@ pub struct ArtistDocument {
 
 impl ArtistDocument {
     /// Create a new artist document from database fields
+    #[allow(dead_code)]
     pub fn new(
         artist_id: Uuid,
         name: String,
@@ -322,10 +328,12 @@ pub struct UnifiedSearchResults {
 
 /// Meilisearch full-text search service
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct MeilisearchService {
     client: Client,
 }
 
+#[allow(dead_code)]
 impl MeilisearchService {
     /// Create a new Meilisearch service
     ///
@@ -775,6 +783,7 @@ impl MeilisearchService {
 
 /// Meilisearch health check status
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct MeilisearchHealthStatus {
     /// Whether Meilisearch is healthy
     pub healthy: bool,
@@ -794,6 +803,7 @@ pub struct MeilisearchHealthStatus {
 
 /// Index document counts
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct IndexStats {
     /// Number of indexed tracks
     pub tracks: usize,
