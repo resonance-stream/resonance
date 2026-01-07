@@ -61,7 +61,8 @@ export const SERVICE_METADATA: Record<ServiceType, ServiceMetadata> = {
     category: 'ai',
     configFields: [
       { key: 'url', label: 'URL', type: 'url', placeholder: 'http://localhost:11434', required: true },
-      { key: 'model', label: 'Model', type: 'text', placeholder: 'mistral', required: false },
+      { key: 'model', label: 'Chat Model', type: 'text', placeholder: 'mistral', required: false },
+      { key: 'embedding_model', label: 'Embedding Model', type: 'text', placeholder: 'nomic-embed-text', required: false },
     ],
     hasSecret: false,
   },

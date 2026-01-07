@@ -1,11 +1,12 @@
 /**
  * OllamaStep component for Resonance Setup Wizard
  *
- * Step to configure Ollama AI integration.
+ * Step to configure Ollama AI integration with URL input,
+ * model selector, embedding model selector, and connection testing.
  */
 
-import { useState, type FormEvent } from 'react'
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { useState, useEffect, useCallback, type FormEvent } from 'react'
+import { Loader2, CheckCircle2, XCircle, RefreshCw, ChevronDown } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { Input } from '../ui/Input'
@@ -18,12 +19,51 @@ interface OllamaStepProps {
   onBack: () => void
 }
 
+/** Model information returned from Ollama API */
+interface OllamaModel {
+  name: string
+  modified_at: string
+  size: number
+}
+
+/** Response from Ollama /api/tags endpoint */
+interface OllamaTagsResponse {
+  models: OllamaModel[]
+}
+
+/** Default Ollama configuration values */
+const DEFAULT_URL = 'http://localhost:11434'
+const DEFAULT_MODEL = 'mistral'
+const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text'
+
+/**
+ * Fetches available models from an Ollama instance
+ */
+async function fetchOllamaModels(url: string): Promise<string[]> {
+  const tagsUrl = `${url.replace(/\/$/, '')}/api/tags`
+  const response = await fetch(tagsUrl, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch models: ${response.status}`)
+  }
+
+  const data: OllamaTagsResponse = await response.json()
+  return data.models.map((m) => m.name)
+}
+
 /**
  * Ollama configuration step of the setup wizard.
  */
 export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
-  const [ollamaUrl, setOllamaUrl] = useState('http://ollama:11434')
-  const [model, setModel] = useState('mistral')
+  const [ollamaUrl, setOllamaUrl] = useState(DEFAULT_URL)
+  const [model, setModel] = useState(DEFAULT_MODEL)
+  const [embeddingModel, setEmbeddingModel] = useState(DEFAULT_EMBEDDING_MODEL)
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [isFetchingModels, setIsFetchingModels] = useState(false)
+  const [modelsFetchError, setModelsFetchError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{
     success: boolean
     message: string
@@ -33,6 +73,42 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
   const updateSetting = useUpdateSystemSetting()
   const testConnection = useTestServiceConnection()
 
+  /**
+   * Attempts to fetch models from the Ollama instance
+   */
+  const handleFetchModels = useCallback(async () => {
+    if (!ollamaUrl) return
+
+    setIsFetchingModels(true)
+    setModelsFetchError(null)
+
+    try {
+      const models = await fetchOllamaModels(ollamaUrl)
+      setAvailableModels(models)
+
+      // If current model isn't in the list and we have models, suggest first one
+      if (models.length > 0 && !models.includes(model)) {
+        // Keep current model but show it's not found
+      }
+    } catch (err) {
+      setModelsFetchError((err as Error)?.message || 'Failed to fetch models')
+      setAvailableModels([])
+    } finally {
+      setIsFetchingModels(false)
+    }
+  }, [ollamaUrl, model])
+
+  // Fetch models when URL changes (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (ollamaUrl) {
+        handleFetchModels()
+      }
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [ollamaUrl, handleFetchModels])
+
   async function handleTest(): Promise<void> {
     setTestResult(null)
 
@@ -41,7 +117,11 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
       await updateSetting.mutateAsync({
         service: 'OLLAMA',
         enabled: true,
-        config: JSON.stringify({ url: ollamaUrl, model }),
+        config: JSON.stringify({
+          url: ollamaUrl,
+          model,
+          embedding_model: embeddingModel,
+        }),
       })
 
       // Then test the connection
@@ -74,7 +154,11 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
       await updateSetting.mutateAsync({
         service: 'OLLAMA',
         enabled: true,
-        config: JSON.stringify({ url: ollamaUrl, model }),
+        config: JSON.stringify({
+          url: ollamaUrl,
+          model,
+          embedding_model: embeddingModel,
+        }),
       })
       onNext()
     } catch {
@@ -87,6 +171,10 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
   }
 
   const isLoading = updateSetting.isPending || testConnection.isPending
+
+  // Check if selected models are available
+  const modelNotAvailable = availableModels.length > 0 && !availableModels.includes(model)
+  const embeddingModelNotAvailable = availableModels.length > 0 && !availableModels.includes(embeddingModel)
 
   return (
     <Card variant="glass" padding="lg">
@@ -123,7 +211,7 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
               type="url"
               value={ollamaUrl}
               onChange={(e) => setOllamaUrl(e.target.value)}
-              placeholder="http://ollama:11434"
+              placeholder={DEFAULT_URL}
               disabled={isLoading}
             />
             <p className="mt-1 text-xs text-text-muted">
@@ -131,25 +219,129 @@ export function OllamaStep({ onNext, onBack }: OllamaStepProps): JSX.Element {
             </p>
           </div>
 
-          {/* Model */}
+          {/* Model Selector */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label
+                htmlFor="model"
+                className="block text-sm font-medium text-text-secondary"
+              >
+                Chat Model
+              </label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleFetchModels}
+                disabled={isFetchingModels || !ollamaUrl}
+                className="h-6 px-2 text-xs"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                <span className="ml-1">Refresh</span>
+              </Button>
+            </div>
+
+            {availableModels.length > 0 ? (
+              <div className="relative">
+                <select
+                  id="model"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full appearance-none rounded-lg bg-background-secondary border border-white/10 px-4 py-2.5 text-text-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                >
+                  {!availableModels.includes(model) && (
+                    <option value={model}>{model} (not installed)</option>
+                  )}
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
+              </div>
+            ) : (
+              <Input
+                id="model"
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={DEFAULT_MODEL}
+                disabled={isLoading}
+              />
+            )}
+
+            <p className="mt-1 text-xs text-text-muted">
+              The LLM model for chat and recommendations (e.g., mistral, llama2, codellama)
+            </p>
+
+            {modelNotAvailable && (
+              <p className="mt-1 text-xs text-warning">
+                Model "{model}" is not installed. Pull it with: ollama pull {model}
+              </p>
+            )}
+
+            {modelsFetchError && (
+              <p className="mt-1 text-xs text-text-muted">
+                Could not fetch models: {modelsFetchError}
+              </p>
+            )}
+          </div>
+
+          {/* Embedding Model Selector */}
           <div>
             <label
-              htmlFor="model"
+              htmlFor="embeddingModel"
               className="mb-2 block text-sm font-medium text-text-secondary"
             >
-              Model
+              Embedding Model
             </label>
-            <Input
-              id="model"
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="mistral"
-              disabled={isLoading}
-            />
+
+            {availableModels.length > 0 ? (
+              <div className="relative">
+                <select
+                  id="embeddingModel"
+                  value={embeddingModel}
+                  onChange={(e) => setEmbeddingModel(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full appearance-none rounded-lg bg-background-secondary border border-white/10 px-4 py-2.5 text-text-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                >
+                  {!availableModels.includes(embeddingModel) && (
+                    <option value={embeddingModel}>{embeddingModel} (not installed)</option>
+                  )}
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
+              </div>
+            ) : (
+              <Input
+                id="embeddingModel"
+                type="text"
+                value={embeddingModel}
+                onChange={(e) => setEmbeddingModel(e.target.value)}
+                placeholder={DEFAULT_EMBEDDING_MODEL}
+                disabled={isLoading}
+              />
+            )}
+
             <p className="mt-1 text-xs text-text-muted">
-              The Ollama model to use (e.g., mistral, llama2, codellama)
+              The embedding model for vector search (e.g., nomic-embed-text, mxbai-embed-large)
             </p>
+
+            {embeddingModelNotAvailable && (
+              <p className="mt-1 text-xs text-warning">
+                Model "{embeddingModel}" is not installed. Pull it with: ollama pull {embeddingModel}
+              </p>
+            )}
           </div>
 
           {/* Test Connection */}
