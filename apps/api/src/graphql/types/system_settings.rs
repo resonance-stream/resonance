@@ -3,11 +3,15 @@
 //! This module defines the GraphQL types for system configuration,
 //! setup status, and service health monitoring.
 
-use async_graphql::{Enum, SimpleObject};
+use async_graphql::{Enum, InputObject, SimpleObject, ID};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use uuid::Uuid;
 
-use crate::models::system_settings::{ServiceType as DbServiceType, SystemSetting as DbSystemSetting};
+use crate::models::system_settings::{
+    ServiceType as DbServiceType, SystemSetting as DbSystemSetting,
+    UserLibraryPath as DbUserLibraryPath,
+};
 
 /// External service type enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
@@ -93,6 +97,88 @@ impl From<DbSystemSetting> for SystemSettingInfo {
             connection_healthy: setting.connection_healthy,
             connection_error: setting.connection_error,
         }
+    }
+}
+
+// =============================================================================
+// Mutation Input Types
+// =============================================================================
+
+/// Input for creating the initial admin user during setup
+#[derive(Debug, Clone, InputObject)]
+pub struct CreateAdminInput {
+    /// Admin username (for display)
+    pub username: String,
+    /// Admin email address
+    pub email: String,
+    /// Admin password (minimum 8 characters)
+    pub password: String,
+}
+
+/// Input for updating a system setting
+#[derive(Debug, Clone, InputObject)]
+pub struct UpdateSystemSettingInput {
+    /// The service to update
+    pub service: ServiceType,
+    /// Whether to enable or disable the service
+    pub enabled: Option<bool>,
+    /// Non-sensitive configuration as JSON string
+    /// Example: {"url": "http://localhost:11434", "model": "mistral"}
+    pub config: Option<String>,
+    /// Secret value (API key, password, etc.) - will be encrypted before storage
+    pub secret: Option<String>,
+}
+
+// =============================================================================
+// Mutation Output Types
+// =============================================================================
+
+/// Result of testing a service connection
+#[derive(Debug, Clone, SimpleObject)]
+pub struct ConnectionTestResult {
+    /// Whether the connection test was successful
+    pub success: bool,
+    /// Response time in milliseconds (if successful)
+    pub response_time_ms: Option<i64>,
+    /// Version of the service (if available)
+    pub version: Option<String>,
+    /// Error message (if failed)
+    pub error: Option<String>,
+}
+
+/// User library path configuration
+#[derive(Debug, Clone, SimpleObject)]
+pub struct UserLibraryPath {
+    /// Unique identifier for this path
+    pub id: ID,
+    /// The file system path
+    pub path: String,
+    /// User-friendly label (e.g., "NAS Music", "Local Collection")
+    pub label: Option<String>,
+    /// Whether this is the user's primary library path
+    pub is_primary: bool,
+    /// When this path was added
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<DbUserLibraryPath> for UserLibraryPath {
+    fn from(path: DbUserLibraryPath) -> Self {
+        Self {
+            id: ID(path.id.to_string()),
+            path: path.path,
+            label: path.label,
+            is_primary: path.is_primary,
+            created_at: path.created_at,
+        }
+    }
+}
+
+/// Helper to parse a GraphQL ID into a UUID
+impl UserLibraryPath {
+    /// Parse an ID string into a UUID
+    pub fn parse_id(id: &ID) -> Result<Uuid, async_graphql::Error> {
+        id.parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid library path ID"))
     }
 }
 
