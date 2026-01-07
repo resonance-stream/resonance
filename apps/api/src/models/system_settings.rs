@@ -11,7 +11,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Service type enum matching PostgreSQL service_type enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "service_type", rename_all = "snake_case")]
 pub enum ServiceType {
     Ollama,
