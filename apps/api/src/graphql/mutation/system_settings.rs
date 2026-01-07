@@ -116,13 +116,16 @@ impl SystemSettingsMutation {
         })?;
 
         // Acquire advisory lock (released automatically when transaction ends)
-        sqlx::query(&format!("SELECT pg_advisory_xact_lock({})", INITIAL_ADMIN_LOCK_ID))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to acquire advisory lock");
-                async_graphql::Error::new("Failed to acquire lock")
-            })?;
+        sqlx::query(&format!(
+            "SELECT pg_advisory_xact_lock({})",
+            INITIAL_ADMIN_LOCK_ID
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to acquire advisory lock");
+            async_graphql::Error::new("Failed to acquire lock")
+        })?;
 
         // Check if any users already exist (within the lock)
         let user_count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM users"#)
