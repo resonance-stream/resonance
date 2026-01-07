@@ -553,16 +553,19 @@ impl OllamaClient {
 }
 
 /// A stream adapter that parses NDJSON (newline-delimited JSON) from a byte stream
+///
+/// Uses a byte buffer internally to handle multi-byte UTF-8 characters that may be
+/// split across TCP chunks. UTF-8 conversion only occurs when a complete line is ready.
 struct NdjsonStream<S> {
     inner: S,
-    buffer: String,
+    buffer: Vec<u8>,
 }
 
 impl<S> NdjsonStream<S> {
     fn new(stream: S) -> Self {
         Self {
             inner: stream,
-            buffer: String::new(),
+            buffer: Vec::new(),
         }
     }
 }
@@ -580,10 +583,29 @@ where
     ) -> std::task::Poll<Option<Self::Item>> {
         use std::task::Poll;
 
-        // First check if we have a complete line in the buffer
-        if let Some(newline_pos) = self.buffer.find('\n') {
-            let line = self.buffer[..newline_pos].trim().to_string();
-            self.buffer = self.buffer[newline_pos + 1..].to_string();
+        // First check if we have a complete line in the buffer (search for newline byte)
+        if let Some(newline_pos) = self.buffer.iter().position(|&b| b == b'\n') {
+            // Extract the line bytes and remove from buffer
+            let line_bytes: Vec<u8> = self.buffer.drain(..=newline_pos).collect();
+            // Remove the trailing newline
+            let line_bytes = &line_bytes[..line_bytes.len() - 1];
+
+            // Convert to UTF-8 only when we have a complete line
+            let line = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s.trim(),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        byte_count = line_bytes.len(),
+                        "Invalid UTF-8 in complete line, using lossy conversion"
+                    );
+                    // Use lossy conversion for truly invalid UTF-8 (not split chars)
+                    return Poll::Ready(Some(
+                        serde_json::from_slice::<ChatStreamChunk>(line_bytes)
+                            .map_err(OllamaError::from),
+                    ));
+                }
+            };
 
             if line.is_empty() {
                 // Empty line, poll again
@@ -592,41 +614,44 @@ where
             }
 
             return Poll::Ready(Some(
-                serde_json::from_str::<ChatStreamChunk>(&line).map_err(OllamaError::from),
+                serde_json::from_str::<ChatStreamChunk>(line).map_err(OllamaError::from),
             ));
         }
 
         // No complete line, try to read more data
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                // Append new data to buffer, using lossy conversion for invalid UTF-8
-                match std::str::from_utf8(&bytes) {
-                    Ok(text) => {
-                        self.buffer.push_str(text);
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            byte_count = bytes.len(),
-                            "Invalid UTF-8 in streaming response, using lossy conversion"
-                        );
-                        self.buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    }
-                }
+                // Append raw bytes to buffer - no UTF-8 conversion needed here
+                // This correctly handles multi-byte UTF-8 characters split across chunks
+                self.buffer.extend_from_slice(&bytes);
 
                 // Try to extract a line now
-                if let Some(newline_pos) = self.buffer.find('\n') {
-                    let line = self.buffer[..newline_pos].trim().to_string();
-                    self.buffer = self.buffer[newline_pos + 1..].to_string();
+                if let Some(newline_pos) = self.buffer.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = self.buffer.drain(..=newline_pos).collect();
+                    let line_bytes = &line_bytes[..line_bytes.len() - 1];
+
+                    let line = match std::str::from_utf8(line_bytes) {
+                        Ok(s) => s.trim(),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                byte_count = line_bytes.len(),
+                                "Invalid UTF-8 in complete line, using lossy conversion"
+                            );
+                            return Poll::Ready(Some(
+                                serde_json::from_slice::<ChatStreamChunk>(line_bytes)
+                                    .map_err(OllamaError::from),
+                            ));
+                        }
+                    };
 
                     if line.is_empty() {
-                        // Empty line, poll again
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }
 
                     return Poll::Ready(Some(
-                        serde_json::from_str::<ChatStreamChunk>(&line).map_err(OllamaError::from),
+                        serde_json::from_str::<ChatStreamChunk>(line).map_err(OllamaError::from),
                     ));
                 }
 
@@ -640,8 +665,28 @@ where
             Poll::Ready(None) => {
                 // Stream ended, check if there's remaining data in buffer
                 if !self.buffer.is_empty() {
-                    let line = std::mem::take(&mut self.buffer);
-                    let line = line.trim();
+                    let line_bytes = std::mem::take(&mut self.buffer);
+
+                    // Try to parse the remaining bytes
+                    let line = match std::str::from_utf8(&line_bytes) {
+                        Ok(s) => s.trim(),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                byte_count = line_bytes.len(),
+                                "Invalid UTF-8 in final buffer"
+                            );
+                            // Try to parse as bytes directly
+                            if !line_bytes.is_empty() {
+                                return Poll::Ready(Some(
+                                    serde_json::from_slice::<ChatStreamChunk>(&line_bytes)
+                                        .map_err(OllamaError::from),
+                                ));
+                            }
+                            return Poll::Ready(None);
+                        }
+                    };
+
                     if !line.is_empty() {
                         return Poll::Ready(Some(
                             serde_json::from_str::<ChatStreamChunk>(line)
@@ -1019,6 +1064,74 @@ not valid json
 
         let result = ndjson_stream.next().await.unwrap().unwrap();
         assert_eq!(result.message.content, "split");
+        assert!(result.done);
+    }
+
+    #[tokio::test]
+    async fn test_ndjson_stream_utf8_split_across_chunks() {
+        use tokio_stream::iter;
+
+        // Test that multi-byte UTF-8 characters split across TCP chunks are handled correctly
+        // '日' (U+65E5) is encoded as 3 bytes in UTF-8: E6 97 A5
+        // We'll split it between the second and third byte to simulate a TCP chunk boundary
+        // mid-character
+
+        // Build the JSON: {"message":{"role":"assistant","content":"日本語"},"done":true}
+        // The first chunk ends mid-character (after E6 97)
+        let mut chunk1_bytes = Vec::new();
+        chunk1_bytes.extend_from_slice(br#"{"message":{"role":"assistant","content":""#);
+        chunk1_bytes.extend_from_slice(&[0xE6, 0x97]); // First 2 bytes of '日' (incomplete)
+
+        // The second chunk starts with the remaining byte of '日' and continues
+        let mut chunk2_bytes = Vec::new();
+        chunk2_bytes.push(0xA5); // Last byte of '日'
+        chunk2_bytes.extend_from_slice("本語".as_bytes()); // '本' and '語'
+        chunk2_bytes.extend_from_slice(br#""},"done":true}"#);
+        chunk2_bytes.push(b'\n');
+
+        let chunk1 = Bytes::from(chunk1_bytes);
+        let chunk2 = Bytes::from(chunk2_bytes);
+
+        let byte_stream = iter(vec![
+            Ok::<_, std::io::Error>(chunk1),
+            Ok::<_, std::io::Error>(chunk2),
+        ]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let result = ndjson_stream.next().await.unwrap().unwrap();
+        // The content should be properly reconstructed to "日本語" (Japanese)
+        assert_eq!(result.message.content, "日本語");
+        assert!(result.done);
+    }
+
+    #[tokio::test]
+    async fn test_ndjson_stream_emoji_split_across_chunks() {
+        use tokio_stream::iter;
+
+        // Test 4-byte UTF-8 character (emoji) split across chunks
+        // '😀' (U+1F600) is encoded as 4 bytes: F0 9F 98 80
+        // Split after first 2 bytes
+
+        let mut chunk1_bytes = Vec::new();
+        chunk1_bytes.extend_from_slice(br#"{"message":{"role":"assistant","content":""#);
+        chunk1_bytes.extend_from_slice(&[0xF0, 0x9F]); // First 2 bytes of '😀'
+
+        let mut chunk2_bytes = Vec::new();
+        chunk2_bytes.extend_from_slice(&[0x98, 0x80]); // Last 2 bytes of '😀'
+        chunk2_bytes.extend_from_slice(br#""},"done":true}"#);
+        chunk2_bytes.push(b'\n');
+
+        let chunk1 = Bytes::from(chunk1_bytes);
+        let chunk2 = Bytes::from(chunk2_bytes);
+
+        let byte_stream = iter(vec![
+            Ok::<_, std::io::Error>(chunk1),
+            Ok::<_, std::io::Error>(chunk2),
+        ]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let result = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(result.message.content, "😀");
         assert!(result.done);
     }
 }
