@@ -435,7 +435,10 @@ impl MeilisearchService {
                 if e.error_code == ErrorCode::IndexAlreadyExists =>
             {
                 // Index already exists - this is fine, we'll just update settings
-                debug!(index = index_name, "Index already exists, skipping creation");
+                debug!(
+                    index = index_name,
+                    "Index already exists, skipping creation"
+                );
             }
             Err(e) => {
                 return Err(ApiError::Search(format!(
@@ -830,6 +833,259 @@ pub struct IndexStats {
     pub artists: usize,
 }
 
+// ==================== Filter Validation ====================
+
+/// Filter validation and sanitization for Meilisearch queries
+///
+/// This module provides input validation for user-provided filter strings to prevent
+/// injection attacks. All filters are validated against:
+/// - Maximum length limits
+/// - Allowed attribute whitelists (per index type)
+/// - Balanced quotes and parentheses
+/// - Forbidden control characters
+pub mod filter {
+    use thiserror::Error;
+
+    /// Maximum allowed filter length (prevents DoS via extremely long filters)
+    const MAX_FILTER_LENGTH: usize = 1024;
+
+    /// Allowed filterable attributes for track searches
+    pub const TRACK_ATTRIBUTES: &[&str] = &[
+        "artist_id",
+        "album_id",
+        "genres",
+        "moods",
+        "explicit",
+        "duration_ms",
+    ];
+
+    /// Allowed filterable attributes for album searches
+    pub const ALBUM_ATTRIBUTES: &[&str] = &["artist_id", "genres", "album_type", "release_year"];
+
+    /// Allowed filterable attributes for artist searches
+    pub const ARTIST_ATTRIBUTES: &[&str] = &["genres"];
+
+    /// Errors that can occur during filter validation
+    #[derive(Error, Debug, Clone, PartialEq, Eq)]
+    pub enum FilterValidationError {
+        /// Filter exceeds maximum allowed length
+        #[error("filter exceeds maximum length of {MAX_FILTER_LENGTH} characters")]
+        TooLong,
+
+        /// Filter has unbalanced quote characters
+        #[error("filter contains unbalanced quotes")]
+        UnbalancedQuotes,
+
+        /// Filter has unbalanced parentheses
+        #[error("filter contains unbalanced parentheses")]
+        UnbalancedParentheses,
+
+        /// Filter contains control characters or other invalid characters
+        #[error("filter contains invalid characters")]
+        InvalidCharacters,
+
+        /// Filter references an attribute not in the allowed whitelist
+        #[error("attribute '{0}' is not allowed for filtering")]
+        DisallowedAttribute(String),
+
+        /// Filter is empty or whitespace-only
+        #[error("filter cannot be empty")]
+        Empty,
+    }
+
+    /// Result type for filter validation operations
+    pub type FilterResult<T> = Result<T, FilterValidationError>;
+
+    /// Validate a filter string against allowed attributes
+    ///
+    /// This function performs comprehensive validation:
+    /// 1. Length check (max 1024 chars)
+    /// 2. Control character detection
+    /// 3. Balanced quotes (single and double)
+    /// 4. Balanced parentheses
+    /// 5. Attribute whitelist enforcement
+    ///
+    /// # Arguments
+    /// * `filter` - The user-provided filter string
+    /// * `allowed_attributes` - List of attribute names allowed for this index type
+    ///
+    /// # Returns
+    /// * `Ok(filter)` - The filter is valid and can be passed to Meilisearch
+    /// * `Err(FilterValidationError)` - The filter failed validation
+    ///
+    /// # Examples
+    /// ```ignore
+    /// use crate::services::meilisearch::filter::{validate, TRACK_ATTRIBUTES};
+    ///
+    /// // Valid filter
+    /// assert!(validate("genres = 'Rock'", TRACK_ATTRIBUTES).is_ok());
+    ///
+    /// // Invalid - disallowed attribute
+    /// assert!(validate("secret_field = 'value'", TRACK_ATTRIBUTES).is_err());
+    /// ```
+    pub fn validate<'a>(filter: &'a str, allowed_attributes: &[&str]) -> FilterResult<&'a str> {
+        // Check for empty filter
+        let trimmed = filter.trim();
+        if trimmed.is_empty() {
+            return Err(FilterValidationError::Empty);
+        }
+
+        // Check length
+        if filter.len() > MAX_FILTER_LENGTH {
+            return Err(FilterValidationError::TooLong);
+        }
+
+        // Check for control characters (except allowed whitespace)
+        if filter
+            .chars()
+            .any(|c| c.is_control() && c != ' ' && c != '\t' && c != '\n' && c != '\r')
+        {
+            return Err(FilterValidationError::InvalidCharacters);
+        }
+
+        // Check balanced quotes
+        if !check_balanced_quotes(filter) {
+            return Err(FilterValidationError::UnbalancedQuotes);
+        }
+
+        // Check balanced parentheses
+        if !check_balanced_parens(filter) {
+            return Err(FilterValidationError::UnbalancedParentheses);
+        }
+
+        // Extract and validate attribute references
+        validate_attributes(filter, allowed_attributes)?;
+
+        Ok(filter)
+    }
+
+    /// Check that quotes are balanced (both single and double)
+    fn check_balanced_quotes(s: &str) -> bool {
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut prev_char = '\0';
+
+        for c in s.chars() {
+            match c {
+                '\'' if !in_double && prev_char != '\\' => in_single = !in_single,
+                '"' if !in_single && prev_char != '\\' => in_double = !in_double,
+                _ => {}
+            }
+            prev_char = c;
+        }
+
+        !in_single && !in_double
+    }
+
+    /// Check that parentheses are balanced
+    fn check_balanced_parens(s: &str) -> bool {
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut depth = 0i32;
+        let mut prev_char = '\0';
+
+        for c in s.chars() {
+            match c {
+                '\'' if !in_double_quote && prev_char != '\\' => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote && prev_char != '\\' => in_double_quote = !in_double_quote,
+                '(' if !in_single_quote && !in_double_quote => depth += 1,
+                ')' if !in_single_quote && !in_double_quote => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+            prev_char = c;
+        }
+
+        depth == 0
+    }
+
+    /// Extract attribute names from filter and validate against whitelist
+    fn validate_attributes(filter: &str, allowed: &[&str]) -> FilterResult<()> {
+        // Simple tokenizer to extract potential attribute names
+        // Attributes appear before comparison operators: =, !=, <, >, <=, >=, TO, EXISTS, IN, NOT
+        let filter_lower = filter.to_lowercase();
+
+        // Split on operators and logical keywords to find attribute positions
+        let operators = ["!=", "<=", ">=", "=", "<", ">"];
+        let keywords = [" to ", " exists", " in ", " not "];
+
+        let mut remaining = filter_lower.as_str();
+        let mut found_attrs: Vec<&str> = Vec::new();
+
+        // Find all potential attribute references
+        while !remaining.is_empty() {
+            // Find the next operator or keyword
+            let next_op = operators
+                .iter()
+                .filter_map(|op| remaining.find(op).map(|pos| (pos, op.len())))
+                .min_by_key(|(pos, _)| *pos);
+
+            let next_kw = keywords
+                .iter()
+                .filter_map(|kw| remaining.find(kw).map(|pos| (pos, kw.len())))
+                .min_by_key(|(pos, _)| *pos);
+
+            let next_split = match (next_op, next_kw) {
+                (Some(op), Some(kw)) => Some(if op.0 <= kw.0 { op } else { kw }),
+                (Some(op), None) => Some(op),
+                (None, Some(kw)) => Some(kw),
+                (None, None) => None,
+            };
+
+            if let Some((pos, len)) = next_split {
+                // Extract potential attribute name (word before the operator)
+                let before = &remaining[..pos];
+                if let Some(attr) = extract_last_word(before) {
+                    found_attrs.push(attr);
+                }
+                remaining = &remaining[pos + len..];
+            } else {
+                break;
+            }
+        }
+
+        // Validate all found attributes
+        for attr in found_attrs {
+            // Skip Meilisearch operators/keywords
+            if ["and", "or", "not"].contains(&attr) {
+                continue;
+            }
+
+            // Check against whitelist (case-insensitive match)
+            if !allowed.iter().any(|a| a.eq_ignore_ascii_case(attr)) {
+                return Err(FilterValidationError::DisallowedAttribute(attr.to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract the last word (identifier) from a string
+    fn extract_last_word(s: &str) -> Option<&str> {
+        let trimmed = s.trim_end();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        // Find word boundary (letters, numbers, underscore)
+        let start = trimmed
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let word = &trimmed[start..];
+        if word.is_empty() || word.chars().next()?.is_numeric() {
+            None
+        } else {
+            Some(word)
+        }
+    }
+}
+
 // Use chrono's Datelike trait for year extraction
 use chrono::Datelike;
 
@@ -952,5 +1208,200 @@ mod tests {
         assert_eq!(hit.track_id, doc.track_id);
         assert_eq!(hit.title, doc.title);
         assert_eq!(hit.artist_name, doc.artist_name);
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::filter::*;
+
+    #[test]
+    fn test_valid_filter_simple() {
+        let result = validate("genres = 'Rock'", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_filter_with_and() {
+        let result = validate("genres = 'Rock' AND explicit = true", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_filter_with_or() {
+        let result = validate("genres = 'Rock' OR genres = 'Pop'", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_filter_comparison() {
+        let result = validate("duration_ms > 180000", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_filter_range() {
+        let result = validate("duration_ms 60000 TO 300000", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_album_filter() {
+        let result = validate("release_year >= 2020", ALBUM_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_artist_filter() {
+        let result = validate("genres = 'Jazz'", ARTIST_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_disallowed_attribute_track() {
+        let result = validate("secret_field = 'value'", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::DisallowedAttribute(_))
+        ));
+    }
+
+    #[test]
+    fn test_disallowed_attribute_album() {
+        let result = validate("track_count = 10", ALBUM_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::DisallowedAttribute(_))
+        ));
+    }
+
+    #[test]
+    fn test_disallowed_attribute_artist() {
+        // artist_id is not allowed for artist searches
+        let result = validate("artist_id = 'uuid'", ARTIST_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::DisallowedAttribute(_))
+        ));
+    }
+
+    #[test]
+    fn test_empty_filter() {
+        let result = validate("", TRACK_ATTRIBUTES);
+        assert!(matches!(result, Err(FilterValidationError::Empty)));
+    }
+
+    #[test]
+    fn test_whitespace_only_filter() {
+        let result = validate("   ", TRACK_ATTRIBUTES);
+        assert!(matches!(result, Err(FilterValidationError::Empty)));
+    }
+
+    #[test]
+    fn test_unbalanced_single_quotes() {
+        let result = validate("genres = 'Rock", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::UnbalancedQuotes)
+        ));
+    }
+
+    #[test]
+    fn test_unbalanced_double_quotes() {
+        let result = validate("genres = \"Rock", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::UnbalancedQuotes)
+        ));
+    }
+
+    #[test]
+    fn test_unbalanced_parentheses_open() {
+        let result = validate("(genres = 'Rock'", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::UnbalancedParentheses)
+        ));
+    }
+
+    #[test]
+    fn test_unbalanced_parentheses_close() {
+        let result = validate("genres = 'Rock')", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::UnbalancedParentheses)
+        ));
+    }
+
+    #[test]
+    fn test_balanced_parentheses() {
+        let result = validate("(genres = 'Rock' OR genres = 'Pop')", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_nested_parentheses() {
+        let result = validate(
+            "((genres = 'Rock') AND (explicit = true))",
+            TRACK_ATTRIBUTES,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_control_characters() {
+        let result = validate("genres = 'Rock\x00'", TRACK_ATTRIBUTES);
+        assert!(matches!(
+            result,
+            Err(FilterValidationError::InvalidCharacters)
+        ));
+    }
+
+    #[test]
+    fn test_too_long_filter() {
+        let long_filter = "a".repeat(2000);
+        let result = validate(&long_filter, TRACK_ATTRIBUTES);
+        assert!(matches!(result, Err(FilterValidationError::TooLong)));
+    }
+
+    #[test]
+    fn test_case_insensitive_operators() {
+        // AND/OR should be case-insensitive in Meilisearch
+        let result = validate("genres = 'Rock' and explicit = true", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_case_insensitive_attributes() {
+        // Attribute names are case-insensitive
+        let result = validate("Genres = 'Rock'", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_filter_error_messages() {
+        assert_eq!(
+            FilterValidationError::TooLong.to_string(),
+            "filter exceeds maximum length of 1024 characters"
+        );
+        assert_eq!(
+            FilterValidationError::UnbalancedQuotes.to_string(),
+            "filter contains unbalanced quotes"
+        );
+        assert_eq!(
+            FilterValidationError::Empty.to_string(),
+            "filter cannot be empty"
+        );
+        assert_eq!(
+            FilterValidationError::DisallowedAttribute("foo".to_string()).to_string(),
+            "attribute 'foo' is not allowed for filtering"
+        );
+    }
+
+    #[test]
+    fn test_quotes_in_parentheses() {
+        // Parentheses inside quotes should not affect balance
+        let result = validate("genres = '(Rock)'", TRACK_ATTRIBUTES);
+        assert!(result.is_ok());
     }
 }

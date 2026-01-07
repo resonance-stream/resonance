@@ -17,9 +17,30 @@ use crate::graphql::types::{
     MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack, SimilarityMethod,
 };
 use crate::services::lastfm::LastfmService;
+use crate::services::meilisearch::filter::{
+    self, FilterValidationError, ALBUM_ATTRIBUTES, ARTIST_ATTRIBUTES, TRACK_ATTRIBUTES,
+};
 use crate::services::meilisearch::MeilisearchService;
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
+
+/// Validate a filter string against allowed attributes, converting to GraphQL error if invalid
+fn validate_filter<'a>(
+    filter: Option<&'a str>,
+    allowed_attributes: &[&str],
+) -> Result<Option<&'a str>> {
+    match filter {
+        None => Ok(None),
+        Some(f) => match filter::validate(f, allowed_attributes) {
+            Ok(validated) => Ok(Some(validated)),
+            Err(FilterValidationError::Empty) => Ok(None), // Treat empty as no filter
+            Err(e) => {
+                warn!(error = %e, filter = f, "Invalid search filter");
+                Err(async_graphql::Error::new(format!("Invalid filter: {}", e)))
+            }
+        },
+    }
+}
 
 /// Search and discovery queries using AI and external services
 #[derive(Default)]
@@ -310,15 +331,19 @@ impl SearchQuery {
 
     /// Search tracks by keyword using full-text search.
     /// Searches across title, artist name, album name, genres, and moods.
+    ///
+    /// The filter parameter supports Meilisearch filter syntax with allowed attributes:
+    /// `artist_id`, `album_id`, `genres`, `moods`, `explicit`, `duration_ms`
     #[instrument(skip(self, ctx))]
     async fn search_tracks(
         &self,
         ctx: &Context<'_>,
         #[graphql(desc = "Search query")] query: String,
         #[graphql(default = 20, desc = "Maximum results (default: 20, max: 50)")] limit: i32,
-        #[graphql(desc = "Optional Meilisearch filter (e.g., 'genres = Rock')")] filter: Option<
-            String,
-        >,
+        #[graphql(
+            desc = "Optional Meilisearch filter (e.g., \"genres = 'Rock'\"). Allowed attributes: artist_id, album_id, genres, moods, explicit, duration_ms"
+        )]
+        filter: Option<String>,
     ) -> Result<Vec<FullTextTrackHit>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -327,12 +352,15 @@ impl SearchQuery {
 
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT);
 
+        // Validate filter before passing to Meilisearch
+        let validated_filter = validate_filter(filter.as_deref(), TRACK_ATTRIBUTES)?;
+
         let meilisearch = ctx.data::<MeilisearchService>().map_err(|_| {
             async_graphql::Error::new("Search is not available: Meilisearch not configured")
         })?;
 
         let results = meilisearch
-            .search_tracks(trimmed, Some(limit as usize), filter.as_deref())
+            .search_tracks(trimmed, Some(limit as usize), validated_filter)
             .await?;
 
         Ok(results.into_iter().map(FullTextTrackHit::from).collect())
@@ -340,13 +368,18 @@ impl SearchQuery {
 
     /// Search albums by keyword using full-text search.
     /// Searches across title, artist name, and genres.
+    ///
+    /// The filter parameter supports Meilisearch filter syntax with allowed attributes:
+    /// `artist_id`, `genres`, `album_type`, `release_year`
     #[instrument(skip(self, ctx))]
     async fn search_albums(
         &self,
         ctx: &Context<'_>,
         #[graphql(desc = "Search query")] query: String,
         #[graphql(default = 20, desc = "Maximum results (default: 20, max: 50)")] limit: i32,
-        #[graphql(desc = "Optional Meilisearch filter (e.g., 'release_year > 2020')")]
+        #[graphql(
+            desc = "Optional Meilisearch filter (e.g., 'release_year > 2020'). Allowed attributes: artist_id, genres, album_type, release_year"
+        )]
         filter: Option<String>,
     ) -> Result<Vec<FullTextAlbumHit>> {
         let trimmed = query.trim();
@@ -356,12 +389,15 @@ impl SearchQuery {
 
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT);
 
+        // Validate filter before passing to Meilisearch
+        let validated_filter = validate_filter(filter.as_deref(), ALBUM_ATTRIBUTES)?;
+
         let meilisearch = ctx.data::<MeilisearchService>().map_err(|_| {
             async_graphql::Error::new("Search is not available: Meilisearch not configured")
         })?;
 
         let results = meilisearch
-            .search_albums(trimmed, Some(limit as usize), filter.as_deref())
+            .search_albums(trimmed, Some(limit as usize), validated_filter)
             .await?;
 
         Ok(results.into_iter().map(FullTextAlbumHit::from).collect())
@@ -369,15 +405,19 @@ impl SearchQuery {
 
     /// Search artists by keyword using full-text search.
     /// Searches across name, sort name, genres, and biography.
+    ///
+    /// The filter parameter supports Meilisearch filter syntax with allowed attributes:
+    /// `genres`
     #[instrument(skip(self, ctx))]
     async fn search_artists(
         &self,
         ctx: &Context<'_>,
         #[graphql(desc = "Search query")] query: String,
         #[graphql(default = 20, desc = "Maximum results (default: 20, max: 50)")] limit: i32,
-        #[graphql(desc = "Optional Meilisearch filter (e.g., 'genres = Jazz')")] filter: Option<
-            String,
-        >,
+        #[graphql(
+            desc = "Optional Meilisearch filter (e.g., \"genres = 'Jazz'\"). Allowed attributes: genres"
+        )]
+        filter: Option<String>,
     ) -> Result<Vec<FullTextArtistHit>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -386,12 +426,15 @@ impl SearchQuery {
 
         let limit = clamp_limit(limit, MAX_SEARCH_LIMIT);
 
+        // Validate filter before passing to Meilisearch
+        let validated_filter = validate_filter(filter.as_deref(), ARTIST_ATTRIBUTES)?;
+
         let meilisearch = ctx.data::<MeilisearchService>().map_err(|_| {
             async_graphql::Error::new("Search is not available: Meilisearch not configured")
         })?;
 
         let results = meilisearch
-            .search_artists(trimmed, Some(limit as usize), filter.as_deref())
+            .search_artists(trimmed, Some(limit as usize), validated_filter)
             .await?;
 
         Ok(results.into_iter().map(FullTextArtistHit::from).collect())
