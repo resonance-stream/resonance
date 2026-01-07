@@ -275,15 +275,17 @@ impl StreamEvent {
     pub fn from_error(err: &ChatError) -> Self {
         let (message, code) = match err {
             ChatError::Database(e) => (e.to_string(), StreamErrorCode::Database),
-            ChatError::ConversationNotFound(id) => {
-                (format!("Conversation not found: {}", id), StreamErrorCode::ConversationNotFound)
-            }
+            ChatError::ConversationNotFound(id) => (
+                format!("Conversation not found: {}", id),
+                StreamErrorCode::ConversationNotFound,
+            ),
             ChatError::OllamaRequest(e) => (e.to_string(), StreamErrorCode::OllamaRequest),
             ChatError::OllamaResponse(msg) => (msg.clone(), StreamErrorCode::OllamaResponse),
             ChatError::Serialization(e) => (e.to_string(), StreamErrorCode::Serialization),
-            ChatError::ToolExecution { tool_name, message } => {
-                (format!("Tool '{}' failed: {}", tool_name, message), StreamErrorCode::ToolExecution)
-            }
+            ChatError::ToolExecution { tool_name, message } => (
+                format!("Tool '{}' failed: {}", tool_name, message),
+                StreamErrorCode::ToolExecution,
+            ),
             ChatError::InvalidInput(msg) => (msg.clone(), StreamErrorCode::InvalidInput),
             ChatError::Timeout => ("Operation timed out".to_string(), StreamErrorCode::Timeout),
         };

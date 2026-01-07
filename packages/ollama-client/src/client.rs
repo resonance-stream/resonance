@@ -644,7 +644,8 @@ where
                     let line = line.trim();
                     if !line.is_empty() {
                         return Poll::Ready(Some(
-                            serde_json::from_str::<ChatStreamChunk>(line).map_err(OllamaError::from),
+                            serde_json::from_str::<ChatStreamChunk>(line)
+                                .map_err(OllamaError::from),
                         ));
                     }
                 }
@@ -949,8 +950,7 @@ not valid json
     async fn test_chat_stream_with_options() {
         let server = MockServer::start().await;
 
-        let streaming_response =
-            r#"{"message":{"role":"assistant","content":"response"},"done":true}
+        let streaming_response = r#"{"message":{"role":"assistant","content":"response"},"done":true}
 "#;
 
         Mock::given(method("POST"))
@@ -1006,8 +1006,10 @@ not valid json
 
         // Simulate a JSON line split across multiple chunks
         let chunk1 = Bytes::from(r#"{"message":{"role":"assistant","#);
-        let chunk2 = Bytes::from(r#""content":"split"},"done":true}
-"#);
+        let chunk2 = Bytes::from(
+            r#""content":"split"},"done":true}
+"#,
+        );
 
         let byte_stream = iter(vec![
             Ok::<_, std::io::Error>(chunk1),

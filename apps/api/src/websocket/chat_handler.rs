@@ -495,7 +495,11 @@ pub fn spawn_chat_handler(
     similarity_service: SimilarityService,
     ollama_client: Option<OllamaClient>,
     connection_manager: ConnectionManager,
-) -> (mpsc::Sender<ChatSendPayload>, CancellationToken, JoinHandle<()>) {
+) -> (
+    mpsc::Sender<ChatSendPayload>,
+    CancellationToken,
+    JoinHandle<()>,
+) {
     let (tx, mut rx) = mpsc::channel::<ChatSendPayload>(CHAT_CHANNEL_CAPACITY);
     let cancellation_token = CancellationToken::new();
 
