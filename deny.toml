@@ -23,7 +23,12 @@ notice = "warn"
 
 # List of advisory IDs to ignore (use sparingly and document why)
 ignore = [
-    # Example: "RUSTSEC-2020-0001", # reason for ignoring
+    # lru 0.12.5 has soundness issue with IterMut. async-graphql 7.0.x depends on it.
+    # Upgrading async-graphql to 7.1.0 requires axum 0.8 (major breaking change).
+    # The vulnerability is in IterMut which is not directly exposed in our usage.
+    # TODO: Update async-graphql and axum together when capacity allows.
+    # Track: https://github.com/sunli829/async-graphql/issues
+    "RUSTSEC-2026-0002",
 ]
 
 [licenses]
