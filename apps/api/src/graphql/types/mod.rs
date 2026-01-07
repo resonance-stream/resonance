@@ -13,6 +13,7 @@ pub mod chat;
 mod library;
 mod playlist;
 mod search;
+mod system_settings;
 mod track;
 mod user;
 
@@ -29,5 +30,6 @@ pub use search::{
     ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack,
     SimilarityMethod, SimilarityType,
 };
+pub use system_settings::{ServiceType, SetupStatus, SystemSettingInfo};
 pub use track::{AudioFeatures, Track};
 pub use user::{AuthPayload, RefreshPayload, User, UserPreferencesType, UserRole};
