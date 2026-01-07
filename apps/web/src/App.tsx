@@ -16,6 +16,7 @@ const Album = lazy(() => import('./pages/Album'))
 const Artist = lazy(() => import('./pages/Artist'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Admin = lazy(() => import('./pages/Admin'))
+const SystemSettings = lazy(() => import('./pages/admin/SystemSettings'))
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
 const Setup = lazy(() => import('./pages/Setup'))
@@ -132,6 +133,16 @@ function App() {
                 <ProtectedRoute requireAdmin>
                   <MainLayout>
                     <Admin />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/system-settings"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <MainLayout>
+                    <SystemSettings />
                   </MainLayout>
                 </ProtectedRoute>
               }
