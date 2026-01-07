@@ -47,8 +47,8 @@ export function LastfmStep({ onNext, onBack }: LastfmStepProps): JSX.Element {
       await updateSetting.mutateAsync({
         service: 'LASTFM',
         enabled: true,
-        config: JSON.stringify({ apiKey }),
-        secret: sharedSecret || undefined,
+        config: JSON.stringify({}),
+        secret: JSON.stringify({ apiKey, sharedSecret: sharedSecret || undefined }),
       })
 
       const result = await testConnection.mutateAsync('LASTFM')
@@ -83,8 +83,8 @@ export function LastfmStep({ onNext, onBack }: LastfmStepProps): JSX.Element {
       await updateSetting.mutateAsync({
         service: 'LASTFM',
         enabled: true,
-        config: JSON.stringify({ apiKey }),
-        secret: sharedSecret || undefined,
+        config: JSON.stringify({}),
+        secret: JSON.stringify({ apiKey, sharedSecret: sharedSecret || undefined }),
       })
       onNext()
     } catch {
