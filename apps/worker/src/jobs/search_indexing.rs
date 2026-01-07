@@ -459,7 +459,7 @@ async fn index_tracks_by_id(client: &Client, db: &PgPool, track_ids: &[Uuid]) ->
     .bind(track_ids)
     .fetch_all(db)
     .await
-    .map_err(|e| WorkerError::Database(e))?;
+    .map_err(WorkerError::Database)?;
 
     let documents: Vec<TrackDocument> = rows.into_iter().map(track_row_to_document).collect();
 
@@ -592,7 +592,7 @@ async fn index_albums_by_id(client: &Client, db: &PgPool, album_ids: &[Uuid]) ->
     .bind(album_ids)
     .fetch_all(db)
     .await
-    .map_err(|e| WorkerError::Database(e))?;
+    .map_err(WorkerError::Database)?;
 
     let documents: Vec<AlbumDocument> = rows.into_iter().map(album_row_to_document).collect();
 
@@ -718,7 +718,7 @@ async fn index_artists_by_id(
     .bind(artist_ids)
     .fetch_all(db)
     .await
-    .map_err(|e| WorkerError::Database(e))?;
+    .map_err(WorkerError::Database)?;
 
     let documents: Vec<ArtistDocument> = rows.into_iter().map(artist_row_to_document).collect();
 
@@ -791,15 +791,22 @@ mod tests {
     #[test]
     fn test_batch_size_is_reasonable() {
         // Batch size should be positive and reasonable for large libraries
-        assert!(BATCH_SIZE > 0, "Batch size must be positive");
-        assert!(
-            BATCH_SIZE >= 100,
-            "Batch size should be at least 100 to avoid too many round trips"
-        );
-        assert!(
-            BATCH_SIZE <= 10000,
-            "Batch size should not be too large to avoid memory issues"
-        );
+        // These are compile-time checks using const blocks
+        const {
+            assert!(BATCH_SIZE > 0, "Batch size must be positive");
+        }
+        const {
+            assert!(
+                BATCH_SIZE >= 100,
+                "Batch size should be at least 100 to avoid too many round trips"
+            );
+        }
+        const {
+            assert!(
+                BATCH_SIZE <= 10000,
+                "Batch size should not be too large to avoid memory issues"
+            );
+        }
     }
 
     #[test]
