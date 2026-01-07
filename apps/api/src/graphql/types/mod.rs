@@ -27,12 +27,14 @@ pub use playlist::{
     SortOrder,
 };
 pub use search::{
-    ArtistTag, MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack,
-    SimilarityMethod, SimilarityType,
+    ArtistTag, FullTextAlbumHit, FullTextArtistHit, FullTextSearchResult, FullTextTrackHit,
+    MoodTag, ScoredTrack, SemanticSearchResult, SimilarArtist, SimilarTrack, SimilarityMethod,
+    SimilarityType,
 };
 pub use system_settings::{
-    ConnectionTestResult, CreateAdminInput, ServiceType, SetupStatus, SystemSettingInfo,
-    UpdateSystemSettingInput, UserLibraryPath,
+    ConfigSource, ConnectionTestResult, CreateAdminInput, RuntimeConfigOverview,
+    RuntimeConfigStatus, ServiceType, SetupStatus, SystemSettingInfo, UpdateSystemSettingInput,
+    UserLibraryPath,
 };
 pub use track::{AudioFeatures, Track};
 pub use user::{AuthPayload, RefreshPayload, User, UserPreferencesType, UserRole};

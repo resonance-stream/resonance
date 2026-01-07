@@ -267,7 +267,8 @@ async fn main() -> anyhow::Result<()> {
     // Create ConfigService for DB-driven configuration with cache
     // Uses HKDF to derive encryption key from JWT secret for storing API keys securely
     let encryption_service = EncryptionService::new(&config.jwt_secret);
-    let config_service = ConfigService::new(system_settings_repo.clone(), encryption_service);
+    let config_service =
+        ConfigService::new(system_settings_repo.clone(), encryption_service.clone());
     tracing::info!("ConfigService initialized (DB -> Env -> Defaults priority)");
 
     // Create StreamingState for audio streaming
@@ -384,6 +385,8 @@ async fn main() -> anyhow::Result<()> {
             let mut builder = SchemaBuilder::new()
                 .pool(pool.clone())
                 .auth_service(auth_service.clone())
+                .encryption_service(encryption_service.clone())
+                .config_service(config_service.clone())
                 .rate_limiter(graphql_rate_limiter)
                 .search_service(search_service.clone())
                 .similarity_service(similarity_service.clone());
@@ -416,6 +419,8 @@ async fn main() -> anyhow::Result<()> {
             let mut builder = SchemaBuilder::new()
                 .pool(pool.clone())
                 .auth_service(auth_service.clone())
+                .encryption_service(encryption_service.clone())
+                .config_service(config_service.clone())
                 .search_service(search_service.clone())
                 .similarity_service(similarity_service.clone());
 

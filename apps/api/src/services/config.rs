@@ -7,9 +7,6 @@
 //!
 //! Configs are cached to reduce database queries, with automatic expiration.
 
-// TODO: Remove this once ConfigService is integrated with setup wizard and admin settings
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
