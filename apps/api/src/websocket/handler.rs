@@ -195,7 +195,7 @@ async fn handle_socket(
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Spawn chat handler for this connection
-    let (chat_tx, chat_cancel_token, chat_handle) = spawn_chat_handler(
+    let (chat_tx, chat_cancel_token, chat_handle) = match spawn_chat_handler(
         user_id,
         device_id.clone(),
         pool.clone(),
@@ -204,7 +204,18 @@ async fn handle_socket(
         similarity_service,
         ollama_client,
         connection_manager.clone(),
-    );
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!(
+                user_id = %user_id,
+                device_id = %device_id,
+                error = %e,
+                "Failed to spawn chat handler, closing connection"
+            );
+            return;
+        }
+    };
 
     // Create sync handler for processing messages with database persistence
     let sync_handler = SyncHandler::with_pool(

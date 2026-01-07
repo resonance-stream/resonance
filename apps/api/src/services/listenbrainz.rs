@@ -2,12 +2,13 @@
 //!
 //! Submits listening history to ListenBrainz when users play tracks.
 //! Respects the 50% / 4-minute scrobble rule and user preferences.
-
-// Service will be wired to GraphQL in Phase 2: Integrations mutations
-#![allow(dead_code)]
+//!
+//! Tokens are stored encrypted in the database using AES-256-GCM and are
+//! decrypted on-the-fly when needed for API calls.
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::{DateTime, Utc};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,7 @@ use uuid::Uuid;
 use crate::error::{ApiError, ApiResult};
 use crate::models::user::UserPreferences;
 use crate::repositories::UserRepository;
+use crate::services::encryption::EncryptionService;
 
 /// ListenBrainz API base URL
 const LISTENBRAINZ_API_URL: &str = "https://api.listenbrainz.org";
@@ -43,6 +45,8 @@ const RETRY_BASE_DELAY_MS: u64 = 500;
 pub struct ListenBrainzService {
     client: Client,
     user_repo: UserRepository,
+    /// Optional encryption service for decrypting stored tokens
+    encryption_service: Option<EncryptionService>,
 }
 
 /// Track metadata for scrobbling
@@ -122,7 +126,11 @@ impl ListenBrainzService {
             .map_err(|e| ApiError::Configuration(format!("HTTP client creation failed: {}", e)))?;
 
         let user_repo = UserRepository::new(db);
-        Ok(Self { client, user_repo })
+        Ok(Self {
+            client,
+            user_repo,
+            encryption_service: None,
+        })
     }
 
     /// Create a new ListenBrainz service with an existing UserRepository
@@ -136,7 +144,63 @@ impl ListenBrainzService {
             .build()
             .map_err(|e| ApiError::Configuration(format!("HTTP client creation failed: {}", e)))?;
 
-        Ok(Self { client, user_repo })
+        Ok(Self {
+            client,
+            user_repo,
+            encryption_service: None,
+        })
+    }
+
+    /// Create a new ListenBrainz service with encryption support
+    ///
+    /// # Arguments
+    /// * `user_repo` - The user repository for database access
+    /// * `encryption_service` - The encryption service for decrypting stored tokens
+    ///
+    /// # Errors
+    /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    pub fn with_encryption(
+        user_repo: UserRepository,
+        encryption_service: EncryptionService,
+    ) -> ApiResult<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .user_agent("Resonance/1.0")
+            .build()
+            .map_err(|e| ApiError::Configuration(format!("HTTP client creation failed: {}", e)))?;
+
+        Ok(Self {
+            client,
+            user_repo,
+            encryption_service: Some(encryption_service),
+        })
+    }
+
+    /// Decrypt a stored token
+    ///
+    /// Handles both encrypted (base64) and legacy plaintext tokens for backwards compatibility.
+    fn decrypt_token(&self, stored_token: &str) -> ApiResult<String> {
+        match &self.encryption_service {
+            Some(service) => {
+                // Try to decode as base64 (encrypted format)
+                match BASE64.decode(stored_token) {
+                    Ok(encrypted) => service.decrypt(&encrypted).map_err(|e| {
+                        // If decryption fails, it might be a legacy plaintext token
+                        warn!(error = %e, "Failed to decrypt token - may be legacy plaintext");
+                        ApiError::Internal(format!("Failed to decrypt stored token: {}", e))
+                    }),
+                    Err(_) => {
+                        // Not valid base64 - treat as legacy plaintext token
+                        info!("Token is not base64-encoded, treating as legacy plaintext");
+                        Ok(stored_token.to_string())
+                    }
+                }
+            }
+            None => {
+                // No encryption service - assume plaintext
+                Ok(stored_token.to_string())
+            }
+        }
     }
 
     /// Validate a ListenBrainz user token
@@ -329,7 +393,7 @@ impl ListenBrainzService {
         }
     }
 
-    /// Get user's ListenBrainz token and preferences
+    /// Get user's ListenBrainz token (decrypted) and preferences
     async fn get_user_scrobble_info(
         &self,
         user_id: Uuid,
@@ -340,7 +404,13 @@ impl ListenBrainzService {
             .await?
             .ok_or_else(|| ApiError::not_found("user", user_id.to_string()))?;
 
-        Ok((user.listenbrainz_token, user.preferences))
+        // Decrypt the token if present
+        let decrypted_token = match user.listenbrainz_token {
+            Some(encrypted_token) => Some(self.decrypt_token(&encrypted_token)?),
+            None => None,
+        };
+
+        Ok((decrypted_token, user.preferences))
     }
 
     /// Check if a user has ListenBrainz configured
@@ -357,7 +427,7 @@ impl ListenBrainzService {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
     {
-        let mut last_error = None;
+        let mut last_error: Option<reqwest::Error> = None;
 
         for attempt in 0..MAX_RETRIES {
             match operation().await {
@@ -382,7 +452,22 @@ impl ListenBrainzService {
             }
         }
 
-        Err(last_error.expect("Should have at least one error after retries"))
+        // last_error should always be Some here since we only reach this point
+        // after MAX_RETRIES iterations, each of which sets last_error.
+        // Using unwrap_or_else with a custom error as a safeguard.
+        match last_error {
+            Some(e) => Err(e),
+            None => {
+                // This should never happen, but handle gracefully instead of panicking.
+                // Create a timeout error as a fallback since the most common retry case
+                // is timeout/connection issues.
+                tracing::error!(
+                    "execute_with_retry completed without any errors - this indicates a logic bug"
+                );
+                // Return the result of trying once more to get a proper error
+                operation().await
+            }
+        }
     }
 }
 
