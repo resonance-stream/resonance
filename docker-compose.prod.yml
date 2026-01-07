@@ -1,0 +1,394 @@
+# =============================================================================
+# Resonance - Production Docker Compose Configuration
+# =============================================================================
+# This file is optimized for production deployments with:
+# - Resource limits to prevent runaway containers
+# - Logging configuration with rotation
+# - Health checks for all services
+# - Security-focused configurations
+# - Restart policies for reliability
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+#
+# See DEPLOYMENT.md for complete production deployment instructions.
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Main API Server
+  # ===========================================================================
+  resonance:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: resonance-api
+    restart: always
+    ports:
+      - "${API_PORT:-4441}:8080"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-resonance}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resonance}
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=${MEILISEARCH_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - LIDARR_URL=${LIDARR_URL}
+      - LIDARR_API_KEY=${LIDARR_API_KEY}
+      - MUSIC_LIBRARY_PATH=/music
+      - CACHE_PATH=/cache
+      - TRANSCODE_PATH=/transcodes
+      - RUST_LOG=${RUST_LOG:-info,sqlx=warn}
+      - ENVIRONMENT=production
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+    volumes:
+      - ${MUSIC_LIBRARY_PATH:-./music}:/music:ro
+      - resonance-cache:/cache
+      - resonance-transcodes:/transcodes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp:size=100M
+
+  # ===========================================================================
+  # Background Worker
+  # ===========================================================================
+  resonance-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: resonance-worker
+    restart: always
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-resonance}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resonance}
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=${MEILISEARCH_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - LIDARR_URL=${LIDARR_URL}
+      - LIDARR_API_KEY=${LIDARR_API_KEY}
+      - MUSIC_LIBRARY_PATH=/music
+      - RUST_LOG=${RUST_LOG:-info,sqlx=warn}
+      - ENVIRONMENT=production
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
+    volumes:
+      - ${MUSIC_LIBRARY_PATH:-./music}:/music:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - resonance-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+
+  # ===========================================================================
+  # Web Frontend
+  # ===========================================================================
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    container_name: resonance-web
+    restart: always
+    ports:
+      - "${WEB_PORT:-4440}:80"
+    depends_on:
+      resonance:
+        condition: service_healthy
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=50M
+      - /var/run:size=10M
+
+  # ===========================================================================
+  # PostgreSQL Database
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: resonance-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-resonance}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-resonance}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resonance} -d ${POSTGRES_DB:-resonance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+    # PostgreSQL is NOT exposed externally - only accessible within Docker network
+    # If you need external access for debugging, uncomment:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  # ===========================================================================
+  # Redis Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: resonance-redis
+    restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 0
+      --tcp-backlog 511
+    volumes:
+      - redis-data:/data
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+    # Redis is NOT exposed externally
+    # If you need external access, uncomment:
+    # ports:
+    #   - "127.0.0.1:6379:6379"
+
+  # ===========================================================================
+  # Meilisearch Full-Text Search
+  # ===========================================================================
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: resonance-meilisearch
+    restart: always
+    environment:
+      - MEILI_MASTER_KEY=${MEILISEARCH_KEY}
+      - MEILI_ENV=production
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_MAX_INDEXING_MEMORY=512Mb
+      - MEILI_MAX_INDEXING_THREADS=2
+      - MEILI_LOG_LEVEL=WARN
+    volumes:
+      - meilisearch-data:/meili_data
+    networks:
+      - resonance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+        compress: "true"
+    security_opt:
+      - no-new-privileges:true
+    # Meilisearch is NOT exposed externally
+    # If you need external access, uncomment:
+    # ports:
+    #   - "127.0.0.1:7700:7700"
+
+  # ===========================================================================
+  # Ollama AI Inference
+  # ===========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: resonance-ollama
+    restart: always
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - resonance-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+        compress: "true"
+    # Uncomment to enable NVIDIA GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+# =============================================================================
+# Named Volumes
+# =============================================================================
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/postgres
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/redis
+  meilisearch-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/meilisearch
+  ollama-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/ollama
+  resonance-cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/cache
+  resonance-transcodes:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/transcodes
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
+networks:
+  resonance-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
