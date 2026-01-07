@@ -36,22 +36,40 @@ const DEFAULT_URL = 'http://localhost:11434'
 const DEFAULT_MODEL = 'mistral'
 const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text'
 
+/** Timeout for fetching models from Ollama (5 seconds) */
+const FETCH_TIMEOUT_MS = 5000
+
 /**
  * Fetches available models from an Ollama instance
  */
 async function fetchOllamaModels(url: string): Promise<string[]> {
   const tagsUrl = `${url.replace(/\/$/, '')}/api/tags`
-  const response = await fetch(tagsUrl, {
-    method: 'GET',
-    headers: { 'Accept': 'application/json' },
-  })
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch models: ${response.status}`)
+  // Create AbortController with timeout
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(tagsUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch models: ${response.status}`)
+    }
+
+    const data: OllamaTagsResponse = await response.json()
+    return data.models.map((m) => m.name)
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS / 1000} seconds`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
   }
-
-  const data: OllamaTagsResponse = await response.json()
-  return data.models.map((m) => m.name)
 }
 
 /**
