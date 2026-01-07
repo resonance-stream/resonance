@@ -97,7 +97,8 @@ pub struct ScrobbleResult {
 
 /// Result of ListenBrainz connection test
 #[derive(Debug, SimpleObject)]
-pub struct ConnectionTestResult {
+#[graphql(name = "ListenBrainzConnectionTestResult")]
+pub struct ListenBrainzConnectionTestResult {
     /// Whether the connection is valid
     pub valid: bool,
     /// ListenBrainz username if valid
@@ -408,7 +409,7 @@ impl IntegrationsMutation {
         &self,
         ctx: &Context<'_>,
         token: String,
-    ) -> Result<ConnectionTestResult> {
+    ) -> Result<ListenBrainzConnectionTestResult> {
         // Require authentication
         let user_id = get_user_id(ctx)?;
 
@@ -416,14 +417,14 @@ impl IntegrationsMutation {
 
         // Validate token length
         if token.is_empty() {
-            return Ok(ConnectionTestResult {
+            return Ok(ListenBrainzConnectionTestResult {
                 valid: false,
                 username: None,
                 error: Some("Token cannot be empty".to_string()),
             });
         }
         if token.len() > MAX_TOKEN_LENGTH {
-            return Ok(ConnectionTestResult {
+            return Ok(ListenBrainzConnectionTestResult {
                 valid: false,
                 username: None,
                 error: Some("Token exceeds maximum length".to_string()),
@@ -435,7 +436,7 @@ impl IntegrationsMutation {
         match lb_service.validate_token(token).await {
             Ok(Some(username)) => {
                 info!(user_id = %user_id, username = %username, "ListenBrainz connection test successful");
-                Ok(ConnectionTestResult {
+                Ok(ListenBrainzConnectionTestResult {
                     valid: true,
                     username: Some(username),
                     error: None,
@@ -443,7 +444,7 @@ impl IntegrationsMutation {
             }
             Ok(None) => {
                 info!(user_id = %user_id, "ListenBrainz connection test failed: invalid token");
-                Ok(ConnectionTestResult {
+                Ok(ListenBrainzConnectionTestResult {
                     valid: false,
                     username: None,
                     error: Some("Invalid token".to_string()),
@@ -451,7 +452,7 @@ impl IntegrationsMutation {
             }
             Err(e) => {
                 warn!(user_id = %user_id, error = %e, "ListenBrainz connection test error");
-                Ok(ConnectionTestResult {
+                Ok(ListenBrainzConnectionTestResult {
                     valid: false,
                     username: None,
                     error: Some("Unable to connect to ListenBrainz".to_string()),
@@ -495,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_connection_test_result() {
-        let valid = ConnectionTestResult {
+        let valid = ListenBrainzConnectionTestResult {
             valid: true,
             username: Some("testuser".to_string()),
             error: None,
@@ -503,7 +504,7 @@ mod tests {
         assert!(valid.valid);
         assert_eq!(valid.username, Some("testuser".to_string()));
 
-        let invalid = ConnectionTestResult {
+        let invalid = ListenBrainzConnectionTestResult {
             valid: false,
             username: None,
             error: Some("Invalid token".to_string()),
