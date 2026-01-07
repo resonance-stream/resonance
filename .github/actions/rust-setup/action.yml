@@ -70,6 +70,7 @@ runs:
         echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
         echo "Rust toolchain configured: $(rustc --version)"
 
+    # Cache version: bump to invalidate all caches (e.g., after corruption)
     - name: Cache cargo registry and build artifacts
       id: cache
       if: inputs.cache-enabled == 'true'
@@ -80,11 +81,11 @@ runs:
           ~/.cargo/git
           target
           ${{ inputs.cache-directories }}
-        key: ${{ runner.os }}-rust-${{ inputs.toolchain }}-${{ inputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-rust-v2-${{ inputs.toolchain }}-${{ inputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-rust-${{ inputs.toolchain }}-${{ inputs.cache-key }}-
-          ${{ runner.os }}-rust-${{ inputs.toolchain }}-
-          ${{ runner.os }}-rust-
+          ${{ runner.os }}-rust-v2-${{ inputs.toolchain }}-${{ inputs.cache-key }}-
+          ${{ runner.os }}-rust-v2-${{ inputs.toolchain }}-
+          ${{ runner.os }}-rust-v2-
 
     - name: Display cache status
       shell: bash
