@@ -76,9 +76,10 @@ impl From<ChatError> for crate::error::ApiError {
             ChatError::Timeout => {
                 crate::error::ApiError::AiService("Operation timed out".to_string())
             }
-            ChatError::HttpClientInit(msg) => {
-                crate::error::ApiError::Internal(format!("HTTP client initialization failed: {}", msg))
-            }
+            ChatError::HttpClientInit(msg) => crate::error::ApiError::Internal(format!(
+                "HTTP client initialization failed: {}",
+                msg
+            )),
         }
     }
 }

@@ -476,6 +476,14 @@ fn convert_chat_error(conversation_id: Option<Uuid>, error: ChatError) -> ChatEr
                 ),
             )
         }
+        ChatError::HttpClientInit(_) => {
+            // Don't expose internal HTTP client initialization errors to clients
+            ChatErrorPayload::new(
+                conversation_id,
+                "SERVICE_UNAVAILABLE",
+                "Chat service is temporarily unavailable. Please try again.",
+            )
+        }
     }
 }
 
