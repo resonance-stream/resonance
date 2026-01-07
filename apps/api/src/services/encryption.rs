@@ -2,9 +2,11 @@
 //!
 //! This module provides AES-256-GCM encryption for sensitive data like API keys.
 //! The encryption key is derived from the JWT_SECRET using HKDF-SHA256.
-
-// TODO: Remove this once EncryptionService is integrated with system settings
-#![allow(dead_code)]
+//!
+//! # Usage
+//!
+//! The EncryptionService is used to encrypt integration API keys (ListenBrainz, Last.fm, etc.)
+//! before storing them in the database, and decrypt them when needed for API calls.
 
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},

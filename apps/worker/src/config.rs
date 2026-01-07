@@ -29,6 +29,12 @@ pub struct Config {
 
     /// Retry delay base in seconds (exponential backoff)
     pub retry_delay_secs: u64,
+
+    /// Meilisearch URL
+    pub meilisearch_url: String,
+
+    /// Meilisearch API key
+    pub meilisearch_key: String,
 }
 
 impl Config {
@@ -59,6 +65,12 @@ impl Config {
                 .unwrap_or_else(|_| "60".to_string())
                 .parse()
                 .context("Invalid WORKER_RETRY_DELAY value")?,
+
+            meilisearch_url: env::var("MEILISEARCH_URL")
+                .unwrap_or_else(|_| "http://localhost:7700".to_string()),
+
+            meilisearch_key: env::var("MEILISEARCH_KEY")
+                .unwrap_or_else(|_| "masterKey".to_string()),
         })
     }
 
@@ -112,6 +124,16 @@ impl Config {
     /// Check if running in production
     pub fn is_production(&self) -> bool {
         self.common.environment.is_production()
+    }
+
+    /// Get Meilisearch URL
+    pub fn meilisearch_url(&self) -> &str {
+        &self.meilisearch_url
+    }
+
+    /// Get Meilisearch API key
+    pub fn meilisearch_key(&self) -> &str {
+        &self.meilisearch_key
     }
 }
 

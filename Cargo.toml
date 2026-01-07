@@ -79,6 +79,7 @@ sha2 = "0.10"
 # Encryption
 aes-gcm = "0.10"
 hkdf = "0.12"
+base64 = "0.22"
 
 # URL parsing
 url = "2"
