@@ -607,8 +607,7 @@ impl ListenBrainzService {
 
                         // Skip sleep on the final attempt - no more retries will follow
                         if attempt + 1 < MAX_RETRIES {
-                            let delay =
-                                Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << attempt));
+                            let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << attempt));
                             warn!(
                                 attempt = attempt + 1,
                                 max_retries = MAX_RETRIES,
