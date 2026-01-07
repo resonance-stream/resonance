@@ -155,6 +155,10 @@ impl ErrorPayload {
             "Only the active device can control playback",
         )
     }
+
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::new("INTERNAL_ERROR", message)
+    }
 }
 
 /// Playback state for synchronization
@@ -600,6 +604,10 @@ mod tests {
         let rate = ErrorPayload::rate_limited(60);
         assert_eq!(rate.code, "RATE_LIMITED");
         assert!(rate.message.contains("60"));
+
+        let internal = ErrorPayload::internal_error("Something went wrong");
+        assert_eq!(internal.code, "INTERNAL_ERROR");
+        assert!(internal.message.contains("Something went wrong"));
     }
 
     #[test]

@@ -213,6 +213,18 @@ async fn handle_socket(
                 error = %e,
                 "Failed to spawn chat handler, closing connection"
             );
+            // Send error message and close frame gracefully
+            let error_msg = ServerMessage::Error(ErrorPayload::internal_error(
+                "Failed to initialize chat handler",
+            ));
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                let _ = ws_sender.send(Message::Text(json)).await;
+            }
+            // Reunite the socket halves to send a proper close frame
+            if let Ok(socket) = ws_sender.reunite(ws_receiver) {
+                let _ = socket.close().await;
+            }
+            connection_manager.remove_connection(user_id, &device_id);
             return;
         }
     };
