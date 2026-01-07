@@ -253,6 +253,51 @@ resonance/
 
 ---
 
+## Production Deployment
+
+For production deployments, see the comprehensive [Deployment Guide](DEPLOYMENT.md) which covers:
+
+- **Prerequisites & System Requirements** - Hardware and software requirements
+- **Environment Configuration** - Secure secret generation and configuration
+- **Docker Compose Production Setup** - Production-optimized container configuration
+- **HTTPS & Reverse Proxy** - SSL/TLS setup with Caddy, Traefik, or nginx
+- **Security Hardening** - Firewall, Docker security, and best practices
+- **Backup Procedures** - Automated backups and disaster recovery
+- **Monitoring & Logging** - Health checks, log management, and alerting
+- **Upgrade Procedures** - Safe upgrade and rollback processes
+
+### Quick Production Start
+
+```bash
+# Clone and configure
+git clone https://github.com/resonance-stream/resonance.git
+cd resonance
+cp .env.example .env.production
+
+# Generate secure secrets
+echo "DB_PASSWORD=$(openssl rand -base64 24)"
+echo "JWT_SECRET=$(openssl rand -base64 32)"
+echo "MEILISEARCH_KEY=$(openssl rand -base64 32)"
+
+# Update .env.production with your configuration, then:
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+```
+
+### Production Compose Features
+
+The production Docker Compose file (`docker-compose.prod.yml`) includes:
+
+| Feature | Description |
+|---------|-------------|
+| **Resource Limits** | CPU and memory limits prevent runaway containers |
+| **Health Checks** | All services have health checks with proper conditions |
+| **Log Rotation** | Automatic log rotation with compression |
+| **Security Options** | `no-new-privileges`, read-only filesystems where possible |
+| **Restart Policies** | Automatic restart on failure |
+| **Network Isolation** | Services only accessible within Docker network |
+
+---
+
 ## Development
 
 ### Prerequisites

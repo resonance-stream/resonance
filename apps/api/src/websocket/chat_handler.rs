@@ -65,6 +65,9 @@ impl ChatHandler {
     /// * `ollama_client` - Optional Ollama client for embeddings
     /// * `connection_manager` - WebSocket connection manager
     /// * `cancellation_token` - Token for graceful cancellation when connection closes
+    ///
+    /// # Errors
+    /// Returns `ChatError` if the chat service fails to initialize
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_id: Uuid,
@@ -76,11 +79,11 @@ impl ChatHandler {
         ollama_client: Option<OllamaClient>,
         connection_manager: ConnectionManager,
         cancellation_token: CancellationToken,
-    ) -> Self {
+    ) -> Result<Self, ChatError> {
         let now = Instant::now();
         // Initialize last_message_time in the past so first message isn't rate-limited
         let past = now - Duration::from_secs(MIN_MESSAGE_INTERVAL_SECS);
-        Self {
+        Ok(Self {
             user_id,
             device_id,
             chat_service: ChatService::new(
@@ -89,14 +92,14 @@ impl ChatHandler {
                 search_service,
                 similarity_service,
                 ollama_client,
-            ),
+            )?,
             context_builder: UserContextBuilder::new(pool),
             connection_manager,
             last_message_time: Arc::new(Mutex::new(past)),
             message_count: Arc::new(AtomicU32::new(0)),
             window_start: Arc::new(Mutex::new(now)),
             cancellation_token,
-        }
+        })
     }
 
     /// Check rate limit and return error payload if exceeded
@@ -473,6 +476,14 @@ fn convert_chat_error(conversation_id: Option<Uuid>, error: ChatError) -> ChatEr
                 ),
             )
         }
+        ChatError::HttpClientInit(_) => {
+            // Don't expose internal HTTP client initialization errors to clients
+            ChatErrorPayload::new(
+                conversation_id,
+                "SERVICE_UNAVAILABLE",
+                "Chat service is temporarily unavailable. Please try again.",
+            )
+        }
     }
 }
 
@@ -485,6 +496,9 @@ fn convert_chat_error(conversation_id: Option<Uuid>, error: ChatError) -> ChatEr
 /// - Send messages via the sender
 /// - Cancel in-progress streaming via the cancellation_token when connection closes
 /// - Await the task via the join_handle for graceful shutdown
+///
+/// # Errors
+/// Returns `ChatError` if the chat handler fails to initialize
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_chat_handler(
     user_id: Uuid,
@@ -495,11 +509,14 @@ pub fn spawn_chat_handler(
     similarity_service: SimilarityService,
     ollama_client: Option<OllamaClient>,
     connection_manager: ConnectionManager,
-) -> (
-    mpsc::Sender<ChatSendPayload>,
-    CancellationToken,
-    JoinHandle<()>,
-) {
+) -> Result<
+    (
+        mpsc::Sender<ChatSendPayload>,
+        CancellationToken,
+        JoinHandle<()>,
+    ),
+    ChatError,
+> {
     let (tx, mut rx) = mpsc::channel::<ChatSendPayload>(CHAT_CHANNEL_CAPACITY);
     let cancellation_token = CancellationToken::new();
 
@@ -513,7 +530,7 @@ pub fn spawn_chat_handler(
         ollama_client,
         connection_manager,
         cancellation_token.clone(),
-    );
+    )?;
 
     let task_token = cancellation_token.clone();
     let handle = tokio::spawn(async move {
@@ -539,7 +556,7 @@ pub fn spawn_chat_handler(
         info!(device_id = %device_id, "Chat handler task ended");
     });
 
-    (tx, cancellation_token, handle)
+    Ok((tx, cancellation_token, handle))
 }
 
 #[cfg(test)]

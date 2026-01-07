@@ -2,9 +2,11 @@
 //!
 //! This module provides AES-256-GCM encryption for sensitive data like API keys.
 //! The encryption key is derived from the JWT_SECRET using HKDF-SHA256.
-
-// TODO: Remove this once EncryptionService is integrated with system settings
-#![allow(dead_code)]
+//!
+//! # Usage
+//!
+//! The EncryptionService is used to encrypt integration API keys (ListenBrainz, Last.fm, etc.)
+//! before storing them in the database, and decrypt them when needed for API calls.
 
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
@@ -100,6 +102,7 @@ impl EncryptionService {
     /// # Errors
     ///
     /// Returns `EncryptionError::KeyDerivation` if key derivation fails
+    #[allow(dead_code)] // Public API for external crate use
     pub fn try_new(jwt_secret: &str) -> Result<Self, EncryptionError> {
         let key = Self::derive_key(jwt_secret)?;
         let cipher = Aes256Gcm::new(&key.into());

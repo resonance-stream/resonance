@@ -4,6 +4,7 @@
 //! - System statistics (user count, track count, etc.)
 //! - User listing with pagination and search
 //! - User detail with session information
+//! - Runtime configuration overview
 //!
 //! All queries require admin role authentication.
 
@@ -12,10 +13,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::graphql::types::{
-    AdminSession, AdminUserDetail, AdminUserList, AdminUserListItem, SystemStats,
+    AdminSession, AdminUserDetail, AdminUserList, AdminUserListItem, ConfigSource,
+    RuntimeConfigOverview, RuntimeConfigStatus, ServiceType, SystemStats,
 };
 use crate::models::user::{Claims, UserRole};
 use crate::repositories::AdminRepository;
+use crate::services::config::ConfigService;
 
 /// Admin-only queries
 #[derive(Default)]
@@ -143,6 +146,139 @@ impl AdminQuery {
             user: user_row.into(),
             sessions: sessions.into_iter().map(|s| s.into()).collect(),
         })
+    }
+
+    /// Get runtime configuration overview
+    ///
+    /// Returns the current configuration status for all services,
+    /// showing whether each service is configured and the source of
+    /// its configuration (Database, Environment, or Default).
+    ///
+    /// This is useful for admins to understand which services are
+    /// available and how they are configured.
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated as admin
+    async fn admin_runtime_config(&self, ctx: &Context<'_>) -> Result<RuntimeConfigOverview> {
+        let claims = ctx
+            .data_opt::<Claims>()
+            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+
+        require_admin(claims)?;
+
+        let config_service = ctx.data::<ConfigService>()?;
+
+        // Check each service's configuration status
+        use crate::models::system_settings::ServiceType as DbServiceType;
+
+        // Ollama - always returns config (has defaults), check if from DB or env
+        let _ollama_config = config_service.get_ollama_config().await;
+        let ollama_is_db = config_service
+            .is_service_configured(DbServiceType::Ollama)
+            .await;
+        let ollama_source = if ollama_is_db {
+            ConfigSource::Database
+        } else if std::env::var("OLLAMA_URL").is_ok() {
+            ConfigSource::Environment
+        } else {
+            ConfigSource::Default
+        };
+
+        // Lidarr - returns Option, None means not configured
+        let lidarr_config = config_service.get_lidarr_config().await;
+        let lidarr_is_db = config_service
+            .is_service_configured(DbServiceType::Lidarr)
+            .await;
+        let (lidarr_configured, lidarr_source) = match (lidarr_config.is_some(), lidarr_is_db) {
+            (true, true) => (true, ConfigSource::Database),
+            (true, false) => (true, ConfigSource::Environment),
+            (false, _) => (false, ConfigSource::NotConfigured),
+        };
+
+        // Last.fm - returns Option, None means not configured
+        let lastfm_config = config_service.get_lastfm_config().await;
+        let lastfm_is_db = config_service
+            .is_service_configured(DbServiceType::Lastfm)
+            .await;
+        let (lastfm_configured, lastfm_source) = match (lastfm_config.is_some(), lastfm_is_db) {
+            (true, true) => (true, ConfigSource::Database),
+            (true, false) => (true, ConfigSource::Environment),
+            (false, _) => (false, ConfigSource::NotConfigured),
+        };
+
+        // Music library - always returns path (has default), check source
+        let music_path = config_service.get_music_library_path().await;
+        let music_is_db = config_service
+            .is_service_configured(DbServiceType::MusicLibrary)
+            .await;
+        let music_source = if music_is_db {
+            ConfigSource::Database
+        } else if std::env::var("MUSIC_LIBRARY_PATH").is_ok() {
+            ConfigSource::Environment
+        } else {
+            ConfigSource::Default
+        };
+        let music_configured = music_path.exists() || music_is_db;
+
+        Ok(RuntimeConfigOverview {
+            ollama: RuntimeConfigStatus {
+                service: ServiceType::Ollama,
+                is_configured: true, // Ollama always has defaults
+                config_source: ollama_source,
+            },
+            lidarr: RuntimeConfigStatus {
+                service: ServiceType::Lidarr,
+                is_configured: lidarr_configured,
+                config_source: lidarr_source,
+            },
+            lastfm: RuntimeConfigStatus {
+                service: ServiceType::Lastfm,
+                is_configured: lastfm_configured,
+                config_source: lastfm_source,
+            },
+            music_library: RuntimeConfigStatus {
+                service: ServiceType::MusicLibrary,
+                is_configured: music_configured,
+                config_source: music_source,
+            },
+        })
+    }
+
+    /// Invalidate the configuration cache for a specific service
+    ///
+    /// Use this after updating system settings to ensure the new
+    /// configuration takes effect immediately.
+    ///
+    /// # Arguments
+    /// * `service` - The service type to invalidate cache for
+    ///
+    /// # Errors
+    /// - Returns error if not authenticated as admin
+    async fn admin_invalidate_config_cache(
+        &self,
+        ctx: &Context<'_>,
+        service: ServiceType,
+    ) -> Result<bool> {
+        let claims = ctx
+            .data_opt::<Claims>()
+            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+
+        require_admin(claims)?;
+
+        let config_service = ctx.data::<ConfigService>()?;
+
+        use crate::models::system_settings::ServiceType as DbServiceType;
+        let db_service: DbServiceType = service.into();
+
+        config_service.invalidate_cache(db_service).await;
+
+        tracing::info!(
+            admin_id = %claims.sub,
+            service = ?service,
+            "Admin invalidated config cache"
+        );
+
+        Ok(true)
     }
 }
 

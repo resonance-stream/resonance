@@ -8,6 +8,7 @@
 //! - Taste-clustered playlist generation
 //! - Smart prefetch for autoplay
 //! - Lidarr integration sync
+//! - Search indexing for Meilisearch
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +27,7 @@ pub mod lidarr_sync;
 pub mod mood_detection;
 pub mod prefetch;
 pub mod rhythm_analysis;
+pub mod search_indexing;
 pub mod spectral;
 pub mod weekly_playlist;
 
@@ -69,6 +71,9 @@ pub enum Job {
 
     /// Prefetch tracks for autoplay
     Prefetch(prefetch::PrefetchJob),
+
+    /// Index content in Meilisearch for full-text search
+    SearchIndexing(search_indexing::SearchIndexingJob),
 }
 
 /// Redis queue keys
@@ -207,6 +212,7 @@ impl JobRunner {
             Job::WeeklyPlaylist(payload) => weekly_playlist::execute(&self.state, payload).await,
             Job::LidarrSync(payload) => lidarr_sync::execute(&self.state, payload).await,
             Job::Prefetch(payload) => prefetch::execute(&self.state, payload).await,
+            Job::SearchIndexing(payload) => search_indexing::execute(&self.state, payload).await,
         }
     }
 }

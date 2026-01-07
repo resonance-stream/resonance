@@ -1,17 +1,21 @@
 //! Search-related GraphQL types
 //!
 //! This module defines types for semantic search, mood-based discovery,
-//! and similar artist queries.
+//! similar artist queries, and full-text search via Meilisearch.
 
 use async_graphql::{ComplexObject, Context, Enum, Result, SimpleObject};
 use uuid::Uuid;
 
+use crate::services::meilisearch::{
+    AlbumSearchHit as ServiceAlbumSearchHit, ArtistSearchHit as ServiceArtistSearchHit,
+    TrackSearchHit as ServiceTrackSearchHit, UnifiedSearchResults as ServiceUnifiedSearchResults,
+};
 use crate::services::search::{MoodTag as ServiceMoodTag, ScoredTrack as ServiceScoredTrack};
 use crate::services::similarity::{
     SimilarTrack as ServiceSimilarTrack, SimilarityType as ServiceSimilarityType,
 };
 
-use super::Track;
+use super::{Album, Artist, Track};
 
 /// A track with its similarity/relevance score
 #[derive(Debug, Clone, SimpleObject)]
@@ -411,5 +415,175 @@ mod tests {
         };
         let graphql_track: SimilarTrack = service_track.into();
         assert!((graphql_track.score - 1.0).abs() < f64::EPSILON);
+    }
+}
+
+// ==================== Full-Text Search Types (Meilisearch) ====================
+
+/// A track result from full-text search
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(complex)]
+pub struct FullTextTrackHit {
+    /// The track ID
+    pub track_id: Uuid,
+    /// Track title
+    pub title: String,
+    /// Artist name
+    pub artist_name: String,
+    /// Artist ID
+    pub artist_id: Uuid,
+    /// Album title (if available)
+    pub album_title: Option<String>,
+    /// Album ID (if available)
+    pub album_id: Option<Uuid>,
+    /// Genres
+    pub genres: Vec<String>,
+    /// AI-detected moods
+    pub moods: Vec<String>,
+    /// Duration in milliseconds
+    pub duration_ms: i32,
+}
+
+#[ComplexObject]
+impl FullTextTrackHit {
+    /// Full track details (requires additional query)
+    async fn track(&self, ctx: &Context<'_>) -> Result<Option<Track>> {
+        use crate::repositories::TrackRepository;
+        let repo = ctx.data::<TrackRepository>()?;
+        let track = repo.find_by_id(self.track_id).await?;
+        Ok(track.map(Track::from))
+    }
+}
+
+impl From<ServiceTrackSearchHit> for FullTextTrackHit {
+    fn from(hit: ServiceTrackSearchHit) -> Self {
+        Self {
+            track_id: hit.track_id,
+            title: hit.title,
+            artist_name: hit.artist_name,
+            artist_id: hit.artist_id,
+            album_title: hit.album_title,
+            album_id: hit.album_id,
+            genres: hit.genres,
+            moods: hit.moods,
+            duration_ms: hit.duration_ms,
+        }
+    }
+}
+
+/// An album result from full-text search
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(complex)]
+pub struct FullTextAlbumHit {
+    /// The album ID
+    pub album_id: Uuid,
+    /// Album title
+    pub title: String,
+    /// Artist name
+    pub artist_name: String,
+    /// Artist ID
+    pub artist_id: Uuid,
+    /// Genres
+    pub genres: Vec<String>,
+    /// Album type (album, single, EP, etc.)
+    pub album_type: String,
+    /// Release year
+    pub release_year: Option<i32>,
+}
+
+#[ComplexObject]
+impl FullTextAlbumHit {
+    /// Full album details (requires additional query)
+    async fn album(&self, ctx: &Context<'_>) -> Result<Option<Album>> {
+        use crate::repositories::AlbumRepository;
+        let repo = ctx.data::<AlbumRepository>()?;
+        let album = repo.find_by_id(self.album_id).await?;
+        Ok(album.map(Album::from))
+    }
+}
+
+impl From<ServiceAlbumSearchHit> for FullTextAlbumHit {
+    fn from(hit: ServiceAlbumSearchHit) -> Self {
+        Self {
+            album_id: hit.album_id,
+            title: hit.title,
+            artist_name: hit.artist_name,
+            artist_id: hit.artist_id,
+            genres: hit.genres,
+            album_type: hit.album_type,
+            release_year: hit.release_year,
+        }
+    }
+}
+
+/// An artist result from full-text search
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(complex)]
+pub struct FullTextArtistHit {
+    /// The artist ID
+    pub artist_id: Uuid,
+    /// Artist name
+    pub name: String,
+    /// Genres
+    pub genres: Vec<String>,
+}
+
+#[ComplexObject]
+impl FullTextArtistHit {
+    /// Full artist details (requires additional query)
+    async fn artist(&self, ctx: &Context<'_>) -> Result<Option<Artist>> {
+        use crate::repositories::ArtistRepository;
+        let repo = ctx.data::<ArtistRepository>()?;
+        let artist = repo.find_by_id(self.artist_id).await?;
+        Ok(artist.map(Artist::from))
+    }
+}
+
+impl From<ServiceArtistSearchHit> for FullTextArtistHit {
+    fn from(hit: ServiceArtistSearchHit) -> Self {
+        Self {
+            artist_id: hit.artist_id,
+            name: hit.name,
+            genres: hit.genres,
+        }
+    }
+}
+
+/// Unified full-text search results across all entity types
+#[derive(Debug, Clone, SimpleObject)]
+pub struct FullTextSearchResult {
+    /// Matching tracks
+    pub tracks: Vec<FullTextTrackHit>,
+    /// Matching albums
+    pub albums: Vec<FullTextAlbumHit>,
+    /// Matching artists
+    pub artists: Vec<FullTextArtistHit>,
+    /// Total number of hits across all types
+    pub total_hits: i32,
+    /// Query processing time in milliseconds
+    pub processing_time_ms: i64,
+}
+
+impl From<ServiceUnifiedSearchResults> for FullTextSearchResult {
+    fn from(results: ServiceUnifiedSearchResults) -> Self {
+        Self {
+            tracks: results
+                .tracks
+                .into_iter()
+                .map(FullTextTrackHit::from)
+                .collect(),
+            albums: results
+                .albums
+                .into_iter()
+                .map(FullTextAlbumHit::from)
+                .collect(),
+            artists: results
+                .artists
+                .into_iter()
+                .map(FullTextArtistHit::from)
+                .collect(),
+            total_hits: results.total_hits as i32,
+            processing_time_ms: results.processing_time_ms as i64,
+        }
     }
 }

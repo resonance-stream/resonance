@@ -11,8 +11,11 @@ use crate::repositories::{
     SystemSettingsRepository, TrackRepository, UserRepository,
 };
 use crate::services::auth::AuthService;
+use crate::services::config::ConfigService;
+use crate::services::encryption::EncryptionService;
 use crate::services::lastfm::LastfmService;
 use crate::services::listenbrainz::ListenBrainzService;
+use crate::services::meilisearch::MeilisearchService;
 use crate::services::playlist::PlaylistService;
 use crate::services::search::SearchService;
 use crate::services::similarity::SimilarityService;
@@ -32,6 +35,8 @@ pub type ResonanceSchema = Schema<Query, Mutation, EmptySubscription>;
 pub struct SchemaBuilder {
     pool: Option<PgPool>,
     auth_service: Option<AuthService>,
+    encryption_service: Option<EncryptionService>,
+    config_service: Option<ConfigService>,
     rate_limiter: Option<GraphQLRateLimiter>,
     artist_repository: Option<ArtistRepository>,
     album_repository: Option<AlbumRepository>,
@@ -45,6 +50,7 @@ pub struct SchemaBuilder {
     // Optional AI/Integration services - only registered if explicitly provided
     search_service: Option<SearchService>,
     similarity_service: Option<SimilarityService>,
+    meilisearch_service: Option<MeilisearchService>,
     lastfm_service: Option<LastfmService>,
     listenbrainz_service: Option<ListenBrainzService>,
     ollama_client: Option<resonance_ollama_client::OllamaClient>,
@@ -56,6 +62,8 @@ impl SchemaBuilder {
         Self {
             pool: None,
             auth_service: None,
+            encryption_service: None,
+            config_service: None,
             rate_limiter: None,
             artist_repository: None,
             album_repository: None,
@@ -67,6 +75,7 @@ impl SchemaBuilder {
             playlist_service: None,
             search_service: None,
             similarity_service: None,
+            meilisearch_service: None,
             lastfm_service: None,
             listenbrainz_service: None,
             ollama_client: None,
@@ -82,6 +91,26 @@ impl SchemaBuilder {
     /// Set the auth service
     pub fn auth_service(mut self, auth_service: AuthService) -> Self {
         self.auth_service = Some(auth_service);
+        self
+    }
+
+    /// Set the encryption service for secure API key storage
+    ///
+    /// The encryption service is used to encrypt/decrypt sensitive data like
+    /// integration API keys (ListenBrainz, Last.fm, etc.) before database storage.
+    pub fn encryption_service(mut self, encryption_service: EncryptionService) -> Self {
+        self.encryption_service = Some(encryption_service);
+        self
+    }
+
+    /// Set the config service for runtime configuration
+    ///
+    /// The config service provides centralized configuration with priority:
+    /// 1. Database (admin-configured settings)
+    /// 2. Environment variables
+    /// 3. Default values
+    pub fn config_service(mut self, config_service: ConfigService) -> Self {
+        self.config_service = Some(config_service);
         self
     }
 
@@ -153,6 +182,13 @@ impl SchemaBuilder {
     #[allow(dead_code)] // Public API for external callers
     pub fn similarity_service(mut self, service: SimilarityService) -> Self {
         self.similarity_service = Some(service);
+        self
+    }
+
+    /// Set the Meilisearch service for full-text search
+    #[allow(dead_code)] // Public API for external callers
+    pub fn meilisearch_service(mut self, service: MeilisearchService) -> Self {
+        self.meilisearch_service = Some(service);
         self
     }
 
@@ -262,12 +298,25 @@ impl SchemaBuilder {
             builder = builder.data(rate_limiter);
         }
 
+        // Add encryption service if configured (used for encrypting API keys)
+        if let Some(encryption_service) = self.encryption_service {
+            builder = builder.data(encryption_service);
+        }
+
+        // Add config service if configured (DB-driven configuration with caching)
+        if let Some(config_service) = self.config_service {
+            builder = builder.data(config_service);
+        }
+
         // Add AI/Search services if configured (optional - queries gracefully degrade)
         if let Some(search_service) = self.search_service {
             builder = builder.data(search_service);
         }
         if let Some(similarity_service) = self.similarity_service {
             builder = builder.data(similarity_service);
+        }
+        if let Some(meilisearch_service) = self.meilisearch_service {
+            builder = builder.data(meilisearch_service);
         }
         if let Some(lastfm_service) = self.lastfm_service {
             builder = builder.data(lastfm_service);
@@ -331,6 +380,8 @@ mod tests {
         let builder = SchemaBuilder::default();
         assert!(builder.pool.is_none());
         assert!(builder.auth_service.is_none());
+        assert!(builder.encryption_service.is_none());
+        assert!(builder.config_service.is_none());
         assert!(builder.rate_limiter.is_none());
         assert!(builder.artist_repository.is_none());
         assert!(builder.album_repository.is_none());
@@ -341,6 +392,7 @@ mod tests {
         assert!(builder.system_settings_repository.is_none());
         assert!(builder.search_service.is_none());
         assert!(builder.similarity_service.is_none());
+        assert!(builder.meilisearch_service.is_none());
         assert!(builder.playlist_service.is_none());
         assert!(builder.lastfm_service.is_none());
         assert!(builder.listenbrainz_service.is_none());

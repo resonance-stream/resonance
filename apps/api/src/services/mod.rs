@@ -10,6 +10,7 @@
 //! - AI chat assistant
 //! - Encryption for sensitive data
 //! - Configuration loading with DB -> Env -> Defaults priority
+//! - Meilisearch full-text search
 
 pub mod auth;
 pub mod chat;
@@ -18,6 +19,7 @@ pub mod encryption;
 pub mod health;
 pub mod lastfm;
 pub mod listenbrainz;
+pub mod meilisearch;
 pub mod playlist;
 pub mod search;
 pub mod similarity;
@@ -26,7 +28,7 @@ pub mod transcoder;
 pub use auth::AuthService;
 #[allow(unused_imports)] // Used for runtime config loading
 pub use config::{ConfigError, ConfigResult, ConfigService, LastFmConfig, MusicLibraryConfig};
-#[allow(unused_imports)] // Used for system settings encryption
+#[allow(unused_imports)] // Re-exported for external crate use
 pub use encryption::{EncryptionError, EncryptionService};
 pub use health::HealthService;
 #[allow(unused_imports)] // Will be used once integrated into mutations
@@ -53,10 +55,17 @@ pub use similarity::{
 #[allow(unused_imports)]
 pub use auth::AuthConfig;
 
+// Meilisearch full-text search service
+#[allow(unused_imports)]
+pub use meilisearch::{
+    AlbumDocument, AlbumSearchHit, ArtistDocument, ArtistSearchHit, IndexStats,
+    MeilisearchHealthStatus, MeilisearchService, TrackDocument, TrackSearchHit,
+    UnifiedSearchResults,
+};
+
 // Future modules:
 // pub mod audio;
 // pub mod library;
 // pub mod recommendations;
 // pub mod lidarr;
 // pub mod ollama;
-// pub mod meilisearch;

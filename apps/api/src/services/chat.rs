@@ -51,6 +51,9 @@ pub enum ChatError {
 
     #[error("operation timeout")]
     Timeout,
+
+    #[error("failed to initialize HTTP client: {0}")]
+    HttpClientInit(String),
 }
 
 // ==================== ApiError Integration ====================
@@ -73,6 +76,10 @@ impl From<ChatError> for crate::error::ApiError {
             ChatError::Timeout => {
                 crate::error::ApiError::AiService("Operation timed out".to_string())
             }
+            ChatError::HttpClientInit(msg) => crate::error::ApiError::Internal(format!(
+                "HTTP client initialization failed: {}",
+                msg
+            )),
         }
     }
 }
@@ -268,6 +275,8 @@ pub enum StreamErrorCode {
     InvalidInput,
     /// Operation timeout
     Timeout,
+    /// HTTP client initialization failed
+    HttpClientInit,
 }
 
 impl StreamEvent {
@@ -288,6 +297,7 @@ impl StreamEvent {
             ),
             ChatError::InvalidInput(msg) => (msg.clone(), StreamErrorCode::InvalidInput),
             ChatError::Timeout => ("Operation timed out".to_string(), StreamErrorCode::Timeout),
+            ChatError::HttpClientInit(msg) => (msg.clone(), StreamErrorCode::HttpClientInit),
         };
         StreamEvent::Error { message, code }
     }
@@ -338,29 +348,32 @@ impl ChatService {
     /// * `search_service` - Service for semantic and mood-based search
     /// * `similarity_service` - Service for finding similar tracks
     /// * `ollama_client` - Optional Ollama client for generating embeddings
+    ///
+    /// # Errors
+    /// Returns `ChatError::HttpClientInit` if the HTTP client fails to build
     pub fn new(
         pool: PgPool,
         config: OllamaConfig,
         search_service: SearchService,
         similarity_service: SimilarityService,
         ollama_client: Option<OllamaClient>,
-    ) -> Self {
+    ) -> ChatResult<Self> {
         let http_client = Client::builder()
             .pool_max_idle_per_host(5)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(|e| ChatError::HttpClientInit(e.to_string()))?;
 
-        Self {
+        Ok(Self {
             repository: ChatRepository::new(pool),
             http_client,
             config,
             search_service,
             similarity_service,
             ollama_client,
-        }
+        })
     }
 
     /// Create a new conversation
@@ -1787,6 +1800,7 @@ mod tests {
             SimilarityService::new(pool),
             None, // Tests don't exercise AI embedding features
         )
+        .expect("Failed to create test ChatService")
     }
 
     #[tokio::test]

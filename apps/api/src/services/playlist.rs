@@ -570,14 +570,10 @@ impl PlaylistService {
             ));
         }
 
-        // Verify it's a smart playlist
-        if playlist.smart_rules.is_none() {
-            return Err(ApiError::ValidationError(
-                "Cannot refresh a non-smart playlist".to_string(),
-            ));
-        }
-
-        let rules = playlist.smart_rules.unwrap();
+        // Verify it's a smart playlist and extract rules
+        let rules = playlist.smart_rules.ok_or_else(|| {
+            ApiError::ValidationError("Cannot refresh a non-smart playlist".to_string())
+        })?;
 
         // Evaluate the rules
         let track_ids = self.evaluate_smart_rules(&rules, user_id).await?;

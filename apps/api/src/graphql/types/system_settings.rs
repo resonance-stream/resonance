@@ -182,6 +182,50 @@ impl UserLibraryPath {
     }
 }
 
+// =============================================================================
+// Runtime Configuration Types (Admin-only)
+// =============================================================================
+
+/// Runtime configuration status for a service
+///
+/// Shows the current effective configuration source (Database, Environment, Default)
+/// and whether the service is available for use.
+#[derive(Debug, Clone, SimpleObject)]
+pub struct RuntimeConfigStatus {
+    /// The service type
+    pub service: ServiceType,
+    /// Whether this service is currently configured and available
+    pub is_configured: bool,
+    /// The source of the current configuration
+    pub config_source: ConfigSource,
+}
+
+/// Source of configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum ConfigSource {
+    /// Configuration from database (admin-configured)
+    Database,
+    /// Configuration from environment variables
+    Environment,
+    /// Default configuration values
+    Default,
+    /// Not configured (service unavailable)
+    NotConfigured,
+}
+
+/// Overview of all runtime configuration statuses
+#[derive(Debug, Clone, SimpleObject)]
+pub struct RuntimeConfigOverview {
+    /// Ollama AI service configuration status
+    pub ollama: RuntimeConfigStatus,
+    /// Lidarr library management configuration status
+    pub lidarr: RuntimeConfigStatus,
+    /// Last.fm scrobbling configuration status
+    pub lastfm: RuntimeConfigStatus,
+    /// Music library path configuration
+    pub music_library: RuntimeConfigStatus,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

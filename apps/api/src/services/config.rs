@@ -7,9 +7,6 @@
 //!
 //! Configs are cached to reduce database queries, with automatic expiration.
 
-// TODO: Remove this once ConfigService is integrated with setup wizard and admin settings
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,6 +42,7 @@ pub enum ConfigError {
 
     /// Service not configured (no DB, env, or defaults available)
     #[error("service not configured: {0}")]
+    #[allow(dead_code)] // Part of public error API, used in tests
     NotConfigured(String),
 }
 
@@ -58,8 +56,6 @@ struct CachedConfig {
     config: serde_json::Value,
     /// Decrypted secret (e.g., API key)
     secret: Option<String>,
-    /// Whether the service is enabled
-    enabled: bool,
     /// When this entry was cached
     cached_at: Instant,
 }
@@ -80,6 +76,7 @@ pub struct LastFmConfig {
 
 /// Music library configuration from database
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[allow(dead_code)] // Part of public config API, re-exported in mod.rs
 pub struct MusicLibraryConfig {
     /// Path to the music library
     pub path: String,
@@ -161,7 +158,6 @@ impl ConfigService {
                 let entry = CachedConfig {
                     config: s.config.clone(),
                     secret,
-                    enabled: s.enabled,
                     cached_at: Instant::now(),
                 };
 
@@ -424,6 +420,7 @@ impl ConfigService {
     /// Invalidate all cached configurations
     ///
     /// Call this after bulk updates or when reloading all configs.
+    #[allow(dead_code)] // Public API for future use by admin endpoints
     #[instrument(skip(self))]
     pub async fn invalidate_all(&self) {
         let mut cache = self.cache.write().await;
@@ -468,7 +465,6 @@ mod tests {
         let entry = CachedConfig {
             config: serde_json::json!({}),
             secret: None,
-            enabled: true,
             cached_at: Instant::now() - Duration::from_secs(120), // 2 minutes ago
         };
 
@@ -477,7 +473,6 @@ mod tests {
         let fresh_entry = CachedConfig {
             config: serde_json::json!({}),
             secret: None,
-            enabled: true,
             cached_at: Instant::now(),
         };
 

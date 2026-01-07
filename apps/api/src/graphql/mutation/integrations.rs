@@ -6,12 +6,14 @@
 //! - testListenbrainzConnection: Validate ListenBrainz token
 
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::{DateTime, Utc};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::models::user::Claims;
 use crate::repositories::{TrackRepository, UserRepository};
+use crate::services::encryption::EncryptionService;
 use crate::services::listenbrainz::{ListenBrainzService, ScrobbleTrack};
 
 // ============================================================================
@@ -127,6 +129,77 @@ fn get_listenbrainz_service<'a>(ctx: &'a Context<'a>) -> Result<&'a ListenBrainz
     })
 }
 
+/// Get encryption service from context (optional - falls back to plaintext if not configured)
+fn get_encryption_service<'a>(ctx: &'a Context<'a>) -> Option<&'a EncryptionService> {
+    ctx.data_opt::<EncryptionService>()
+}
+
+/// Encrypt a token using the encryption service, returning base64-encoded ciphertext
+///
+/// If encryption service is not configured, returns the plaintext token.
+/// This allows for backwards compatibility during migration.
+fn encrypt_token(encryption_service: Option<&EncryptionService>, token: &str) -> Result<String> {
+    match encryption_service {
+        Some(service) => {
+            let encrypted = service.encrypt(token).map_err(|e| {
+                error!(error = %e, "Failed to encrypt token");
+                async_graphql::Error::new("Failed to securely store token")
+            })?;
+            Ok(BASE64.encode(encrypted))
+        }
+        None => {
+            // No encryption service configured - store plaintext (for backwards compatibility)
+            warn!("Encryption service not configured, storing token in plaintext");
+            Ok(token.to_string())
+        }
+    }
+}
+
+/// Decrypt a token using the encryption service
+///
+/// Handles both encrypted (base64) and legacy plaintext tokens for backwards compatibility.
+/// If the token appears to be base64-encoded encrypted data, it will be decrypted.
+/// Otherwise, it's treated as a legacy plaintext token.
+///
+/// For backward compatibility, if decryption fails (e.g., wrong key, corrupted data),
+/// the original stored token is returned as-is, assuming it may be a legacy plaintext token.
+fn decrypt_token(
+    encryption_service: Option<&EncryptionService>,
+    stored_token: &str,
+) -> Result<String> {
+    match encryption_service {
+        Some(service) => {
+            // Try to decode as base64 (encrypted format)
+            match BASE64.decode(stored_token) {
+                Ok(encrypted) => {
+                    match service.decrypt(&encrypted) {
+                        Ok(decrypted) => Ok(decrypted),
+                        Err(e) => {
+                            // If decryption fails, it might be a legacy plaintext token
+                            // or data encrypted with a different key. Fall back to plaintext
+                            // for backward compatibility during migration.
+                            warn!(
+                                error = %e,
+                                "Failed to decrypt token - falling back to plaintext for backward compatibility"
+                            );
+                            Ok(stored_token.to_string())
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Not valid base64 - treat as legacy plaintext token
+                    info!("Token is not base64-encoded, treating as legacy plaintext");
+                    Ok(stored_token.to_string())
+                }
+            }
+        }
+        None => {
+            // No encryption service - assume plaintext
+            Ok(stored_token.to_string())
+        }
+    }
+}
+
 // ============================================================================
 // Mutations
 // ============================================================================
@@ -203,10 +276,13 @@ impl IntegrationsMutation {
                 let lb_service = get_listenbrainz_service(ctx)?;
                 match lb_service.validate_token(token).await {
                     Ok(Some(username)) => {
-                        // Token is valid, save it
-                        info!(user_id = %user_id, username = %username, "Saving valid ListenBrainz token");
+                        // Token is valid, encrypt and save it
+                        let encryption_service = get_encryption_service(ctx);
+                        let encrypted_token = encrypt_token(encryption_service, token)?;
+
+                        info!(user_id = %user_id, username = %username, encrypted = encryption_service.is_some(), "Saving valid ListenBrainz token");
                         user_repo
-                            .update_listenbrainz_token(user_id, Some(token))
+                            .update_listenbrainz_token(user_id, Some(&encrypted_token))
                             .await
                             .map_err(|e| sanitize_db_error(e, "save token"))?;
                         listenbrainz_username = Some(username);
@@ -263,11 +339,18 @@ impl IntegrationsMutation {
 
         // If username is not set but token exists (token wasn't changed), fetch username (best-effort)
         if listenbrainz_username.is_none() {
-            if let Some(ref token) = updated_user.listenbrainz_token {
+            if let Some(ref encrypted_token) = updated_user.listenbrainz_token {
                 // Use data_opt to avoid error when service is not configured
                 if let Some(lb_service) = ctx.data_opt::<ListenBrainzService>() {
-                    if let Ok(Some(username)) = lb_service.validate_token(token).await {
-                        listenbrainz_username = Some(username);
+                    // Decrypt the token before validating
+                    let encryption_service = get_encryption_service(ctx);
+                    if let Ok(decrypted_token) = decrypt_token(encryption_service, encrypted_token)
+                    {
+                        if let Ok(Some(username)) =
+                            lb_service.validate_token(&decrypted_token).await
+                        {
+                            listenbrainz_username = Some(username);
+                        }
                     }
                 } else {
                     warn!("ListenBrainz service not configured, skipping username fetch");
