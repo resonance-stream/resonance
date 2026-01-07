@@ -195,7 +195,7 @@ async fn handle_socket(
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Spawn chat handler for this connection
-    let (chat_tx, chat_handle) = spawn_chat_handler(
+    let (chat_tx, chat_cancel_token, chat_handle) = spawn_chat_handler(
         user_id,
         device_id.clone(),
         pool.clone(),
@@ -421,11 +421,14 @@ async fn handle_socket(
         }
     }
 
-    // Gracefully stop the chat handler by dropping the sender (closes channel)
-    // The handler will receive None and exit its loop naturally
+    // Cancel any in-progress chat streaming immediately
+    // This uses the CancellationToken to stop streaming loops via tokio::select!
+    chat_cancel_token.cancel();
+
+    // Drop the sender to close the channel (prevents new messages)
     drop(chat_tx);
 
-    // Wait briefly for graceful shutdown, then abort if still running
+    // Wait briefly for graceful shutdown
     let shutdown_timeout = std::time::Duration::from_secs(1);
     match tokio::time::timeout(shutdown_timeout, chat_handle).await {
         Ok(Ok(_)) => {

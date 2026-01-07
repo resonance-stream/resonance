@@ -6,10 +6,12 @@
 // Allow dead_code - WebSocket integration (Phase 4) will consume this service
 #![allow(dead_code)]
 
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -201,6 +203,96 @@ pub struct ChatAction {
     pub data: serde_json::Value,
 }
 
+// ==================== Streaming Events ====================
+
+/// Events emitted during streaming chat responses
+///
+/// These events are sent through an mpsc channel to allow real-time
+/// token-by-token streaming to WebSocket clients.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// A token (partial content) from the AI response
+    Token(String),
+
+    /// A tool call is starting
+    ToolCallStart {
+        /// Name of the tool being called
+        tool_name: String,
+        /// Unique ID for this tool call
+        call_id: String,
+    },
+
+    /// A tool call has completed
+    ToolCallComplete {
+        /// The tool call ID
+        call_id: String,
+        /// Result of the tool execution (JSON string)
+        result: String,
+    },
+
+    /// Streaming is complete
+    Complete {
+        /// ID of the saved message
+        message_id: Uuid,
+        /// Full response text
+        full_response: String,
+        /// Actions to execute on the frontend
+        actions: Vec<ChatAction>,
+    },
+
+    /// An error occurred during streaming
+    Error {
+        /// Error message
+        message: String,
+        /// Error code for categorization
+        code: StreamErrorCode,
+    },
+}
+
+/// Error codes for streaming errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamErrorCode {
+    /// Database operation failed
+    Database,
+    /// Conversation not found
+    ConversationNotFound,
+    /// Ollama request failed
+    OllamaRequest,
+    /// Ollama response error
+    OllamaResponse,
+    /// JSON serialization error
+    Serialization,
+    /// Tool execution failed
+    ToolExecution,
+    /// Invalid input
+    InvalidInput,
+    /// Operation timeout
+    Timeout,
+}
+
+impl StreamEvent {
+    /// Create an error event from a ChatError
+    pub fn from_error(err: &ChatError) -> Self {
+        let (message, code) = match err {
+            ChatError::Database(e) => (e.to_string(), StreamErrorCode::Database),
+            ChatError::ConversationNotFound(id) => (
+                format!("Conversation not found: {}", id),
+                StreamErrorCode::ConversationNotFound,
+            ),
+            ChatError::OllamaRequest(e) => (e.to_string(), StreamErrorCode::OllamaRequest),
+            ChatError::OllamaResponse(msg) => (msg.clone(), StreamErrorCode::OllamaResponse),
+            ChatError::Serialization(e) => (e.to_string(), StreamErrorCode::Serialization),
+            ChatError::ToolExecution { tool_name, message } => (
+                format!("Tool '{}' failed: {}", tool_name, message),
+                StreamErrorCode::ToolExecution,
+            ),
+            ChatError::InvalidInput(msg) => (msg.clone(), StreamErrorCode::InvalidInput),
+            ChatError::Timeout => ("Operation timed out".to_string(), StreamErrorCode::Timeout),
+        };
+        StreamEvent::Error { message, code }
+    }
+}
+
 // ==================== Constants ====================
 
 /// Maximum user message length in characters
@@ -215,9 +307,16 @@ const MAX_TOOL_ITERATIONS: usize = 5;
 /// Total operation timeout multiplier (timeout_secs * this value)
 const TOTAL_TIMEOUT_MULTIPLIER: u64 = 2;
 
+/// Channel capacity for streaming events
+const STREAM_CHANNEL_CAPACITY: usize = 100;
+
 // ==================== Chat Service ====================
 
 /// Service for AI chat functionality
+///
+/// This service is Clone-able (cheap due to Arc-backed internals) to support
+/// spawning background tasks for streaming responses.
+#[derive(Clone)]
 pub struct ChatService {
     repository: ChatRepository,
     http_client: Client,
@@ -436,6 +535,274 @@ impl ChatService {
         );
 
         Ok((conversation, assistant_message, actions))
+    }
+
+    /// Send a user message and stream the AI response token by token
+    ///
+    /// This method returns immediately with a conversation ID and a receiver channel.
+    /// The actual streaming happens in a spawned background task.
+    ///
+    /// # Returns
+    /// - `conversation_id` - The ID of the conversation (new or existing)
+    /// - `receiver` - Channel receiver for streaming events
+    ///
+    /// # Events
+    /// The receiver will emit:
+    /// - `StreamEvent::Token(String)` - Each token as it's generated
+    /// - `StreamEvent::ToolCallStart` - When a tool call begins
+    /// - `StreamEvent::ToolCallComplete` - When a tool call finishes
+    /// - `StreamEvent::Complete` - Final event with message_id and full response
+    /// - `StreamEvent::Error` - If an error occurs
+    #[instrument(skip(self, context))]
+    pub async fn send_message_streaming(
+        &self,
+        conversation_id: Option<Uuid>,
+        user_id: Uuid,
+        message: String,
+        context: UserContext,
+    ) -> ChatResult<(Uuid, mpsc::Receiver<StreamEvent>)> {
+        // Validate message input
+        if message.len() > MAX_MESSAGE_LENGTH {
+            return Err(ChatError::InvalidInput(format!(
+                "Message too long: {} characters (max {})",
+                message.len(),
+                MAX_MESSAGE_LENGTH
+            )));
+        }
+
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Err(ChatError::InvalidInput(
+                "Message cannot be empty".to_string(),
+            ));
+        }
+
+        // Create or get conversation
+        let conversation = match conversation_id {
+            Some(id) => self.get_conversation(id, user_id).await?,
+            None => {
+                // Generate title from first few words of message
+                let title = message
+                    .split_whitespace()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                self.create_conversation(user_id, Some(title)).await?
+            }
+        };
+
+        // Save user message
+        let user_message = self
+            .repository
+            .add_message(CreateChatMessage {
+                conversation_id: conversation.id,
+                user_id,
+                role: ChatRole::User,
+                content: Some(message.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+                context_snapshot: Some((&context).into()),
+                model_used: None,
+                token_count: None,
+            })
+            .await?;
+
+        info!(
+            conversation_id = %conversation.id,
+            message_id = %user_message.id,
+            "User message saved, starting streaming response"
+        );
+
+        // Create channel for streaming events
+        let (tx, rx) = mpsc::channel(STREAM_CHANNEL_CAPACITY);
+
+        // Clone self and context for the spawned task
+        let service = self.clone();
+        let conv_id = conversation.id;
+
+        // Spawn background task to handle streaming
+        tokio::spawn(async move {
+            service
+                .stream_with_tool_calls(conv_id, user_id, context, tx)
+                .await;
+        });
+
+        Ok((conversation.id, rx))
+    }
+
+    /// Internal method that performs streaming with tool call handling
+    ///
+    /// This runs in a spawned task and sends events through the channel.
+    async fn stream_with_tool_calls(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+        context: UserContext,
+        tx: mpsc::Sender<StreamEvent>,
+    ) {
+        let total_timeout = std::time::Duration::from_secs(
+            self.config
+                .timeout_secs
+                .saturating_mul(TOTAL_TIMEOUT_MULTIPLIER),
+        );
+
+        let result = tokio::time::timeout(
+            total_timeout,
+            self.stream_with_tool_calls_inner(conversation_id, user_id, &context, &tx),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(())) => {
+                // Successfully completed, Complete event already sent
+            }
+            Ok(Err(e)) => {
+                // Error during streaming
+                let _ = tx.send(StreamEvent::from_error(&e)).await;
+            }
+            Err(_) => {
+                // Timeout
+                let _ = tx
+                    .send(StreamEvent::Error {
+                        message: "Operation timed out".to_string(),
+                        code: StreamErrorCode::Timeout,
+                    })
+                    .await;
+            }
+        }
+    }
+
+    /// Inner implementation of streaming with tool calls
+    async fn stream_with_tool_calls_inner(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+        context: &UserContext,
+        tx: &mpsc::Sender<StreamEvent>,
+    ) -> ChatResult<()> {
+        // Get conversation history for context
+        let history = self
+            .repository
+            .get_recent_messages(conversation_id, user_id, MAX_CONTEXT_MESSAGES)
+            .await?;
+
+        let system_prompt = self.build_system_prompt(context);
+
+        // Convert history to Ollama format (without tool definitions for streaming)
+        let mut messages: Vec<resonance_ollama_client::ChatMessage> =
+            vec![resonance_ollama_client::ChatMessage::system(system_prompt)];
+
+        for msg in &history {
+            let role = match msg.role {
+                ChatRole::User => resonance_ollama_client::ChatRole::User,
+                ChatRole::Assistant => resonance_ollama_client::ChatRole::Assistant,
+                ChatRole::System => resonance_ollama_client::ChatRole::System,
+                ChatRole::Tool => continue, // Skip tool messages for now
+            };
+            messages.push(resonance_ollama_client::ChatMessage {
+                role,
+                content: msg.content.clone().unwrap_or_default(),
+            });
+        }
+
+        // Get Ollama client for streaming
+        let Some(ref ollama) = self.ollama_client else {
+            return Err(ChatError::OllamaResponse(
+                "Ollama client not configured for streaming".to_string(),
+            ));
+        };
+
+        // Start streaming
+        let mut stream = ollama
+            .chat_stream(messages, None)
+            .await
+            .map_err(|e| ChatError::OllamaResponse(format!("Failed to start stream: {}", e)))?;
+
+        let mut full_response = String::new();
+
+        // Process stream chunks
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    let content = &chunk.message.content;
+
+                    // Send token event if there's content
+                    if !content.is_empty() {
+                        full_response.push_str(content);
+
+                        if tx.send(StreamEvent::Token(content.clone())).await.is_err() {
+                            // Receiver dropped, client disconnected
+                            debug!("Stream receiver dropped, stopping");
+                            return Ok(());
+                        }
+                    }
+
+                    // Check if streaming is done
+                    if chunk.done {
+                        debug!(
+                            content_len = full_response.len(),
+                            done_reason = ?chunk.done_reason,
+                            "Stream complete"
+                        );
+                        break;
+                    }
+                }
+                Err(e) => {
+                    return Err(ChatError::OllamaResponse(format!("Stream error: {}", e)));
+                }
+            }
+        }
+
+        // NOTE: Tool calls during streaming are not yet supported.
+        // The Ollama streaming chat API doesn't include tool_calls in the same
+        // format as the non-streaming API. When Ollama adds support for streaming
+        // tool calls, this method should be updated to:
+        // 1. Detect tool_calls in the final chunk
+        // 2. Send StreamEvent::ToolCallStart for each tool
+        // 3. Execute the tool
+        // 4. Send StreamEvent::ToolCallComplete
+        // 5. Resume streaming with the tool result
+        let all_tool_calls: Vec<ToolCall> = Vec::new();
+        let all_actions: Vec<ChatAction> = Vec::new();
+
+        // Save the assistant message
+        let assistant_message = self
+            .repository
+            .add_message(CreateChatMessage {
+                conversation_id,
+                user_id,
+                role: ChatRole::Assistant,
+                content: Some(full_response.clone()),
+                tool_calls: if all_tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(all_tool_calls)
+                },
+                tool_call_id: None,
+                context_snapshot: None,
+                model_used: Some(self.config.model.clone()),
+                token_count: None,
+            })
+            .await?;
+
+        info!(
+            conversation_id = %conversation_id,
+            message_id = %assistant_message.id,
+            response_len = full_response.len(),
+            actions_count = all_actions.len(),
+            "Streaming response saved"
+        );
+
+        // Send complete event
+        let _ = tx
+            .send(StreamEvent::Complete {
+                message_id: assistant_message.id,
+                full_response,
+                actions: all_actions,
+            })
+            .await;
+
+        Ok(())
     }
 
     /// Chat with Ollama, handling tool calling loop with total operation timeout
@@ -1547,5 +1914,480 @@ mod tests {
         let chat_err = ChatError::Timeout;
         let api_err: ApiError = chat_err.into();
         assert!(matches!(api_err, ApiError::AiService(_)));
+    }
+
+    // ==================== StreamEvent Tests ====================
+
+    #[test]
+    fn test_stream_event_from_error_database() {
+        let err = ChatError::Database(sqlx::Error::RowNotFound);
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { code, .. } => {
+                assert_eq!(code, StreamErrorCode::Database);
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_conversation_not_found() {
+        let conv_id = Uuid::new_v4();
+        let err = ChatError::ConversationNotFound(conv_id);
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::ConversationNotFound);
+                assert!(message.contains(&conv_id.to_string()));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_ollama_response() {
+        let err = ChatError::OllamaResponse("Model not available".to_string());
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::OllamaResponse);
+                assert_eq!(message, "Model not available");
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_invalid_input() {
+        let err = ChatError::InvalidInput("Message too long".to_string());
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::InvalidInput);
+                assert_eq!(message, "Message too long");
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_timeout() {
+        let err = ChatError::Timeout;
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::Timeout);
+                assert!(message.contains("timed out"));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_from_error_tool_execution() {
+        let err = ChatError::ToolExecution {
+            tool_name: "search_library".to_string(),
+            message: "Search failed".to_string(),
+        };
+        let event = StreamEvent::from_error(&err);
+
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(code, StreamErrorCode::ToolExecution);
+                assert!(message.contains("search_library"));
+                assert!(message.contains("Search failed"));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_stream_error_code_equality() {
+        assert_eq!(StreamErrorCode::Database, StreamErrorCode::Database);
+        assert_ne!(StreamErrorCode::Database, StreamErrorCode::Timeout);
+        assert_eq!(
+            StreamErrorCode::ConversationNotFound,
+            StreamErrorCode::ConversationNotFound
+        );
+    }
+
+    // ==================== Channel Communication Tests ====================
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_token_events() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Simulate sending token events
+        let tokens = vec!["Hello", " ", "world", "!"];
+        for token in &tokens {
+            tx.send(StreamEvent::Token(token.to_string()))
+                .await
+                .unwrap();
+        }
+        drop(tx); // Close sender to end the stream
+
+        // Collect received events
+        let mut received_tokens = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::Token(t) = event {
+                received_tokens.push(t);
+            }
+        }
+
+        assert_eq!(received_tokens.len(), 4);
+        assert_eq!(received_tokens.join(""), "Hello world!");
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_complete_event() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        let message_id = Uuid::new_v4();
+        let full_response = "This is the full response".to_string();
+        let actions = vec![ChatAction {
+            action_type: "play_track".to_string(),
+            data: serde_json::json!({"track_id": "123"}),
+        }];
+
+        tx.send(StreamEvent::Complete {
+            message_id,
+            full_response: full_response.clone(),
+            actions: actions.clone(),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            StreamEvent::Complete {
+                message_id: recv_id,
+                full_response: recv_response,
+                actions: recv_actions,
+            } => {
+                assert_eq!(recv_id, message_id);
+                assert_eq!(recv_response, full_response);
+                assert_eq!(recv_actions.len(), 1);
+                assert_eq!(recv_actions[0].action_type, "play_track");
+            }
+            _ => panic!("Expected Complete event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_receives_error_event() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        tx.send(StreamEvent::Error {
+            message: "Something went wrong".to_string(),
+            code: StreamErrorCode::OllamaResponse,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            StreamEvent::Error { message, code } => {
+                assert_eq!(message, "Something went wrong");
+                assert_eq!(code, StreamErrorCode::OllamaResponse);
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_full_flow_tokens_then_complete() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Simulate a realistic streaming flow: tokens followed by complete
+        tokio::spawn(async move {
+            // Send tokens
+            tx.send(StreamEvent::Token("I".to_string())).await.unwrap();
+            tx.send(StreamEvent::Token(" recommend".to_string()))
+                .await
+                .unwrap();
+            tx.send(StreamEvent::Token(" this".to_string()))
+                .await
+                .unwrap();
+            tx.send(StreamEvent::Token(" song".to_string()))
+                .await
+                .unwrap();
+
+            // Send complete event
+            tx.send(StreamEvent::Complete {
+                message_id: Uuid::new_v4(),
+                full_response: "I recommend this song".to_string(),
+                actions: vec![],
+            })
+            .await
+            .unwrap();
+        });
+
+        // Collect all events
+        let mut token_count = 0;
+        let mut complete_count = 0;
+        let mut full_content = String::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(t) => {
+                    token_count += 1;
+                    full_content.push_str(&t);
+                }
+                StreamEvent::Complete { full_response, .. } => {
+                    complete_count += 1;
+                    assert_eq!(full_response, full_content);
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(token_count, 4);
+        assert_eq!(complete_count, 1);
+        assert_eq!(full_content, "I recommend this song");
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_handles_dropped_receiver() {
+        let (tx, rx) = mpsc::channel::<StreamEvent>(10);
+
+        // Drop the receiver immediately
+        drop(rx);
+
+        // Sending should fail gracefully (return Err)
+        let result = tx.send(StreamEvent::Token("test".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_tool_call_events() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(10);
+
+        let call_id = "call_123".to_string();
+
+        // Simulate tool call flow
+        tx.send(StreamEvent::ToolCallStart {
+            tool_name: "search_library".to_string(),
+            call_id: call_id.clone(),
+        })
+        .await
+        .unwrap();
+
+        tx.send(StreamEvent::ToolCallComplete {
+            call_id: call_id.clone(),
+            result: r#"{"results": []}"#.to_string(),
+        })
+        .await
+        .unwrap();
+
+        drop(tx);
+
+        // Verify events received in order
+        let event1 = rx.recv().await.unwrap();
+        match event1 {
+            StreamEvent::ToolCallStart { tool_name, call_id } => {
+                assert_eq!(tool_name, "search_library");
+                assert_eq!(call_id, "call_123");
+            }
+            _ => panic!("Expected ToolCallStart event"),
+        }
+
+        let event2 = rx.recv().await.unwrap();
+        match event2 {
+            StreamEvent::ToolCallComplete { call_id, result } => {
+                assert_eq!(call_id, "call_123");
+                assert!(result.contains("results"));
+            }
+            _ => panic!("Expected ToolCallComplete event"),
+        }
+    }
+
+    // ==================== Message Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_send_message_streaming_validates_empty_message() {
+        let service = test_service().await;
+        let user_id = Uuid::new_v4();
+        let context = UserContext {
+            user_id,
+            track_count: 10,
+            artist_count: 5,
+            album_count: 2,
+            playlist_count: 1,
+            top_genres: vec![],
+            current_track_id: None,
+            current_track_title: None,
+        };
+
+        let result = service
+            .send_message_streaming(None, user_id, "   ".to_string(), context)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(ChatError::InvalidInput(msg)) => {
+                assert!(msg.contains("empty"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_message_streaming_validates_message_length() {
+        let service = test_service().await;
+        let user_id = Uuid::new_v4();
+        let context = UserContext {
+            user_id,
+            track_count: 10,
+            artist_count: 5,
+            album_count: 2,
+            playlist_count: 1,
+            top_genres: vec![],
+            current_track_id: None,
+            current_track_title: None,
+        };
+
+        // Create a message longer than MAX_MESSAGE_LENGTH (10_000)
+        let long_message = "a".repeat(10_001);
+
+        let result = service
+            .send_message_streaming(None, user_id, long_message, context)
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(ChatError::InvalidInput(msg)) => {
+                assert!(msg.contains("too long"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    // ==================== StreamEvent Clone & Debug Tests ====================
+
+    #[test]
+    fn test_stream_event_clone() {
+        let token_event = StreamEvent::Token("test".to_string());
+        let cloned = token_event.clone();
+        if let (StreamEvent::Token(a), StreamEvent::Token(b)) = (&token_event, &cloned) {
+            assert_eq!(a, b);
+        } else {
+            panic!("Clone failed");
+        }
+
+        let error_event = StreamEvent::Error {
+            message: "error".to_string(),
+            code: StreamErrorCode::Timeout,
+        };
+        let cloned_error = error_event.clone();
+        if let StreamEvent::Error { code, .. } = cloned_error {
+            assert_eq!(code, StreamErrorCode::Timeout);
+        } else {
+            panic!("Clone failed");
+        }
+    }
+
+    #[test]
+    fn test_stream_event_debug() {
+        let token_event = StreamEvent::Token("hello".to_string());
+        let debug_str = format!("{:?}", token_event);
+        assert!(debug_str.contains("Token"));
+        assert!(debug_str.contains("hello"));
+
+        let complete_event = StreamEvent::Complete {
+            message_id: Uuid::nil(),
+            full_response: "test".to_string(),
+            actions: vec![],
+        };
+        let debug_str = format!("{:?}", complete_event);
+        assert!(debug_str.contains("Complete"));
+    }
+
+    #[test]
+    fn test_stream_error_code_debug_and_copy() {
+        let code = StreamErrorCode::Database;
+        let copied = code; // Copy
+        assert_eq!(code, copied);
+
+        let debug_str = format!("{:?}", code);
+        assert!(debug_str.contains("Database"));
+    }
+
+    // ==================== ChatAction Tests ====================
+
+    #[test]
+    fn test_chat_action_serialization() {
+        let action = ChatAction {
+            action_type: "play_track".to_string(),
+            data: serde_json::json!({"track_id": "abc-123"}),
+        };
+
+        let json = serde_json::to_string(&action).unwrap();
+        assert!(json.contains("play_track"));
+        assert!(json.contains("abc-123"));
+    }
+
+    #[test]
+    fn test_chat_action_clone() {
+        let action = ChatAction {
+            action_type: "add_to_queue".to_string(),
+            data: serde_json::json!({"track_ids": ["id1", "id2"]}),
+        };
+
+        let cloned = action.clone();
+        assert_eq!(cloned.action_type, action.action_type);
+        assert_eq!(cloned.data, action.data);
+    }
+
+    // ==================== Integration-Style Unit Tests ====================
+
+    #[tokio::test]
+    async fn test_stream_channel_capacity() {
+        // Test that channel with specific capacity works correctly
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(STREAM_CHANNEL_CAPACITY);
+
+        // Send several events
+        for i in 0..50 {
+            tx.send(StreamEvent::Token(format!("token_{}", i)))
+                .await
+                .unwrap();
+        }
+
+        // Receive and verify
+        let mut count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if let StreamEvent::Token(_) = event {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 50);
+    }
+
+    #[tokio::test]
+    async fn test_stream_event_ordering_preserved() {
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(100);
+
+        // Send numbered tokens
+        for i in 0..20 {
+            tx.send(StreamEvent::Token(i.to_string())).await.unwrap();
+        }
+        drop(tx);
+
+        // Verify order is preserved
+        let mut expected = 0;
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::Token(t) = event {
+                let num: i32 = t.parse().unwrap();
+                assert_eq!(num, expected);
+                expected += 1;
+            }
+        }
+        assert_eq!(expected, 20);
     }
 }
