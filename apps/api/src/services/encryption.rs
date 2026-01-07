@@ -138,19 +138,9 @@ impl EncryptionService {
     ///
     /// Returns `EncryptionError::Encryption` if the encryption operation fails
     pub fn encrypt(&self, plaintext: &str) -> Result<Vec<u8>, EncryptionError> {
-        // Generate a random 12-byte nonce
-        let nonce_bytes: [u8; NONCE_SIZE] = aes_gcm::aead::rand_core::RngCore::next_u64(&mut OsRng)
-            .to_le_bytes()
-            .into_iter()
-            .chain(
-                aes_gcm::aead::rand_core::RngCore::next_u64(&mut OsRng)
-                    .to_le_bytes()
-                    .into_iter()
-                    .take(4),
-            )
-            .collect::<Vec<u8>>()
-            .try_into()
-            .expect("nonce size mismatch");
+        // Generate a random 12-byte nonce using OsRng
+        let mut nonce_bytes = [0u8; NONCE_SIZE];
+        aes_gcm::aead::rand_core::RngCore::fill_bytes(&mut OsRng, &mut nonce_bytes);
 
         let nonce = Nonce::from_slice(&nonce_bytes);
 
