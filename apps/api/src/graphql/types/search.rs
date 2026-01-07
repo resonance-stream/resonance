@@ -561,7 +561,7 @@ pub struct FullTextSearchResult {
     /// Total number of hits across all types
     pub total_hits: i32,
     /// Query processing time in milliseconds
-    pub processing_time_ms: i32,
+    pub processing_time_ms: i64,
 }
 
 impl From<ServiceUnifiedSearchResults> for FullTextSearchResult {
@@ -583,7 +583,7 @@ impl From<ServiceUnifiedSearchResults> for FullTextSearchResult {
                 .map(FullTextArtistHit::from)
                 .collect(),
             total_hits: results.total_hits as i32,
-            processing_time_ms: results.processing_time_ms as i32,
+            processing_time_ms: results.processing_time_ms as i64,
         }
     }
 }
