@@ -26,6 +26,13 @@ use uuid::Uuid;
 use crate::error::{WorkerError, WorkerResult};
 use crate::AppState;
 
+// ==================== Configuration ====================
+
+/// Batch size for paginated indexing operations.
+/// This determines how many records are fetched and indexed at a time
+/// to handle large libraries gracefully without excessive memory usage.
+const BATCH_SIZE: i64 = 1000;
+
 // ==================== Index Names ====================
 
 /// Index name constants
@@ -344,43 +351,75 @@ async fn ensure_index_with_settings(
 
 // ==================== Track Indexing ====================
 
-/// Index all tracks from the database
+/// Index all tracks from the database using batched pagination
 async fn index_all_tracks(client: &Client, db: &PgPool) -> WorkerResult<()> {
-    let rows: Vec<TrackRow> = sqlx::query_as(
-        r#"
-        SELECT
-            t.id,
-            t.title,
-            t.artist_id,
-            a.name as artist_name,
-            t.album_id,
-            al.title as album_title,
-            t.genres,
-            t.ai_mood,
-            t.ai_tags,
-            t.duration_ms,
-            t.play_count,
-            t.explicit,
-            t.created_at,
-            t.updated_at
-        FROM tracks t
-        JOIN artists a ON t.artist_id = a.id
-        LEFT JOIN albums al ON t.album_id = al.id
-        "#,
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|e| WorkerError::Database(e))?;
+    // Get total count for progress tracking
+    let (total_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks")
+        .fetch_one(db)
+        .await
+        .map_err(WorkerError::Database)?;
 
-    let documents: Vec<TrackDocument> = rows.into_iter().map(track_row_to_document).collect();
-
-    if documents.is_empty() {
+    if total_count == 0 {
         info!("No tracks to index");
         return Ok(());
     }
 
-    index_documents(client, indexes::TRACKS, &documents).await?;
-    info!(count = documents.len(), "Indexed all tracks");
+    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched track indexing");
+
+    let mut offset: i64 = 0;
+    let mut total_indexed: i64 = 0;
+
+    while offset < total_count {
+        let rows: Vec<TrackRow> = sqlx::query_as(
+            r#"
+            SELECT
+                t.id,
+                t.title,
+                t.artist_id,
+                a.name as artist_name,
+                t.album_id,
+                al.title as album_title,
+                t.genres,
+                t.ai_mood,
+                t.ai_tags,
+                t.duration_ms,
+                t.play_count,
+                t.explicit,
+                t.created_at,
+                t.updated_at
+            FROM tracks t
+            JOIN artists a ON t.artist_id = a.id
+            LEFT JOIN albums al ON t.album_id = al.id
+            ORDER BY t.id
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(BATCH_SIZE)
+        .bind(offset)
+        .fetch_all(db)
+        .await
+        .map_err(WorkerError::Database)?;
+
+        let batch_count = rows.len() as i64;
+        if batch_count == 0 {
+            break;
+        }
+
+        let documents: Vec<TrackDocument> = rows.into_iter().map(track_row_to_document).collect();
+        index_documents(client, indexes::TRACKS, &documents).await?;
+
+        total_indexed += batch_count;
+        offset += BATCH_SIZE;
+
+        debug!(
+            indexed = total_indexed,
+            total = total_count,
+            progress_pct = (total_indexed * 100 / total_count),
+            "Track indexing progress"
+        );
+    }
+
+    info!(count = total_indexed, "Indexed all tracks");
     Ok(())
 }
 
@@ -453,37 +492,69 @@ fn track_row_to_document(row: TrackRow) -> TrackDocument {
 
 // ==================== Album Indexing ====================
 
-/// Index all albums from the database
+/// Index all albums from the database using batched pagination
 async fn index_all_albums(client: &Client, db: &PgPool) -> WorkerResult<()> {
-    let rows: Vec<AlbumRow> = sqlx::query_as(
-        r#"
-        SELECT
-            al.id,
-            al.title,
-            al.artist_id,
-            a.name as artist_name,
-            al.genres,
-            al.album_type::text as album_type,
-            al.release_date,
-            al.total_tracks,
-            al.created_at
-        FROM albums al
-        JOIN artists a ON al.artist_id = a.id
-        "#,
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|e| WorkerError::Database(e))?;
+    // Get total count for progress tracking
+    let (total_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM albums")
+        .fetch_one(db)
+        .await
+        .map_err(WorkerError::Database)?;
 
-    let documents: Vec<AlbumDocument> = rows.into_iter().map(album_row_to_document).collect();
-
-    if documents.is_empty() {
+    if total_count == 0 {
         info!("No albums to index");
         return Ok(());
     }
 
-    index_documents(client, indexes::ALBUMS, &documents).await?;
-    info!(count = documents.len(), "Indexed all albums");
+    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched album indexing");
+
+    let mut offset: i64 = 0;
+    let mut total_indexed: i64 = 0;
+
+    while offset < total_count {
+        let rows: Vec<AlbumRow> = sqlx::query_as(
+            r#"
+            SELECT
+                al.id,
+                al.title,
+                al.artist_id,
+                a.name as artist_name,
+                al.genres,
+                al.album_type::text as album_type,
+                al.release_date,
+                al.total_tracks,
+                al.created_at
+            FROM albums al
+            JOIN artists a ON al.artist_id = a.id
+            ORDER BY al.id
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(BATCH_SIZE)
+        .bind(offset)
+        .fetch_all(db)
+        .await
+        .map_err(WorkerError::Database)?;
+
+        let batch_count = rows.len() as i64;
+        if batch_count == 0 {
+            break;
+        }
+
+        let documents: Vec<AlbumDocument> = rows.into_iter().map(album_row_to_document).collect();
+        index_documents(client, indexes::ALBUMS, &documents).await?;
+
+        total_indexed += batch_count;
+        offset += BATCH_SIZE;
+
+        debug!(
+            indexed = total_indexed,
+            total = total_count,
+            progress_pct = (total_indexed * 100 / total_count),
+            "Album indexing progress"
+        );
+    }
+
+    info!(count = total_indexed, "Indexed all albums");
     Ok(())
 }
 
@@ -547,33 +618,65 @@ fn album_row_to_document(row: AlbumRow) -> AlbumDocument {
 
 // ==================== Artist Indexing ====================
 
-/// Index all artists from the database
+/// Index all artists from the database using batched pagination
 async fn index_all_artists(client: &Client, db: &PgPool) -> WorkerResult<()> {
-    let rows: Vec<ArtistRow> = sqlx::query_as(
-        r#"
-        SELECT
-            id,
-            name,
-            sort_name,
-            genres,
-            biography,
-            created_at
-        FROM artists
-        "#,
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|e| WorkerError::Database(e))?;
+    // Get total count for progress tracking
+    let (total_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM artists")
+        .fetch_one(db)
+        .await
+        .map_err(WorkerError::Database)?;
 
-    let documents: Vec<ArtistDocument> = rows.into_iter().map(artist_row_to_document).collect();
-
-    if documents.is_empty() {
+    if total_count == 0 {
         info!("No artists to index");
         return Ok(());
     }
 
-    index_documents(client, indexes::ARTISTS, &documents).await?;
-    info!(count = documents.len(), "Indexed all artists");
+    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched artist indexing");
+
+    let mut offset: i64 = 0;
+    let mut total_indexed: i64 = 0;
+
+    while offset < total_count {
+        let rows: Vec<ArtistRow> = sqlx::query_as(
+            r#"
+            SELECT
+                id,
+                name,
+                sort_name,
+                genres,
+                biography,
+                created_at
+            FROM artists
+            ORDER BY id
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(BATCH_SIZE)
+        .bind(offset)
+        .fetch_all(db)
+        .await
+        .map_err(WorkerError::Database)?;
+
+        let batch_count = rows.len() as i64;
+        if batch_count == 0 {
+            break;
+        }
+
+        let documents: Vec<ArtistDocument> = rows.into_iter().map(artist_row_to_document).collect();
+        index_documents(client, indexes::ARTISTS, &documents).await?;
+
+        total_indexed += batch_count;
+        offset += BATCH_SIZE;
+
+        debug!(
+            indexed = total_indexed,
+            total = total_count,
+            progress_pct = (total_indexed * 100 / total_count),
+            "Artist indexing progress"
+        );
+    }
+
+    info!(count = total_indexed, "Indexed all artists");
     Ok(())
 }
 
@@ -672,6 +775,20 @@ async fn wait_for_task(client: &Client, task: TaskInfo) -> WorkerResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_batch_size_is_reasonable() {
+        // Batch size should be positive and reasonable for large libraries
+        assert!(BATCH_SIZE > 0, "Batch size must be positive");
+        assert!(
+            BATCH_SIZE >= 100,
+            "Batch size should be at least 100 to avoid too many round trips"
+        );
+        assert!(
+            BATCH_SIZE <= 10000,
+            "Batch size should not be too large to avoid memory issues"
+        );
+    }
 
     #[test]
     fn test_track_document_serialization() {
