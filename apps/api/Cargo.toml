@@ -57,6 +57,10 @@ argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 sha2 = { workspace = true }
 
+# Encryption
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+
 # Internal crates
 resonance-shared-config = { workspace = true }
 resonance-lastfm-client = { workspace = true }

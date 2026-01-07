@@ -8,9 +8,11 @@
 //! - External service integrations
 //! - Health checks
 //! - AI chat assistant
+//! - Encryption for sensitive data
 
 pub mod auth;
 pub mod chat;
+pub mod encryption;
 pub mod health;
 pub mod lastfm;
 pub mod listenbrainz;
@@ -20,6 +22,8 @@ pub mod similarity;
 pub mod transcoder;
 
 pub use auth::AuthService;
+#[allow(unused_imports)] // Used for system settings encryption
+pub use encryption::{EncryptionError, EncryptionService};
 pub use health::HealthService;
 #[allow(unused_imports)] // Will be used once integrated into mutations
 pub use playlist::PlaylistService;
