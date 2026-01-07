@@ -40,6 +40,7 @@ export function LastFmConfigDialog({
   const [enabled, setEnabled] = useState(false)
   const [updateApiKey, setUpdateApiKey] = useState(false)
   const [apiKey, setApiKey] = useState('')
+  const [sharedSecret, setSharedSecret] = useState('')
 
   // Reset form when dialog opens with new setting
   useEffect(() => {
@@ -47,24 +48,33 @@ export function LastFmConfigDialog({
       setEnabled(setting.enabled)
       setUpdateApiKey(false)
       setApiKey('')
+      setSharedSecret('')
     }
   }, [setting, open])
 
+  if (!setting) return null
+
+  const hasExistingSecret = setting.hasSecret
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Build secret object with apiKey and optional sharedSecret
+    let secretValue: string | undefined
+    if (updateApiKey || !hasExistingSecret) {
+      secretValue = JSON.stringify({
+        apiKey,
+        ...(sharedSecret && { sharedSecret }),
+      })
+    }
 
     onSave({
       service: 'LASTFM',
       enabled,
       config: JSON.stringify({}),
-      // Only send the API key if the user opted to update it
-      secret: updateApiKey ? apiKey : undefined,
+      secret: secretValue,
     })
   }
-
-  if (!setting) return null
-
-  const hasExistingSecret = setting.hasSecret
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -116,7 +126,7 @@ export function LastFmConfigDialog({
             </ul>
           </div>
 
-          {/* API Key Section */}
+          {/* Credentials Section */}
           <div className="space-y-3">
             {hasExistingSecret && (
               <label className="flex items-center gap-2 cursor-pointer">
@@ -127,50 +137,72 @@ export function LastFmConfigDialog({
                     setUpdateApiKey(e.target.checked)
                     if (!e.target.checked) {
                       setApiKey('')
+                      setSharedSecret('')
                     }
                   }}
                   className="rounded border-background-tertiary bg-background-secondary text-accent focus:ring-accent-glow"
                 />
                 <span className="text-sm text-text-secondary">
-                  Update API Key
+                  Update Credentials
                 </span>
               </label>
             )}
 
             {(!hasExistingSecret || updateApiKey) && (
-              <div>
-                <label
-                  htmlFor="lastfm-api-key"
-                  className="block text-sm font-medium text-text-primary mb-1"
-                >
-                  API Key {!hasExistingSecret && <span className="text-error">*</span>}
-                </label>
-                <Input
-                  id="lastfm-api-key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter API key"
-                  required={!hasExistingSecret}
-                />
-                <p className="text-xs text-text-tertiary mt-1">
-                  Create an API account at{' '}
-                  <a
-                    href="https://www.last.fm/api/account/create"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent hover:underline"
+              <>
+                <div>
+                  <label
+                    htmlFor="lastfm-api-key"
+                    className="block text-sm font-medium text-text-primary mb-1"
                   >
-                    last.fm/api
-                  </a>
-                </p>
-              </div>
+                    API Key {!hasExistingSecret && <span className="text-error">*</span>}
+                  </label>
+                  <Input
+                    id="lastfm-api-key"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Enter API key"
+                    required={!hasExistingSecret}
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    Create an API account at{' '}
+                    <a
+                      href="https://www.last.fm/api/account/create"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent hover:underline"
+                    >
+                      last.fm/api
+                    </a>
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="lastfm-shared-secret"
+                    className="block text-sm font-medium text-text-primary mb-1"
+                  >
+                    Shared Secret <span className="text-text-tertiary">(optional)</span>
+                  </label>
+                  <Input
+                    id="lastfm-shared-secret"
+                    type="password"
+                    value={sharedSecret}
+                    onChange={(e) => setSharedSecret(e.target.value)}
+                    placeholder="Enter shared secret"
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    Required for scrobbling. Found on your API account page.
+                  </p>
+                </div>
+              </>
             )}
 
             {hasExistingSecret && !updateApiKey && (
               <p className="text-xs text-text-tertiary flex items-center gap-1">
                 <CheckCircle className="h-3 w-3 text-mint" />
-                API Key is configured
+                Credentials are configured
               </p>
             )}
           </div>
