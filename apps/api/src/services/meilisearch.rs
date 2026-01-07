@@ -7,8 +7,13 @@
 //! - `tracks` - Full-text search for track title, artist, album, genres, moods
 //! - `albums` - Full-text search for album title, artist, genres
 //! - `artists` - Full-text search for artist name, genres, biography
+//!
+//! ## Filter Security
+//! All user-provided filter strings are validated and sanitized to prevent injection attacks.
+//! See the [`filter`] module for details on allowed filter syntax and attribute restrictions.
 
 use meilisearch_sdk::client::Client;
+use meilisearch_sdk::errors::{Error as MeilisearchSdkError, ErrorCode};
 use meilisearch_sdk::search::SearchResults;
 use meilisearch_sdk::settings::Settings;
 use meilisearch_sdk::task_info::TaskInfo;
@@ -411,24 +416,36 @@ impl MeilisearchService {
     }
 
     /// Ensure an index exists with the given settings
+    ///
+    /// This method is idempotent - if the index already exists, it will skip creation
+    /// and only update the settings.
     async fn ensure_index_with_settings(
         &self,
         index_name: &str,
         settings: Settings,
     ) -> ApiResult<()> {
-        // Create index if it doesn't exist
-        let task = self
-            .client
-            .create_index(index_name, Some("id"))
-            .await
-            .map_err(|e| {
-                ApiError::Search(format!("Failed to create index {}: {}", index_name, e))
-            })?;
+        // Create index if it doesn't exist (handle IndexAlreadyExists gracefully)
+        match self.client.create_index(index_name, Some("id")).await {
+            Ok(task) => {
+                // Wait for index creation
+                self.wait_for_task(task).await?;
+                debug!(index = index_name, "Index created");
+            }
+            Err(MeilisearchSdkError::Meilisearch(ref e))
+                if e.error_code == ErrorCode::IndexAlreadyExists =>
+            {
+                // Index already exists - this is fine, we'll just update settings
+                debug!(index = index_name, "Index already exists, skipping creation");
+            }
+            Err(e) => {
+                return Err(ApiError::Search(format!(
+                    "Failed to create index {}: {}",
+                    index_name, e
+                )));
+            }
+        }
 
-        // Wait for index creation
-        self.wait_for_task(task).await?;
-
-        // Apply settings
+        // Apply settings (this is idempotent - always apply to ensure consistency)
         let index = self.client.index(index_name);
         let task = index.set_settings(&settings).await.map_err(|e| {
             ApiError::Search(format!("Failed to set settings for {}: {}", index_name, e))
