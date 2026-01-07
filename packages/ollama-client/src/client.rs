@@ -552,6 +552,10 @@ impl OllamaClient {
     }
 }
 
+/// Maximum buffer size for NDJSON stream lines (1 MB)
+/// Prevents memory exhaustion from malformed responses without newlines
+const MAX_LINE_BUFFER_SIZE: usize = 1024 * 1024;
+
 /// A stream adapter that parses NDJSON (newline-delimited JSON) from a byte stream
 ///
 /// Uses a byte buffer internally to handle multi-byte UTF-8 characters that may be
@@ -589,6 +593,8 @@ where
             let line_bytes: Vec<u8> = self.buffer.drain(..=newline_pos).collect();
             // Remove the trailing newline
             let line_bytes = &line_bytes[..line_bytes.len() - 1];
+            // Strip carriage return if present (CRLF -> LF)
+            let line_bytes = line_bytes.strip_suffix(&[b'\r']).unwrap_or(line_bytes);
 
             // Convert to UTF-8 only when we have a complete line
             let line = match std::str::from_utf8(line_bytes) {
@@ -624,6 +630,13 @@ where
                 // Append raw bytes to buffer - no UTF-8 conversion needed here
                 // This correctly handles multi-byte UTF-8 characters split across chunks
                 self.buffer.extend_from_slice(&bytes);
+
+                // Check buffer size limit to prevent memory exhaustion
+                if self.buffer.len() > MAX_LINE_BUFFER_SIZE {
+                    return Poll::Ready(Some(Err(OllamaError::ApiError(
+                        "Stream buffer exceeded maximum size".to_string(),
+                    ))));
+                }
 
                 // Try to extract a line now
                 if let Some(newline_pos) = self.buffer.iter().position(|&b| b == b'\n') {
@@ -1133,5 +1146,27 @@ not valid json
         let result = ndjson_stream.next().await.unwrap().unwrap();
         assert_eq!(result.message.content, "😀");
         assert!(result.done);
+    }
+
+    #[tokio::test]
+    async fn test_ndjson_stream_buffer_size_limit() {
+        use tokio_stream::iter;
+
+        // Create data larger than MAX_LINE_BUFFER_SIZE (1 MB) without a newline
+        // to trigger the buffer size limit error
+        let large_data = vec![b'x'; MAX_LINE_BUFFER_SIZE + 100];
+        let chunk = Bytes::from(large_data);
+
+        let byte_stream = iter(vec![Ok::<_, std::io::Error>(chunk)]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let result = ndjson_stream.next().await.unwrap();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            OllamaError::ApiError(msg) => {
+                assert!(msg.contains("buffer exceeded maximum size"));
+            }
+            e => panic!("Expected ApiError, got: {:?}", e),
+        }
     }
 }
