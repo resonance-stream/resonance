@@ -160,6 +160,9 @@ fn encrypt_token(encryption_service: Option<&EncryptionService>, token: &str) ->
 /// Handles both encrypted (base64) and legacy plaintext tokens for backwards compatibility.
 /// If the token appears to be base64-encoded encrypted data, it will be decrypted.
 /// Otherwise, it's treated as a legacy plaintext token.
+///
+/// For backward compatibility, if decryption fails (e.g., wrong key, corrupted data),
+/// the original stored token is returned as-is, assuming it may be a legacy plaintext token.
 fn decrypt_token(
     encryption_service: Option<&EncryptionService>,
     stored_token: &str,
@@ -169,12 +172,19 @@ fn decrypt_token(
             // Try to decode as base64 (encrypted format)
             match BASE64.decode(stored_token) {
                 Ok(encrypted) => {
-                    service.decrypt(&encrypted).map_err(|e| {
-                        // If decryption fails, it might be a legacy plaintext token
-                        // Log as warning rather than error since this is expected during migration
-                        warn!(error = %e, "Failed to decrypt token - may be legacy plaintext");
-                        async_graphql::Error::new("Failed to decrypt stored token")
-                    })
+                    match service.decrypt(&encrypted) {
+                        Ok(decrypted) => Ok(decrypted),
+                        Err(e) => {
+                            // If decryption fails, it might be a legacy plaintext token
+                            // or data encrypted with a different key. Fall back to plaintext
+                            // for backward compatibility during migration.
+                            warn!(
+                                error = %e,
+                                "Failed to decrypt token - falling back to plaintext for backward compatibility"
+                            );
+                            Ok(stored_token.to_string())
+                        }
+                    }
                 }
                 Err(_) => {
                     // Not valid base64 - treat as legacy plaintext token
