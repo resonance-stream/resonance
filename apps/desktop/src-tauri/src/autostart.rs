@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_module_compiles() {
-        // Ensures the module compiles correctly
-        assert!(true);
+        // Ensures the module compiles correctly.
+        // The test existing and compiling is sufficient - no assertion needed.
     }
 }
