@@ -84,7 +84,7 @@ pub struct TrackDocument {
 
 impl TrackDocument {
     /// Create a new track document from database fields
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub fn new(
         track_id: Uuid,
         title: String,
@@ -149,7 +149,7 @@ pub struct AlbumDocument {
 
 impl AlbumDocument {
     /// Create a new album document from database fields
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub fn new(
         album_id: Uuid,
         title: String,
