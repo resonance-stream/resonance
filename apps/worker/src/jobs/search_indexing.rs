@@ -364,7 +364,11 @@ async fn index_all_tracks(client: &Client, db: &PgPool) -> WorkerResult<()> {
         return Ok(());
     }
 
-    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched track indexing");
+    info!(
+        total = total_count,
+        batch_size = BATCH_SIZE,
+        "Starting batched track indexing"
+    );
 
     let mut offset: i64 = 0;
     let mut total_indexed: i64 = 0;
@@ -505,7 +509,11 @@ async fn index_all_albums(client: &Client, db: &PgPool) -> WorkerResult<()> {
         return Ok(());
     }
 
-    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched album indexing");
+    info!(
+        total = total_count,
+        batch_size = BATCH_SIZE,
+        "Starting batched album indexing"
+    );
 
     let mut offset: i64 = 0;
     let mut total_indexed: i64 = 0;
@@ -631,7 +639,11 @@ async fn index_all_artists(client: &Client, db: &PgPool) -> WorkerResult<()> {
         return Ok(());
     }
 
-    info!(total = total_count, batch_size = BATCH_SIZE, "Starting batched artist indexing");
+    info!(
+        total = total_count,
+        batch_size = BATCH_SIZE,
+        "Starting batched artist indexing"
+    );
 
     let mut offset: i64 = 0;
     let mut total_indexed: i64 = 0;

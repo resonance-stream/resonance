@@ -189,8 +189,12 @@ impl ListenBrainzServiceBuilder {
         };
 
         // Build the HTTP client
-        let timeout = self.timeout.unwrap_or(Duration::from_secs(HTTP_TIMEOUT_SECS));
-        let user_agent = self.user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
+        let timeout = self
+            .timeout
+            .unwrap_or(Duration::from_secs(HTTP_TIMEOUT_SECS));
+        let user_agent = self
+            .user_agent
+            .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
 
         let client = Client::builder()
             .timeout(timeout)
@@ -599,16 +603,21 @@ impl ListenBrainzService {
                 Err(e) => {
                     // Only retry on connection/timeout errors, not HTTP errors
                     if e.is_connect() || e.is_timeout() {
-                        let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << attempt));
-                        warn!(
-                            attempt = attempt + 1,
-                            max_retries = MAX_RETRIES,
-                            delay_ms = delay.as_millis(),
-                            error = %e,
-                            "Retrying ListenBrainz API request"
-                        );
-                        tokio::time::sleep(delay).await;
                         last_error = Some(e);
+
+                        // Skip sleep on the final attempt - no more retries will follow
+                        if attempt + 1 < MAX_RETRIES {
+                            let delay =
+                                Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << attempt));
+                            warn!(
+                                attempt = attempt + 1,
+                                max_retries = MAX_RETRIES,
+                                delay_ms = delay.as_millis(),
+                                error = %last_error.as_ref().unwrap(),
+                                "Retrying ListenBrainz API request"
+                            );
+                            tokio::time::sleep(delay).await;
+                        }
                     } else {
                         return Err(e);
                     }
