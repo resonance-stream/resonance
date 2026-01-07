@@ -31,13 +31,16 @@ export function LibraryStep({ onNext, onBack }: LibraryStepProps): JSX.Element {
     e.preventDefault()
     setValidationError(null)
 
-    if (!libraryPath.trim()) {
+    // Trim whitespace from path before validation
+    const trimmedPath = libraryPath.trim()
+
+    if (!trimmedPath) {
       setValidationError('Please enter a library path')
       return
     }
 
     // Basic path validation
-    if (!libraryPath.startsWith('/')) {
+    if (!trimmedPath.startsWith('/')) {
       setValidationError('Path must be an absolute path (starting with /)')
       return
     }
@@ -46,7 +49,7 @@ export function LibraryStep({ onNext, onBack }: LibraryStepProps): JSX.Element {
       await updateSetting.mutateAsync({
         service: 'MUSIC_LIBRARY',
         enabled: true,
-        config: JSON.stringify({ path: libraryPath }),
+        config: JSON.stringify({ path: trimmedPath }),
       })
       onNext()
     } catch {
