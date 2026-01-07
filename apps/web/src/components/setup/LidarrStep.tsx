@@ -29,6 +29,8 @@ export function LidarrStep({ onNext, onBack }: LidarrStepProps): JSX.Element {
     message: string
     version?: string | null
   } | null>(null)
+  // Track saved values to avoid duplicate save on submit after test
+  const [savedConfig, setSavedConfig] = useState<{ url: string; apiKey: string } | null>(null)
 
   const updateSetting = useUpdateSystemSetting()
   const testConnection = useTestServiceConnection()
@@ -51,6 +53,8 @@ export function LidarrStep({ onNext, onBack }: LidarrStepProps): JSX.Element {
         config: JSON.stringify({ url: lidarrUrl }),
         secret: apiKey,
       })
+      // Track saved config to avoid duplicate save on submit
+      setSavedConfig({ url: lidarrUrl, apiKey })
 
       const result = await testConnection.mutateAsync('LIDARR')
 
@@ -82,12 +86,19 @@ export function LidarrStep({ onNext, onBack }: LidarrStepProps): JSX.Element {
     }
 
     try {
-      await updateSetting.mutateAsync({
-        service: 'LIDARR',
-        enabled: true,
-        config: JSON.stringify({ url: lidarrUrl }),
-        secret: apiKey,
-      })
+      // Skip save if config hasn't changed since last test (avoid duplicate API call)
+      const configChanged = !savedConfig ||
+        savedConfig.url !== lidarrUrl ||
+        savedConfig.apiKey !== apiKey
+
+      if (configChanged) {
+        await updateSetting.mutateAsync({
+          service: 'LIDARR',
+          enabled: true,
+          config: JSON.stringify({ url: lidarrUrl }),
+          secret: apiKey,
+        })
+      }
       onNext()
     } catch {
       // Error handled by mutation

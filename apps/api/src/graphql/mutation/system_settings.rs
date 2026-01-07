@@ -21,7 +21,17 @@ use crate::graphql::types::{
 use crate::models::system_settings::{ServiceType as DbServiceType, SystemSettingInput};
 use crate::models::user::{Claims, UserPreferences, UserRole};
 use crate::repositories::{SystemSettingsRepository, UserRepository};
+use crate::services::auth::is_valid_email;
 use crate::services::{AuthService, EncryptionService, HealthService};
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Advisory lock ID for initial admin creation
+/// This lock prevents TOCTOU race conditions when checking if users exist
+/// and creating the first admin user. Reserved exclusively for this purpose.
+const INITIAL_ADMIN_LOCK_ID: i64 = 1;
 
 // =============================================================================
 // Helper Functions
@@ -106,7 +116,7 @@ impl SystemSettingsMutation {
         })?;
 
         // Acquire advisory lock (released automatically when transaction ends)
-        sqlx::query("SELECT pg_advisory_xact_lock(1)")
+        sqlx::query(&format!("SELECT pg_advisory_xact_lock({})", INITIAL_ADMIN_LOCK_ID))
             .execute(&mut *tx)
             .await
             .map_err(|e| {
@@ -138,27 +148,9 @@ impl SystemSettingsMutation {
             ));
         }
 
-        // Validate email format
+        // Validate email format using shared validation from auth service
         let email = input.email.trim();
-        if email.is_empty() || email.len() > 254 {
-            return Err(async_graphql::Error::new(
-                "Email must be between 1 and 254 characters",
-            ));
-        }
-        // Basic email format validation: must contain @ with non-empty local and domain parts,
-        // domain must contain at least one dot and not start/end with a dot
-        if !email.contains('@') {
-            return Err(async_graphql::Error::new("Invalid email format"));
-        }
-        let parts: Vec<&str> = email.splitn(2, '@').collect();
-        let domain = parts.get(1).copied().unwrap_or("");
-        if parts.len() != 2
-            || parts[0].is_empty()
-            || domain.is_empty()
-            || !domain.contains('.')
-            || domain.starts_with('.')
-            || domain.ends_with('.')
-        {
+        if !is_valid_email(email) {
             return Err(async_graphql::Error::new("Invalid email format"));
         }
 
@@ -887,55 +879,7 @@ mod tests {
         assert!(result.error.is_some());
     }
 
-    /// Helper function to validate email format (mirrors the logic in create_initial_admin)
-    fn validate_email(email: &str) -> Result<(), &'static str> {
-        let email = email.trim();
-        if email.is_empty() || email.len() > 254 {
-            return Err("Email must be between 1 and 254 characters");
-        }
-        if !email.contains('@') {
-            return Err("Invalid email format");
-        }
-        let parts: Vec<&str> = email.splitn(2, '@').collect();
-        let domain = parts.get(1).copied().unwrap_or("");
-        if parts.len() != 2
-            || parts[0].is_empty()
-            || domain.is_empty()
-            || !domain.contains('.')
-            || domain.starts_with('.')
-            || domain.ends_with('.')
-        {
-            return Err("Invalid email format");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_email_validation_valid_emails() {
-        // Valid emails
-        assert!(validate_email("user@example.com").is_ok());
-        assert!(validate_email("admin@test.org").is_ok());
-        assert!(validate_email("name.surname@company.co.uk").is_ok());
-        assert!(validate_email("user123@mail-server.net").is_ok());
-        assert!(validate_email("a@b.co").is_ok());
-        assert!(validate_email("  user@example.com  ").is_ok()); // Trimmed whitespace
-    }
-
-    #[test]
-    fn test_email_validation_invalid_emails() {
-        // Missing @
-        assert!(validate_email("userexample.com").is_err());
-        // Empty local part
-        assert!(validate_email("@example.com").is_err());
-        // Empty domain part
-        assert!(validate_email("user@").is_err());
-        // No dot in domain
-        assert!(validate_email("user@localhost").is_err());
-        // Empty string
-        assert!(validate_email("").is_err());
-        // Only whitespace
-        assert!(validate_email("   ").is_err());
-        // Missing domain after @
-        assert!(validate_email("user@.com").is_err());
-    }
+    // Note: Email validation tests are in services/auth.rs where is_valid_email is defined.
+    // The create_initial_admin mutation uses that shared function, ensuring consistent behavior.
+    // See test_is_valid_email in auth.rs for comprehensive email validation test coverage.
 }
