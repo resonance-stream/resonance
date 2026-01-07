@@ -138,6 +138,27 @@ impl SystemSettingsMutation {
             ));
         }
 
+        // Validate email format
+        let email = input.email.trim();
+        if email.is_empty() || email.len() > 254 {
+            return Err(async_graphql::Error::new(
+                "Email must be between 1 and 254 characters",
+            ));
+        }
+        // Basic email format validation: must contain @ with non-empty local and domain parts,
+        // and domain must contain at least one dot
+        if !email.contains('@') {
+            return Err(async_graphql::Error::new("Invalid email format"));
+        }
+        let parts: Vec<&str> = email.splitn(2, '@').collect();
+        if parts.len() != 2
+            || parts[0].is_empty()
+            || parts[1].is_empty()
+            || !parts[1].contains('.')
+        {
+            return Err(async_graphql::Error::new("Invalid email format"));
+        }
+
         // Use AuthService's internal validation and password hashing
         // First, hash the password using the auth service's method
         let password_hash = {
@@ -180,7 +201,7 @@ impl SystemSettingsMutation {
             RETURNING *
             "#,
         )
-        .bind(&input.email)
+        .bind(email)
         .bind(&password_hash)
         .bind(&input.username)
         .bind(UserRole::Admin)
@@ -395,7 +416,7 @@ impl SystemSettingsMutation {
                 } else {
                     return Ok(ConnectionTestResult {
                         success: false,
-                        response_time_ms: None,
+                        response_time_ms: Some(start.elapsed().as_millis() as i64),
                         version: None,
                         error: Some("Lidarr API key not configured".to_string()),
                     });
@@ -417,7 +438,7 @@ impl SystemSettingsMutation {
                 } else {
                     return Ok(ConnectionTestResult {
                         success: false,
-                        response_time_ms: None,
+                        response_time_ms: Some(start.elapsed().as_millis() as i64),
                         version: None,
                         error: Some("Last.fm API key not configured".to_string()),
                     });
@@ -846,5 +867,54 @@ mod tests {
             .block_on(test_music_library_path("/nonexistent/path/12345"));
         assert!(!result.success);
         assert!(result.error.is_some());
+    }
+
+    /// Helper function to validate email format (mirrors the logic in create_initial_admin)
+    fn validate_email(email: &str) -> Result<(), &'static str> {
+        let email = email.trim();
+        if email.is_empty() || email.len() > 254 {
+            return Err("Email must be between 1 and 254 characters");
+        }
+        if !email.contains('@') {
+            return Err("Invalid email format");
+        }
+        let parts: Vec<&str> = email.splitn(2, '@').collect();
+        if parts.len() != 2
+            || parts[0].is_empty()
+            || parts[1].is_empty()
+            || !parts[1].contains('.')
+        {
+            return Err("Invalid email format");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_email_validation_valid_emails() {
+        // Valid emails
+        assert!(validate_email("user@example.com").is_ok());
+        assert!(validate_email("admin@test.org").is_ok());
+        assert!(validate_email("name.surname@company.co.uk").is_ok());
+        assert!(validate_email("user123@mail-server.net").is_ok());
+        assert!(validate_email("a@b.co").is_ok());
+        assert!(validate_email("  user@example.com  ").is_ok()); // Trimmed whitespace
+    }
+
+    #[test]
+    fn test_email_validation_invalid_emails() {
+        // Missing @
+        assert!(validate_email("userexample.com").is_err());
+        // Empty local part
+        assert!(validate_email("@example.com").is_err());
+        // Empty domain part
+        assert!(validate_email("user@").is_err());
+        // No dot in domain
+        assert!(validate_email("user@localhost").is_err());
+        // Empty string
+        assert!(validate_email("").is_err());
+        // Only whitespace
+        assert!(validate_email("   ").is_err());
+        // Missing domain after @
+        assert!(validate_email("user@.com").is_err());
     }
 }
