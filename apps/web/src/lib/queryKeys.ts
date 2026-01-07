@@ -160,6 +160,25 @@ export type ChatQueryKey = ReturnType<
   | typeof chatKeys.conversation
 >
 
+/**
+ * Query key factory for user library path queries
+ *
+ * Provides cache keys for user-specific library path management:
+ * - User's configured library paths
+ */
+export const libraryPathKeys = {
+  /** Root key for all library path queries */
+  all: ['libraryPaths'] as const,
+
+  /** Current user's library paths */
+  list: () => [...libraryPathKeys.all, 'list'] as const,
+} as const
+
+/** Type for any library path query key */
+export type LibraryPathQueryKey = ReturnType<
+  typeof libraryPathKeys.list
+>
+
 /** Type for any library query key */
 export type LibraryQueryKey = ReturnType<
   | typeof libraryKeys.artists.all

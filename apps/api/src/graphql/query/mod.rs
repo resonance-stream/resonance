@@ -7,6 +7,7 @@ mod chat;
 mod library;
 mod playlist;
 mod search;
+mod system_settings;
 mod user;
 
 pub use admin::AdminQuery;
@@ -14,6 +15,7 @@ pub use chat::ChatQuery;
 pub use library::LibraryQuery;
 pub use playlist::PlaylistQuery;
 pub use search::SearchQuery;
+pub use system_settings::SystemSettingsQuery;
 pub use user::UserQuery;
 
 use async_graphql::MergedObject;
@@ -27,4 +29,5 @@ pub struct Query(
     SearchQuery,
     ChatQuery,
     AdminQuery,
+    SystemSettingsQuery,
 );

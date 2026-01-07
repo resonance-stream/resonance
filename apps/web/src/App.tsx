@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { SetupGuard } from './components/setup'
 import { MainLayout } from './components/layout'
 import { AudioProvider } from './providers/AudioProvider'
 import { SyncProvider } from './providers/SyncProvider'
@@ -15,8 +16,10 @@ const Album = lazy(() => import('./pages/Album'))
 const Artist = lazy(() => import('./pages/Artist'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Admin = lazy(() => import('./pages/Admin'))
+const SystemSettings = lazy(() => import('./pages/admin/SystemSettings'))
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
+const Setup = lazy(() => import('./pages/Setup'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 
 function LoadingFallback() {
@@ -44,10 +47,14 @@ function App() {
       <SyncProvider>
         <IntegrationsManager />
         <Suspense fallback={<LoadingFallback />}>
-          <Routes>
-            {/* Public routes - no authentication required */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+          <SetupGuard>
+            <Routes>
+              {/* Setup wizard - shown before setup is complete */}
+              <Route path="/setup" element={<Setup />} />
+
+              {/* Public routes - no authentication required */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
 
             {/* Protected routes with MainLayout */}
             <Route
@@ -130,10 +137,21 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/admin/system-settings"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <MainLayout>
+                    <SystemSettings />
+                  </MainLayout>
+                </ProtectedRoute>
+              }
+            />
 
             {/* Catch-all for 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </SetupGuard>
         </Suspense>
       </SyncProvider>
     </AudioProvider>

@@ -377,3 +377,148 @@ export interface GraphQLError {
   path?: Array<string | number>;
   extensions?: Record<string, unknown>;
 }
+
+// ============================================================================
+// System Settings Types (for Setup Wizard and Admin Configuration)
+// ============================================================================
+
+/**
+ * External service type enum
+ */
+export type ServiceType =
+  | 'OLLAMA'
+  | 'LIDARR'
+  | 'LASTFM'
+  | 'MEILISEARCH'
+  | 'MUSIC_LIBRARY';
+
+/**
+ * First-run setup status for the setup wizard
+ */
+export interface SetupStatus {
+  /** Whether the first-run setup has been completed */
+  isComplete: boolean;
+  /** Whether at least one admin user exists */
+  hasAdmin: boolean;
+  /** List of services that have been configured */
+  configuredServices: ServiceType[];
+}
+
+/**
+ * System setting information (safe for admin viewing)
+ *
+ * Note: This type never exposes actual secrets - only indicates whether
+ * secrets have been configured via `hasSecret`.
+ */
+export interface SystemSettingInfo {
+  /** The service type this setting configures */
+  service: ServiceType;
+  /** Whether this service is enabled */
+  enabled: boolean;
+  /** Non-sensitive configuration (URLs, ports, options) as JSON */
+  config: Record<string, unknown>;
+  /** Whether encrypted secrets are configured (never exposes actual secrets) */
+  hasSecret: boolean;
+  /** Last time a connection test was performed */
+  lastConnectionTest: string | null;
+  /** Result of the last connection test */
+  connectionHealthy: boolean | null;
+  /** Error message from the last connection test (if failed) */
+  connectionError: string | null;
+}
+
+/**
+ * Input for creating the initial admin user during setup
+ */
+export interface CreateAdminInput {
+  /** Admin username (for display) */
+  username: string;
+  /** Admin email address */
+  email: string;
+  /** Admin password (minimum 8 characters) */
+  password: string;
+}
+
+/**
+ * Input for updating a system setting
+ */
+export interface UpdateSystemSettingInput {
+  /** The service to update */
+  service: ServiceType;
+  /** Whether to enable or disable the service */
+  enabled?: boolean;
+  /** Non-sensitive configuration as JSON string */
+  config?: string;
+  /** Secret value (API key, password, etc.) - will be encrypted before storage */
+  secret?: string;
+}
+
+/**
+ * Result of testing a service connection
+ */
+export interface ConnectionTestResult {
+  /** Whether the connection test was successful */
+  success: boolean;
+  /** Response time in milliseconds (if successful) */
+  responseTimeMs: number | null;
+  /** Version of the service (if available) */
+  version: string | null;
+  /** Error message (if failed) */
+  error: string | null;
+}
+
+/**
+ * User library path configuration
+ */
+export interface UserLibraryPath {
+  /** Unique identifier for this path */
+  id: string;
+  /** The file system path */
+  path: string;
+  /** User-friendly label (e.g., "NAS Music", "Local Collection") */
+  label: string | null;
+  /** Whether this is the user's primary library path */
+  isPrimary: boolean;
+  /** When this path was added (ISO 8601 timestamp) */
+  createdAt: string;
+}
+
+// ============================================================================
+// System Settings Query Types
+// ============================================================================
+
+/**
+ * Extended query types including system settings queries
+ */
+export interface SystemSettingsQueryTypes {
+  /** Get setup status (unauthenticated - for setup wizard) */
+  setupStatus: SetupStatus;
+  /** Get all system settings (admin-only) */
+  systemSettings: SystemSettingInfo[];
+  /** Get a specific system setting (admin-only) */
+  systemSetting: (args: { service: ServiceType }) => SystemSettingInfo | null;
+}
+
+// ============================================================================
+// System Settings Mutation Types
+// ============================================================================
+
+/**
+ * Extended mutation types including system settings mutations
+ */
+export interface SystemSettingsMutationTypes {
+  /** Create the initial admin user during setup (no auth required if no users exist) */
+  createInitialAdmin: (args: { input: CreateAdminInput }) => AuthPayload;
+  /** Mark first-run setup as complete (admin-only) */
+  completeSetup: () => boolean;
+  /** Update a system setting (admin-only) */
+  updateSystemSetting: (args: { input: UpdateSystemSettingInput }) => SystemSettingInfo;
+  /** Test connection to an external service (admin-only) */
+  testServiceConnection: (args: { service: ServiceType }) => ConnectionTestResult;
+  /** Add a user library path (authenticated) */
+  addUserLibraryPath: (args: { path: string; label?: string }) => UserLibraryPath;
+  /** Remove a user library path (authenticated) */
+  removeUserLibraryPath: (args: { id: string }) => boolean;
+  /** Set a library path as the user's primary (authenticated) */
+  setUserPrimaryLibrary: (args: { id: string }) => UserLibraryPath;
+}

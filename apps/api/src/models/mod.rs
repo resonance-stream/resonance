@@ -7,6 +7,7 @@
 //! - Device presence and sync
 //! - Recommendations and AI features
 //! - AI chat conversations and messages
+//! - System settings and setup status
 
 // Re-exports for public API - some types not yet consumed externally
 #![allow(unused_imports)]
@@ -17,6 +18,7 @@ pub mod chat;
 pub mod device;
 pub mod playlist;
 pub mod queue;
+pub mod system_settings;
 pub mod track;
 pub mod user;
 
@@ -38,6 +40,9 @@ pub use playlist::{
 pub use queue::{
     ContextType, QueueItem, QueuePlaybackState, QueueTrackId, QueueValidationError, SetQueue,
     MAX_QUEUE_SIZE,
+};
+pub use system_settings::{
+    ServiceType, SetupStatus, SystemSetting, SystemSettingInput, UserLibraryPath,
 };
 pub use track::{AudioFeatures, AudioFormat, CreateTrack, SyncedLyricLine, Track};
 pub use user::{

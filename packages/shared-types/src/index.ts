@@ -150,6 +150,16 @@ export type {
   DateRangeInput,
   OperationResult,
   GraphQLError,
+  // System Settings types
+  ServiceType,
+  SetupStatus,
+  SystemSettingInfo,
+  CreateAdminInput,
+  UpdateSystemSettingInput,
+  ConnectionTestResult,
+  UserLibraryPath,
+  SystemSettingsQueryTypes,
+  SystemSettingsMutationTypes,
 } from './graphql.js';
 
 // Admin types - dashboard and user management

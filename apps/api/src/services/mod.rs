@@ -8,9 +8,13 @@
 //! - External service integrations
 //! - Health checks
 //! - AI chat assistant
+//! - Encryption for sensitive data
+//! - Configuration loading with DB -> Env -> Defaults priority
 
 pub mod auth;
 pub mod chat;
+pub mod config;
+pub mod encryption;
 pub mod health;
 pub mod lastfm;
 pub mod listenbrainz;
@@ -20,6 +24,10 @@ pub mod similarity;
 pub mod transcoder;
 
 pub use auth::AuthService;
+#[allow(unused_imports)] // Used for runtime config loading
+pub use config::{ConfigError, ConfigResult, ConfigService, LastFmConfig, MusicLibraryConfig};
+#[allow(unused_imports)] // Used for system settings encryption
+pub use encryption::{EncryptionError, EncryptionService};
 pub use health::HealthService;
 #[allow(unused_imports)] // Will be used once integrated into mutations
 pub use playlist::PlaylistService;

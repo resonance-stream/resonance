@@ -27,7 +27,7 @@ use middleware::{
     extract_client_ip, security_headers_with_config, AuthRateLimitState, SecurityHeadersConfig,
 };
 use models::user::RequestMetadata;
-use repositories::{SessionRepository, TrackRepository, UserRepository};
+use repositories::{SessionRepository, SystemSettingsRepository, TrackRepository, UserRepository};
 use routes::{
     auth_router, auth_router_with_rate_limiting, health_router, streaming_router, AuthState,
     HealthState, StreamingState,
@@ -36,6 +36,7 @@ use services::auth::{AuthConfig, AuthService};
 use services::lastfm::LastfmService;
 use services::search::SearchService;
 use services::similarity::SimilarityService;
+use services::{ConfigService, EncryptionService};
 use websocket::{ws_handler, ConnectionManager, SyncPubSub};
 
 /// Build the CORS layer based on configuration.
@@ -259,6 +260,16 @@ async fn main() -> anyhow::Result<()> {
     let track_repo = TrackRepository::new(pool.clone());
     tracing::info!("TrackRepository initialized");
 
+    // Create SystemSettingsRepository for configuration management
+    let system_settings_repo = SystemSettingsRepository::new(pool.clone());
+    tracing::info!("SystemSettingsRepository initialized");
+
+    // Create ConfigService for DB-driven configuration with cache
+    // Uses HKDF to derive encryption key from JWT secret for storing API keys securely
+    let encryption_service = EncryptionService::new(&config.jwt_secret);
+    let config_service = ConfigService::new(system_settings_repo.clone(), encryption_service);
+    tracing::info!("ConfigService initialized (DB -> Env -> Defaults priority)");
+
     // Create StreamingState for audio streaming
     let streaming_state = StreamingState::new(track_repo, config.common.music_library_path.clone());
     tracing::info!("StreamingState initialized");
@@ -453,6 +464,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(user_repo))
         .layer(Extension(session_repo))
         .layer(Extension(auth_service))
+        .layer(Extension(config_service))
         .layer(Extension(connection_manager))
         .layer(Extension(sync_pubsub))
         // Add AI/Search services for WebSocket chat handler
