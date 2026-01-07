@@ -594,7 +594,7 @@ where
             // Remove the trailing newline
             let line_bytes = &line_bytes[..line_bytes.len() - 1];
             // Strip carriage return if present (CRLF -> LF)
-            let line_bytes = line_bytes.strip_suffix(&[b'\r']).unwrap_or(line_bytes);
+            let line_bytes = line_bytes.strip_suffix(b"\r").unwrap_or(line_bytes);
 
             // Convert to UTF-8 only when we have a complete line
             let line = match std::str::from_utf8(line_bytes) {
@@ -642,6 +642,8 @@ where
                 if let Some(newline_pos) = self.buffer.iter().position(|&b| b == b'\n') {
                     let line_bytes: Vec<u8> = self.buffer.drain(..=newline_pos).collect();
                     let line_bytes = &line_bytes[..line_bytes.len() - 1];
+                    // Strip carriage return if present (CRLF -> LF)
+                    let line_bytes = line_bytes.strip_suffix(b"\r").unwrap_or(line_bytes);
 
                     let line = match std::str::from_utf8(line_bytes) {
                         Ok(s) => s.trim(),
@@ -678,7 +680,11 @@ where
             Poll::Ready(None) => {
                 // Stream ended, check if there's remaining data in buffer
                 if !self.buffer.is_empty() {
-                    let line_bytes = std::mem::take(&mut self.buffer);
+                    let mut line_bytes = std::mem::take(&mut self.buffer);
+                    // Strip carriage return if present (CRLF -> LF)
+                    if line_bytes.last() == Some(&b'\r') {
+                        line_bytes.pop();
+                    }
 
                     // Try to parse the remaining bytes
                     let line = match std::str::from_utf8(&line_bytes) {
@@ -1168,5 +1174,35 @@ not valid json
             }
             e => panic!("Expected ApiError, got: {:?}", e),
         }
+    }
+
+    #[tokio::test]
+    async fn test_ndjson_stream_crlf_line_endings() {
+        use tokio_stream::iter;
+
+        // Test that CRLF line endings (Windows-style) are handled correctly
+        // This simulates a server sending responses with \r\n line endings
+        let data = Bytes::from(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"done\":false}\r\n\
+             {\"message\":{\"role\":\"assistant\",\"content\":\" world\"},\"done\":false}\r\n\
+             {\"message\":{\"role\":\"assistant\",\"content\":\"!\"},\"done\":true}\r\n",
+        );
+
+        let byte_stream = iter(vec![Ok::<_, std::io::Error>(data)]);
+        let mut ndjson_stream = NdjsonStream::new(byte_stream);
+
+        let first = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(first.message.content, "Hello");
+        assert!(!first.done);
+
+        let second = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(second.message.content, " world");
+        assert!(!second.done);
+
+        let third = ndjson_stream.next().await.unwrap().unwrap();
+        assert_eq!(third.message.content, "!");
+        assert!(third.done);
+
+        assert!(ndjson_stream.next().await.is_none());
     }
 }
