@@ -102,6 +102,7 @@ impl EncryptionService {
     /// # Errors
     ///
     /// Returns `EncryptionError::KeyDerivation` if key derivation fails
+    #[allow(dead_code)] // Public API for external crate use
     pub fn try_new(jwt_secret: &str) -> Result<Self, EncryptionError> {
         let key = Self::derive_key(jwt_secret)?;
         let cipher = Aes256Gcm::new(&key.into());

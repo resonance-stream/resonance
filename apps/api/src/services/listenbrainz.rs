@@ -57,6 +57,7 @@ const MAX_SCROBBLE_THRESHOLD_SECS: i32 = 240;
 
 /// HTTP request timeout for ListenBrainz API calls.
 /// ListenBrainz recommends keeping requests under 30s; we use 10s for snappy UX.
+#[allow(dead_code)] // Used by ListenBrainzServiceBuilder
 const HTTP_TIMEOUT_SECS: u64 = 10;
 
 /// Maximum number of retry attempts for transient failures
@@ -66,6 +67,7 @@ const MAX_RETRIES: u32 = 3;
 const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// Default user agent for ListenBrainz API requests
+#[allow(dead_code)] // Used by ListenBrainzServiceBuilder
 const DEFAULT_USER_AGENT: &str = "Resonance/1.0";
 
 /// Builder for constructing [`ListenBrainzService`] with optional components
@@ -101,6 +103,7 @@ const DEFAULT_USER_AGENT: &str = "Resonance/1.0";
 ///     .timeout(Duration::from_secs(15))
 ///     .build()?;
 /// ```
+#[allow(dead_code)] // Public API for flexible service initialization
 #[derive(Default)]
 pub struct ListenBrainzServiceBuilder {
     pool: Option<PgPool>,
@@ -110,6 +113,7 @@ pub struct ListenBrainzServiceBuilder {
     user_agent: Option<String>,
 }
 
+#[allow(dead_code)] // Public API for flexible service initialization
 impl ListenBrainzServiceBuilder {
     /// Create a new builder with default settings
     pub fn new() -> Self {
@@ -297,6 +301,7 @@ impl ListenBrainzService {
     ///     .encryption_service(encryption)
     ///     .build()?;
     /// ```
+    #[allow(dead_code)] // Public API for builder pattern initialization
     pub fn builder() -> ListenBrainzServiceBuilder {
         ListenBrainzServiceBuilder::new()
     }
@@ -308,6 +313,7 @@ impl ListenBrainzService {
     ///
     /// # Errors
     /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    #[allow(dead_code)] // Public API convenience method
     pub fn new(db: PgPool) -> ApiResult<Self> {
         Self::builder().pool(db).build()
     }
@@ -319,6 +325,7 @@ impl ListenBrainzService {
     ///
     /// # Errors
     /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    #[allow(dead_code)] // Public API convenience method
     pub fn with_repo(user_repo: UserRepository) -> ApiResult<Self> {
         Self::builder().user_repository(user_repo).build()
     }
@@ -334,6 +341,7 @@ impl ListenBrainzService {
     ///
     /// # Errors
     /// Returns `ApiError::Configuration` if the HTTP client cannot be created.
+    #[allow(dead_code)] // Public API convenience method
     pub fn with_encryption(
         user_repo: UserRepository,
         encryption_service: EncryptionService,
@@ -582,6 +590,7 @@ impl ListenBrainzService {
     }
 
     /// Check if a user has ListenBrainz configured
+    #[allow(dead_code)] // Public API for checking user configuration status
     pub async fn is_configured(&self, user_id: Uuid) -> ApiResult<bool> {
         self.user_repo
             .has_listenbrainz_token(user_id)

@@ -28,6 +28,7 @@ pub mod transcoder;
 pub use auth::AuthService;
 #[allow(unused_imports)] // Used for runtime config loading
 pub use config::{ConfigError, ConfigResult, ConfigService, LastFmConfig, MusicLibraryConfig};
+#[allow(unused_imports)] // Re-exported for external crate use
 pub use encryption::{EncryptionError, EncryptionService};
 pub use health::HealthService;
 #[allow(unused_imports)] // Will be used once integrated into mutations
