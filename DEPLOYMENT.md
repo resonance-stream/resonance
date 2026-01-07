@@ -479,6 +479,8 @@ BACKUP_DIR="/opt/resonance/backups"
 RETENTION_DAYS=30
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 COMPOSE_FILE="/path/to/resonance/docker-compose.prod.yml"
+MEILISEARCH_HOST="http://localhost:7700"
+MEILISEARCH_KEY="${MEILISEARCH_KEY:-}"  # Set in environment or .env.production
 
 # Create backup directory
 mkdir -p "${BACKUP_DIR}"
@@ -491,18 +493,75 @@ docker compose -f "${COMPOSE_FILE}" exec -T postgres \
     pg_dump -U resonance -d resonance -Fc \
     > "${BACKUP_DIR}/postgres_${TIMESTAMP}.dump"
 
-# 2. Redis backup (trigger RDB save first)
+# 2. Redis backup with LASTSAVE polling (ensures save completes)
 echo "Backing up Redis..."
+# Get the last save timestamp before triggering new save
+LAST_SAVE_BEFORE=$(docker compose -f "${COMPOSE_FILE}" exec -T redis redis-cli LASTSAVE | tr -d '[:space:]')
 docker compose -f "${COMPOSE_FILE}" exec -T redis redis-cli BGSAVE
-sleep 5
+
+# Poll LASTSAVE until it changes (max 60 seconds)
+echo "Waiting for Redis BGSAVE to complete..."
+TIMEOUT=60
+ELAPSED=0
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    LAST_SAVE_AFTER=$(docker compose -f "${COMPOSE_FILE}" exec -T redis redis-cli LASTSAVE | tr -d '[:space:]')
+    if [ "$LAST_SAVE_AFTER" != "$LAST_SAVE_BEFORE" ]; then
+        echo "Redis BGSAVE completed (took ${ELAPSED}s)"
+        break
+    fi
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+done
+
+if [ $ELAPSED -ge $TIMEOUT ]; then
+    echo "WARNING: Redis BGSAVE timed out after ${TIMEOUT}s, continuing with potentially stale data"
+fi
+
 docker compose -f "${COMPOSE_FILE}" cp redis:/data/dump.rdb \
     "${BACKUP_DIR}/redis_${TIMESTAMP}.rdb"
 
-# 3. Meilisearch backup
+# 3. Meilisearch backup using snapshots API (consistent point-in-time backup)
 echo "Backing up Meilisearch..."
+# Create a snapshot via the API (creates a consistent backup without locking)
+SNAPSHOT_RESPONSE=$(curl -s -X POST "${MEILISEARCH_HOST}/snapshots" \
+    -H "Authorization: Bearer ${MEILISEARCH_KEY}" \
+    -H "Content-Type: application/json")
+
+# Extract task UID and wait for completion
+TASK_UID=$(echo "${SNAPSHOT_RESPONSE}" | grep -o '"taskUid":[0-9]*' | grep -o '[0-9]*')
+if [ -n "$TASK_UID" ]; then
+    echo "Waiting for Meilisearch snapshot task ${TASK_UID} to complete..."
+    TIMEOUT=300
+    ELAPSED=0
+    while [ $ELAPSED -lt $TIMEOUT ]; do
+        TASK_STATUS=$(curl -s "${MEILISEARCH_HOST}/tasks/${TASK_UID}" \
+            -H "Authorization: Bearer ${MEILISEARCH_KEY}" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+        if [ "$TASK_STATUS" = "succeeded" ]; then
+            echo "Meilisearch snapshot completed (took ${ELAPSED}s)"
+            break
+        elif [ "$TASK_STATUS" = "failed" ]; then
+            echo "ERROR: Meilisearch snapshot failed"
+            break
+        fi
+        sleep 2
+        ELAPSED=$((ELAPSED + 2))
+    done
+
+    if [ $ELAPSED -ge $TIMEOUT ]; then
+        echo "WARNING: Meilisearch snapshot timed out after ${TIMEOUT}s"
+    fi
+fi
+
+# Copy the snapshot file from the container's snapshot directory
+# Snapshots are stored in /meili_data/snapshots/ with timestamp-based names
 docker compose -f "${COMPOSE_FILE}" exec -T meilisearch \
-    tar czf - /meili_data \
-    > "${BACKUP_DIR}/meilisearch_${TIMESTAMP}.tar.gz"
+    sh -c 'cd /meili_data/snapshots && ls -t | head -1 | xargs cat' \
+    > "${BACKUP_DIR}/meilisearch_${TIMESTAMP}.snapshot" 2>/dev/null || {
+    echo "WARNING: Could not copy snapshot file, falling back to data directory backup"
+    docker compose -f "${COMPOSE_FILE}" exec -T meilisearch \
+        tar czf - /meili_data \
+        > "${BACKUP_DIR}/meilisearch_${TIMESTAMP}.tar.gz"
+}
 
 # 4. Configuration backup
 echo "Backing up configuration..."
@@ -545,11 +604,20 @@ docker compose -f docker-compose.prod.yml cp \
     backups/redis_TIMESTAMP.rdb redis:/data/dump.rdb
 docker compose -f docker-compose.prod.yml start redis
 
-# 4. Restore Meilisearch
+# 4. Restore Meilisearch from snapshot
 docker compose -f docker-compose.prod.yml stop meilisearch
-docker compose -f docker-compose.prod.yml run --rm -v $(pwd)/backups:/backups meilisearch \
-    tar xzf /backups/meilisearch_TIMESTAMP.tar.gz -C /
+# Copy snapshot to container's import directory
+docker compose -f docker-compose.prod.yml cp \
+    backups/meilisearch_TIMESTAMP.snapshot meilisearch:/meili_data/snapshots/
+# Start Meilisearch with snapshot import flag
+docker compose -f docker-compose.prod.yml run --rm meilisearch \
+    meilisearch --import-snapshot /meili_data/snapshots/meilisearch_TIMESTAMP.snapshot
 docker compose -f docker-compose.prod.yml start meilisearch
+
+# Alternative: If using legacy tar.gz backup format
+# docker compose -f docker-compose.prod.yml run --rm -v $(pwd)/backups:/backups meilisearch \
+#     tar xzf /backups/meilisearch_TIMESTAMP.tar.gz -C /
+# docker compose -f docker-compose.prod.yml start meilisearch
 
 # 5. Restart all services
 docker compose -f docker-compose.prod.yml up -d
@@ -566,7 +634,13 @@ redis-check-rdb backups/redis_TIMESTAMP.rdb
 
 # Test archive integrity
 gzip -t backups/postgres_TIMESTAMP.dump.gz
-tar tzf backups/meilisearch_TIMESTAMP.tar.gz
+
+# Test Meilisearch snapshot (snapshots are self-contained binary files)
+# Check file exists and has reasonable size
+ls -lh backups/meilisearch_TIMESTAMP.snapshot
+
+# Alternative: If using legacy tar.gz backup format
+# tar tzf backups/meilisearch_TIMESTAMP.tar.gz
 ```
 
 ---
