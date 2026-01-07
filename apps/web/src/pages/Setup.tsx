@@ -105,7 +105,7 @@ export default function Setup(): JSX.Element {
         return <LastfmStep onNext={handleNext} onBack={handleBack} />
 
       case 'complete':
-        return <CompleteStep onBack={handleBack} />
+        return <CompleteStep />
 
       default:
         return <WelcomeStep onNext={handleNext} />

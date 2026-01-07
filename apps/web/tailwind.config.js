@@ -96,6 +96,12 @@ export default {
         'scale-in': 'scaleIn 200ms ease-out',
         'wave-pulse': 'wavePulse 1s ease-in-out infinite',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'bounce-slow': 'bounce 2s ease-in-out infinite',
+      },
+      animationDelay: {
+        '150': '150ms',
+        '300': '300ms',
+        '500': '500ms',
       },
       keyframes: {
         fadeIn: {
