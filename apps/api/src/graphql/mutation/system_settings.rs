@@ -146,15 +146,18 @@ impl SystemSettingsMutation {
             ));
         }
         // Basic email format validation: must contain @ with non-empty local and domain parts,
-        // and domain must contain at least one dot
+        // domain must contain at least one dot and not start/end with a dot
         if !email.contains('@') {
             return Err(async_graphql::Error::new("Invalid email format"));
         }
         let parts: Vec<&str> = email.splitn(2, '@').collect();
+        let domain = parts.get(1).copied().unwrap_or("");
         if parts.len() != 2
             || parts[0].is_empty()
-            || parts[1].is_empty()
-            || !parts[1].contains('.')
+            || domain.is_empty()
+            || !domain.contains('.')
+            || domain.starts_with('.')
+            || domain.ends_with('.')
         {
             return Err(async_graphql::Error::new("Invalid email format"));
         }
@@ -778,19 +781,30 @@ async fn test_lastfm_connection(api_key: &str) -> ConnectionTestResult {
 
 /// Test music library path accessibility
 async fn test_music_library_path(path: &str) -> ConnectionTestResult {
+    use tokio::fs;
+
     let start = Instant::now();
     let path = std::path::Path::new(path);
 
-    if !path.exists() {
-        return ConnectionTestResult {
-            success: false,
-            response_time_ms: Some(start.elapsed().as_millis() as i64),
-            version: None,
-            error: Some("Path does not exist".to_string()),
-        };
-    }
+    // Use tokio::fs::metadata for async file system checks
+    let metadata = match fs::metadata(path).await {
+        Ok(m) => m,
+        Err(e) => {
+            let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+                "Path does not exist".to_string()
+            } else {
+                format!("Cannot access path: {}", e)
+            };
+            return ConnectionTestResult {
+                success: false,
+                response_time_ms: Some(start.elapsed().as_millis() as i64),
+                version: None,
+                error: Some(error_msg),
+            };
+        }
+    };
 
-    if !path.is_dir() {
+    if !metadata.is_dir() {
         return ConnectionTestResult {
             success: false,
             response_time_ms: Some(start.elapsed().as_millis() as i64),
@@ -799,10 +813,14 @@ async fn test_music_library_path(path: &str) -> ConnectionTestResult {
         };
     }
 
-    // Check if we can read the directory
-    match std::fs::read_dir(path) {
-        Ok(entries) => {
-            let count = entries.count();
+    // Check if we can read the directory using async read_dir
+    match fs::read_dir(path).await {
+        Ok(mut entries) => {
+            // Count entries asynchronously
+            let mut count = 0;
+            while let Ok(Some(_)) = entries.next_entry().await {
+                count += 1;
+            }
             ConnectionTestResult {
                 success: true,
                 response_time_ms: Some(start.elapsed().as_millis() as i64),
@@ -879,10 +897,13 @@ mod tests {
             return Err("Invalid email format");
         }
         let parts: Vec<&str> = email.splitn(2, '@').collect();
+        let domain = parts.get(1).copied().unwrap_or("");
         if parts.len() != 2
             || parts[0].is_empty()
-            || parts[1].is_empty()
-            || !parts[1].contains('.')
+            || domain.is_empty()
+            || !domain.contains('.')
+            || domain.starts_with('.')
+            || domain.ends_with('.')
         {
             return Err("Invalid email format");
         }
